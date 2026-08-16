@@ -7,7 +7,10 @@
       "command": "./scripts/switch-manifest.sh restart-prod"
     },
     "restart-dev": {
-      "command": "./scripts/switch-manifest.sh restart-dev"
+      "command": "./scripts/switch-manifest.sh restart-staging"
+    },
+    "restart-staging": {
+      "command": "./scripts/switch-manifest.sh restart-staging"
     },
     "worktree-up": {
       "command": "./scripts/worktree-stack.sh up"
