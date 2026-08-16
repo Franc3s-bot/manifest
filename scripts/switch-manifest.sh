@@ -20,14 +20,26 @@ PROD_ENV="$DOCKER_DIR/.env"
 DEV_ENV="$DOCKER_DIR/.env.dev"
 OMOS_CONFIG="$HOME/.config/opencode/oh-my-opencode-slim.jsonc"
 
+# Dedicated source checkouts per stack, so each stack builds from its own
+# branch:
+#   Prod    = /root/projects/manifest           (main)
+#   Staging = /root/projects/manifest-staging   (staging)
+# On a fresh clone (no sibling worktree), fall back to the current checkout.
+PROD_REPO_DIR="${PROD_REPO_DIR:-/root/projects/manifest}"
+STAGING_REPO_DIR="${STAGING_REPO_DIR:-/root/projects/manifest-staging}"
+[[ -d "$STAGING_REPO_DIR" ]] || STAGING_REPO_DIR="$REPO_DIR"
+[[ -d "$PROD_REPO_DIR" ]] || PROD_REPO_DIR="$REPO_DIR"
+
 # ── helpers ──────────────────────────────────────────────────────────────
 
 prod_compose() {
-  docker compose -f "$PROD_COMPOSE" --project-directory "$DOCKER_DIR" --env-file "$PROD_ENV" "$@"
+  local dir="${PROD_REPO_DIR}/docker"
+  docker compose -f "$dir/docker-compose.yml" --project-directory "$dir" --env-file "$dir/.env" "$@"
 }
 
 dev_compose() {
-  docker compose -f "$DEV_COMPOSE" --project-directory "$DOCKER_DIR" --env-file "$DEV_ENV" "$@"
+  local dir="${STAGING_REPO_DIR}/docker"
+  docker compose -f "$dir/docker-compose.dev.yml" --project-directory "$dir" --env-file "$dir/.env.dev" "$@"
 }
 
 # ── commands ─────────────────────────────────────────────────────────────
@@ -197,15 +209,15 @@ seed_dev_admin() {
 check_stale_image() {
   local tier="$1" ctr compose_file env_file
   if [[ "$tier" == "prod" ]]; then
-    ctr="mnfst-manifest-1"; compose_file="$PROD_COMPOSE"; env_file="$PROD_ENV"
+    ctr="mnfst-manifest-1"; compose_file="${PROD_REPO_DIR}/docker/docker-compose.yml"; env_file="${PROD_REPO_DIR}/docker/.env"
   else
-    ctr="mnfst-dev-manifest-1"; compose_file="$DEV_COMPOSE"; env_file="$DEV_ENV"
+    ctr="mnfst-dev-manifest-1"; compose_file="${STAGING_REPO_DIR}/docker/docker-compose.dev.yml"; env_file="${STAGING_REPO_DIR}/docker/.env.dev"
   fi
   docker inspect "$ctr" >/dev/null 2>&1 || return 0
   [[ -f "$env_file" ]] || return 0
   local running declared
   running="$(docker inspect "$ctr" --format '{{.Config.Image}}' 2>/dev/null || true)"
-  declared="$(docker compose -f "$compose_file" --project-directory "$DOCKER_DIR" --env-file "$env_file" config 2>/dev/null | grep 'image: manifestdotbuild/manifest' | awk '{print $2}' | head -n1 || true)"
+  declared="$(docker compose -f "$compose_file" --project-directory "$(dirname "$compose_file")" --env-file "$env_file" config 2>/dev/null | grep 'image: manifestdotbuild/manifest' | awk '{print $2}' | head -n1 || true)"
   [[ -n "$running" && -n "$declared" && "$running" != "$declared" ]] || return 0
   echo ""
   echo "⚠️  STALE IMAGE WARNING — ${tier} (${ctr})"
@@ -217,25 +229,27 @@ check_stale_image() {
 }
 
 cmd_restart_prod() {
-  echo "Rebuilding image and restarting PRODUCTION (2099)..."
-  docker build -f "$REPO_DIR/docker/Dockerfile" -t manifestdotbuild/manifest:latest "$REPO_DIR"
+  echo "Rebuilding image from main (${PROD_REPO_DIR}) and restarting PRODUCTION (2099)..."
+  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
   prod_compose up -d --force-recreate
   echo "✓ Prod (2099) restarted."
 }
 
 cmd_restart_dev() {
-  echo "Rebuilding image and restarting STAGING (2100)..."
-  docker build -f "$REPO_DIR/docker/Dockerfile" -t manifestdotbuild/manifest:staging "$REPO_DIR"
+  echo "Rebuilding image from staging (${STAGING_REPO_DIR}) and restarting STAGING (2100)..."
+  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   dev_compose up -d --force-recreate
   echo "✓ Staging (2100) restarted."
 }
 
 cmd_rebuild() {
-  echo "Rebuilding manifest image..."
-  docker build -f "$REPO_DIR/docker/Dockerfile" -t manifestdotbuild/manifest:latest "$REPO_DIR"
+  echo "Rebuilding production image from main (${PROD_REPO_DIR})..."
+  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
+  echo "Rebuilding staging image from staging (${STAGING_REPO_DIR})..."
+  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   echo "Restarting prod..."
   prod_compose up -d --force-recreate
-  echo "Restarting dev/staging..."
+  echo "Restarting staging..."
   dev_compose up -d --force-recreate
   cmd_status
 }
