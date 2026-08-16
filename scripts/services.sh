@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# services.sh — Start or restart the Manifest Prod/Dev dual-stack services.
+# services.sh — Start or restart the Manifest Prod/Staging dual-stack services.
 #
-#   services.sh start     Start both stacks (prod 2099 + dev 2100)
+#   services.sh start     Start both stacks (prod 2099 + staging 2100)
 #   services.sh restart   Restart both stacks (recreate containers, no image rebuild)
 #   services.sh help      Show this help
 #
@@ -24,26 +24,26 @@ dev_compose() {
 }
 
 cmd_start() {
-  echo "Starting prod (2099) + dev (2100)..."
+  echo "Starting prod (2099) + staging (2100)..."
   prod_compose up -d
   dev_compose up -d
 }
 
 cmd_restart() {
-  echo "Restarting prod (2099) + dev (2100)..."
+  echo "Restarting prod (2099) + staging (2100)..."
   prod_compose up -d --force-recreate
   dev_compose up -d --force-recreate
 }
 
 cmd_help() {
   cat <<'EOF'
-services.sh — Start or restart Manifest Prod/Dev services
+services.sh — Start or restart Manifest Prod/Staging services
 
 USAGE
   services.sh <command>
 
 COMMANDS
-  start      Start both stacks (prod 2099 + dev 2100). Safe to re-run.
+  start      Start both stacks (prod 2099 + staging 2100). Safe to re-run.
   restart    Restart both stacks (recreate containers, no image rebuild).
   help       Show this help.
 
@@ -54,8 +54,8 @@ EOF
 }
 
 case "${1:-help}" in
-  start)        cmd_start ;;
-  restart)      cmd_restart ;;
+  start|staging) cmd_start ;;
+  restart|restart-staging) cmd_restart ;;
   help|-h|--help) cmd_help ;;
   *)
     echo "Unknown command: $1"
