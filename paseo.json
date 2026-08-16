@@ -3,6 +3,9 @@
     "status": {
       "command": "./scripts/switch-manifest.sh status"
     },
+    "snapshot": {
+      "command": "./scripts/switch-manifest.sh snapshot"
+    },
     "restart-prod": {
       "command": "./scripts/switch-manifest.sh restart-prod"
     },
