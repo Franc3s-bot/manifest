@@ -1,0 +1,219 @@
+name: Docker Staging
+
+# Publishes a `staging`-tagged image built from the `staging` branch so the
+# staging stack (port 2100) can run code that `main`/prod (2099) does not
+# have yet. Prod continues to consume the `latest` tag published by the
+# main Docker workflow.
+#
+#   push to staging        → build amd64+arm64, publish manifest:staging
+#   workflow_dispatch      → manual re-publish from the staging branch
+#
+# Validation-only (no push) on PRs that touch backend/frontend/shared, so
+# staging code is smoke-checked before merge. A manual dispatch from a
+# feature branch is supported for pre-merge validation: it publishes a
+# sha-tagged image only (never `staging`), for manual `docker pull` into a
+# temporary stack.
+
+on:
+  push:
+    branches: [staging]
+    paths:
+      - ".github/workflows/**"
+      - "docker/Dockerfile"
+      - ".dockerignore"
+      - "packages/backend/**"
+      - "packages/frontend/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "package-lock.json"
+      - "turbo.json"
+  workflow_dispatch:
+    inputs:
+      publishStaging:
+        description: "Publish the manifest:staging tag (default: only a sha-tagged image for manual pull)"
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Optional version override used for the sha/version tags. Leave blank to use packages/manifest/package.json."
+        required: false
+        type: string
+  pull_request:
+    branches: [staging]
+    paths:
+      - ".github/workflows/**"
+      - "docker/Dockerfile"
+      - ".dockerignore"
+      - "packages/backend/**"
+      - "packages/frontend/**"
+      - "packages/shared/**"
+      - "package.json"
+      - "package-lock.json"
+      - "turbo.json"
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: manifestdotbuild/manifest
+
+jobs:
+  validate:
+    name: Build (validate, ${{ matrix.platform.arch }})
+    if: github.event_name == 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: ubuntu-latest, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          platforms: linux/${{ matrix.platform.arch }}
+          cache-from: type=gha,scope=staging-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=staging-${{ matrix.platform.arch }}
+
+  build-and-publish:
+    name: Build & publish (${{ matrix.platform.arch }})
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: ubuntu-latest, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=staging,enable=${{ github.event_name == 'push' || github.event.inputs.publishStaging == 'true' }}
+            type=sha,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{version}},value=${{ github.event.inputs.version || '' }}
+
+      - id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/${{ matrix.platform.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=staging-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=staging-${{ matrix.platform.arch }}
+          sbom: true
+          provenance: mode=max
+
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa04 # v4.6.2
+        with:
+          name: digests-${{ matrix.platform.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge & Publish
+    if: github.event_name != 'pull_request'
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=$(jq -r .version packages/manifest/package.json)
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download digests
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5.8.0
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=staging,enable=${{ github.event_name == 'push' || github.event.inputs.publishStaging == 'true' }}
+            type=sha,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=semver,pattern={{version}},value=${{ github.event.inputs.version || '' }}
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect "${{ env.IMAGE }}:staging" || true
+
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.2
+
+      - name: Sign published image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          # Pull the freshly-published manifest-list digest from the staging tag
+          # (or the sha tag on manual dispatch) and cosign it.
+          FIRST_TAG="$(printf '%s' "$TAGS" | head -n1)"
+          DIGEST=$(docker buildx imagetools inspect "$FIRST_TAG" --format '{{json .}}' | jq -r '.manifest.digest')
+          if [ -z "$DIGEST" ] || [ "$DIGEST" = "null" ]; then
+            echo "::error::Failed to extract manifest-list digest from $FIRST_TAG"
+            exit 1
+          fi
+          echo "Signing manifest list digest: $DIGEST"
+          for tag in ${TAGS}; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done

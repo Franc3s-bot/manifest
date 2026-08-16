@@ -1,19 +1,22 @@
-# Development stack — port 2100.
+# Staging stack — port 2100.
 # Identical to docker-compose.yml but with separate project name, volumes,
 # ports, and network names so both stacks coexist on the same host.
+#
+# Runs the `manifest:staging` image tag published from the `staging` branch,
+# giving port 2100 isolation from the `manifest:latest` image running on port 2099.
 #
 # Usage:
 #   docker compose -f docker-compose.dev.yml --env-file .env.dev up -d
 #   docker compose -f docker-compose.dev.yml --env-file .env.dev down
 #
-# Snapshot prod DB into Dev:
+# Snapshot prod DB into Staging:
 #   ./scripts/switch-manifest.sh snapshot
 
 name: mnfst-dev
 
 services:
   manifest:
-    image: manifestdotbuild/manifest:${MANIFEST_VERSION:-latest}
+    image: manifestdotbuild/manifest:${MANIFEST_VERSION:-staging}
     ports:
       - "${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-${PORT:-2100}}:${PORT:-2100}"
     extra_hosts:
