@@ -143,6 +143,30 @@ function toolCallArgumentsString(value: unknown): string {
   return '{}';
 }
 
+/**
+ * Coerce a tool's parameter schema to a shape the Command Code validator
+ * accepts. Client SDKs sometimes emit `parameters` (or `input_schema`) with
+ * `type: "null"` or no root `type` for parameterless tools; the upstream
+ * /alpha/generate validator rejects those with "Function tool parameters root
+ * schema must have type 'object'" / "Invalid schema for function ... got
+ * 'type: \"null\"'". A tool without a usable schema still needs a valid
+ * container, so normalize to `type: "object"` while preserving any declared
+ * `properties`. Well-formed schemas pass through unchanged.
+ */
+function normalizeToolSchema(schema: unknown): unknown {
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
+    return { type: 'object', properties: {} };
+  }
+  const record = schema as Record<string, unknown>;
+  const { type, properties } = record;
+  const typeOk = type === 'object' || (Array.isArray(type) && type.includes('object'));
+  if (typeOk) return schema;
+  if (type === undefined || type === null || type === 'null') {
+    return { type: 'object', properties: properties ?? {} };
+  }
+  return schema;
+}
+
 function convertTools(tools: unknown): Array<Record<string, unknown>> | undefined {
   if (!Array.isArray(tools)) return undefined;
   const result: Array<Record<string, unknown>> = [];
@@ -153,13 +177,13 @@ function convertTools(tools: unknown): Array<Record<string, unknown>> | undefine
       result.push({
         name: tool.function.name,
         description: tool.function.description,
-        input_schema: tool.function.parameters ?? { type: 'object' },
+        input_schema: normalizeToolSchema(tool.function.parameters),
       });
     } else if (tool.name && (tool.input_schema || tool.parameters)) {
       result.push({
         name: tool.name,
         description: tool.description,
-        input_schema: tool.input_schema ?? tool.parameters,
+        input_schema: normalizeToolSchema(tool.input_schema ?? tool.parameters),
       });
     }
   }
@@ -464,10 +488,7 @@ function pickString(...sources: Array<Record<string, unknown>>): string | undefi
   return undefined;
 }
 
-function extractErrorStatus(
-  message: string,
-  ...sources: Array<Record<string, unknown>>
-): number {
+function extractErrorStatus(message: string, ...sources: Array<Record<string, unknown>>): number {
   for (const source of sources) {
     const rawStatus = source.status ?? source.http_status ?? source.httpStatus;
     const numeric = typeof rawStatus === 'number' ? rawStatus : Number(rawStatus);
@@ -507,8 +528,7 @@ export function commandCodeErrorFromEvent(
     const raw = event.error ?? event.message;
     return {
       status: 502,
-      message:
-        typeof raw === 'string' ? raw : 'Command Code upstream finished with an error',
+      message: typeof raw === 'string' ? raw : 'Command Code upstream finished with an error',
     };
   }
   return null;

@@ -271,6 +271,124 @@ describe('buildCommandCodeChatRequest', () => {
       },
     ]);
   });
+
+  it('normalizes a tool parameters schema with type "null" to type "object"', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'task_result', parameters: { type: 'null', properties: {} } },
+          },
+        ],
+      },
+      'gpt-5.6-luna',
+    );
+
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'task_result',
+        description: undefined,
+        input_schema: { type: 'object', properties: {} },
+      },
+    ]);
+  });
+
+  it('normalizes a tool parameters schema with no root type to type "object"', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'noop', parameters: { properties: { q: { type: 'string' } } } },
+          },
+        ],
+      },
+      'meta/muse-spark-1.2-contributor',
+    );
+
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'noop',
+        description: undefined,
+        input_schema: { type: 'object', properties: { q: { type: 'string' } } },
+      },
+    ]);
+  });
+
+  it('normalizes an empty parameters object to type "object"', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ type: 'function', function: { name: 'noop', parameters: {} } }],
+      },
+      'gpt-5.4',
+    );
+
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'noop',
+        description: undefined,
+        input_schema: { type: 'object', properties: {} },
+      },
+    ]);
+  });
+
+  it('normalizes a bare input_schema tool to type "object"', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ name: 'noop', input_schema: { type: 'null', properties: {} } }],
+      },
+      'gpt-5.4',
+    );
+
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'noop',
+        description: undefined,
+        input_schema: { type: 'object', properties: {} },
+      },
+    ]);
+  });
+
+  it('preserves well-formed parameters schemas unchanged', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'lookup',
+              parameters: {
+                type: 'object',
+                required: ['q'],
+                additionalProperties: false,
+                properties: { q: { type: 'string' } },
+              },
+            },
+          },
+        ],
+      },
+      'gpt-5.4',
+    );
+
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'lookup',
+        description: undefined,
+        input_schema: {
+          type: 'object',
+          required: ['q'],
+          additionalProperties: false,
+          properties: { q: { type: 'string' } },
+        },
+      },
+    ]);
+  });
 });
 
 describe('commandCodeLineToOpenAiChunks', () => {
@@ -596,11 +714,7 @@ describe('preflightCommandCodeStream', () => {
 
   it('passes a content-first stream through, replaying scanned lines', async () => {
     const { error, stream } = await preflightCommandCodeStream(
-      ndjsonStream([
-        '{"type":"start"}',
-        '{"type":"text-delta","text":"Hi"}',
-        '{"type":"finish"}',
-      ]),
+      ndjsonStream(['{"type":"start"}', '{"type":"text-delta","text":"Hi"}', '{"type":"finish"}']),
     );
     expect(error).toBeNull();
     const sse = await collectStream(createCommandCodeOpenAiStream(stream, 'm'));
