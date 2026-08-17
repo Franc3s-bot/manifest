@@ -463,8 +463,39 @@ describe('commandCodeLineToOpenAiChunks', () => {
     });
   });
 
-  it('emits a consolidated tool-call chunk when no input deltas preceded it', () => {
+  it('streams AI SDK tool-call-start and tool-call-delta with argsTextDelta', () => {
     const state = {
+      responseId: 'r1',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+
+    expect(
+      chunkOf('{"type":"tool-call-start","id":"call_123","toolName":"bash"}', state, 'm')?.choices[0]
+        .delta,
+    ).toMatchObject({
+      tool_calls: [
+        { index: 0, id: 'call_123', type: 'function', function: { name: 'bash', arguments: '' } },
+      ],
+    });
+    expect(
+      chunkOf(
+        '{"type":"tool-call-delta","id":"call_123","argsTextDelta":"{\\"command\\":\\"ls\\"}"}',
+        state,
+        'm',
+      )?.choices[0].delta,
+    ).toEqual({
+      tool_calls: [{ index: 0, function: { arguments: '{"command":"ls"}' } }],
+    });
+  });
+
+  it('emits a consolidated tool-call chunk when no input deltas preceded it (with input, args, or arguments)', () => {
+    const state1 = {
       responseId: 'r1',
       created: 1,
       model: 'm',
@@ -477,7 +508,7 @@ describe('commandCodeLineToOpenAiChunks', () => {
     expect(
       chunkOf(
         '{"type":"tool-call","toolCallId":"c9","toolName":"search","input":{"q":"x"}}',
-        state,
+        state1,
         'm',
       )?.choices[0].delta,
     ).toMatchObject({
@@ -487,6 +518,60 @@ describe('commandCodeLineToOpenAiChunks', () => {
           id: 'c9',
           type: 'function',
           function: { name: 'search', arguments: '{"q":"x"}' },
+        },
+      ],
+    });
+
+    const state2 = {
+      responseId: 'r2',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf(
+        '{"type":"tool-call","id":"c10","toolName":"bash","args":{"command":"npm test"}}',
+        state2,
+        'm',
+      )?.choices[0].delta,
+    ).toMatchObject({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'c10',
+          type: 'function',
+          function: { name: 'bash', arguments: '{"command":"npm test"}' },
+        },
+      ],
+    });
+
+    const state3 = {
+      responseId: 'r3',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf(
+        '{"type":"tool-call","toolCallId":"c11","name":"read","arguments":"{\\"filePath\\":\\"foo.ts\\"}"}',
+        state3,
+        'm',
+      )?.choices[0].delta,
+    ).toMatchObject({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'c11',
+          type: 'function',
+          function: { name: 'read', arguments: '{"filePath":"foo.ts"}' },
         },
       ],
     });

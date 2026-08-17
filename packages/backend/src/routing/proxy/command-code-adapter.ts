@@ -536,9 +536,13 @@ export function commandCodeErrorFromEvent(
 
 const CONTENT_EVENT_TYPES = new Set([
   'text-delta',
+  'reasoning',
   'reasoning-delta',
   'tool-input-start',
+  'tool-call-streaming-start',
+  'tool-call-start',
   'tool-input-delta',
+  'tool-call-delta',
   'tool-call',
   'finish-step',
   'finish',
@@ -687,8 +691,13 @@ export function commandCodeLineToOpenAiChunks(
       out.push(buildChunk(st, delta));
       break;
     }
+    case 'reasoning':
     case 'reasoning-delta': {
-      const text = typeof event.text === 'string' ? event.text : '';
+      const text =
+        (typeof event.text === 'string' && event.text) ||
+        (typeof event.textDelta === 'string' && event.textDelta) ||
+        (typeof event.delta === 'string' && event.delta) ||
+        '';
       if (!text) break;
       // Map reasoning to OpenAI's `reasoning_content` (deepseek-reasoner-style).
       const delta =
@@ -699,11 +708,14 @@ export function commandCodeLineToOpenAiChunks(
       out.push(buildChunk(st, delta));
       break;
     }
+    case 'tool-call-streaming-start':
+    case 'tool-call-start':
     case 'tool-input-start': {
       const id =
         typeof event.id === 'string'
           ? event.id
           : ((event.toolCallId as string) ?? fallbackToolCallId(st.toolIndex));
+      const name = (event.toolName as string) ?? (event.name as string) ?? '';
       let index = st.toolIndexById.get(id);
       if (index == null) {
         index = st.toolIndex++;
@@ -717,7 +729,7 @@ export function commandCodeLineToOpenAiChunks(
               index,
               id,
               type: 'function',
-              function: { name: (event.toolName as string) ?? '', arguments: '' },
+              function: { name, arguments: '' },
             },
           ],
         }),
@@ -725,17 +737,23 @@ export function commandCodeLineToOpenAiChunks(
       st.chunkIndex++;
       break;
     }
+    case 'tool-call-delta':
     case 'tool-input-delta': {
       const id = (event.id as string) ?? (event.toolCallId as string);
       const index = id ? st.toolIndexById.get(id) : undefined;
       if (index == null) break;
+      const delta =
+        (event.argsTextDelta as string) ??
+        (event.delta as string) ??
+        (event.inputTextDelta as string) ??
+        '';
       out.push(
         buildChunk(st, {
           tool_calls: [
             {
               index,
               function: {
-                arguments: (event.delta as string) ?? (event.inputTextDelta as string) ?? '',
+                arguments: delta,
               },
             },
           ],
@@ -745,12 +763,19 @@ export function commandCodeLineToOpenAiChunks(
     }
     case 'tool-call': {
       // Final consolidated tool call — only emit if we never saw tool-input-*.
-      const id = event.toolCallId as string;
+      const id = (event.toolCallId as string) ?? (event.id as string);
       if (id && st.toolIndexById.has(id)) break;
       const index = st.toolIndex++;
       if (id) st.toolIndexById.set(id, index);
+      const rawArgs =
+        event.args !== undefined
+          ? event.args
+          : event.arguments !== undefined
+            ? event.arguments
+            : event.input;
       const argsStr =
-        typeof event.input === 'string' ? event.input : JSON.stringify(event.input ?? {});
+        typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
+      const toolName = (event.toolName as string) ?? (event.name as string) ?? '';
       out.push(
         buildChunk(st, {
           ...(st.chunkIndex === 0 ? { role: 'assistant' } : {}),
@@ -759,7 +784,7 @@ export function commandCodeLineToOpenAiChunks(
               index,
               id: id ?? fallbackToolCallId(index),
               type: 'function',
-              function: { name: (event.toolName as string) ?? '', arguments: argsStr },
+              function: { name: toolName, arguments: argsStr },
             },
           ],
         }),
