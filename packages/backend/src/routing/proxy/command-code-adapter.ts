@@ -288,15 +288,37 @@ function convertMessages(messages: OpenAiMessage[]): {
 
     const blocks = toContentBlocks(message.content);
     if (role === 'assistant' && Array.isArray(message.tool_calls)) {
-      for (const toolCall of message.tool_calls) {
-        const id = toolCall.id ?? '';
-        const name = toolCall.function?.name ?? '';
-        const argsString = toolCallArgumentsString(toolCall.function?.arguments);
+      const hasTools = message.tool_calls.length > 0;
+      if (hasTools && blocks.length === 1 && blocks[0].type === 'text' && !blocks[0].text) {
+        blocks.pop();
+      }
+      for (const rawCall of message.tool_calls) {
+        if (!rawCall || typeof rawCall !== 'object') continue;
+        const toolCall = rawCall as Record<string, unknown>;
+        const fn = toolCall.function as Record<string, unknown> | undefined;
+        const id =
+          (toolCall.id as string) ??
+          (toolCall.toolCallId as string) ??
+          `call_${pendingCalls.length}_${Date.now()}`;
+        const name = (fn?.name as string) ?? (toolCall.toolName as string) ?? (toolCall.name as string) ?? '';
+        const rawArgs =
+          fn?.arguments !== undefined
+            ? fn.arguments
+            : toolCall.args !== undefined
+              ? toolCall.args
+              : toolCall.arguments !== undefined
+                ? toolCall.arguments
+                : toolCall.input;
+        const argsString = toolCallArgumentsString(rawArgs);
+        const input =
+          typeof rawArgs === 'object' && rawArgs !== null && !Array.isArray(rawArgs)
+            ? rawArgs
+            : safeParseJson(rawArgs);
         blocks.push({
           type: 'tool-call',
           toolCallId: id,
           toolName: name,
-          input: safeParseJson(toolCall.function?.arguments),
+          input,
           arguments: argsString,
         });
         pendingCalls.push({ id, name, arguments: argsString });
@@ -321,18 +343,21 @@ export function buildCommandCodeChatRequest(
 ): Record<string, unknown> {
   const rawMessages = Array.isArray(body.messages) ? (body.messages as OpenAiMessage[]) : [];
   const { messages, system } = convertMessages(rawMessages);
+  const maxTokens =
+    body.max_tokens ??
+    body.max_completion_tokens ??
+    body.max_output_tokens ??
+    DEFAULT_COMMAND_CODE_MAX_TOKENS;
   const params: Record<string, unknown> = {
     model,
     messages,
     stream: true,
-    max_tokens: (body.max_tokens ??
-      body.max_output_tokens ??
-      DEFAULT_COMMAND_CODE_MAX_TOKENS) as number,
+    max_tokens: maxTokens as number,
     temperature: (body.temperature ?? 0.3) as number,
   };
 
   if (system) params.system = system;
-  const tools = convertTools(body.tools);
+  const tools = convertTools(body.tools ?? body.functions);
   if (tools) params.tools = tools;
   if (body.top_p != null) params.top_p = body.top_p;
 
@@ -388,20 +413,30 @@ const OPENAI_FINISH = {
 } as const;
 
 function mapFinishReason(reason: string | undefined): string {
-  switch (reason) {
+  if (!reason) return OPENAI_FINISH.STOP;
+  const lower = reason.toLowerCase();
+  switch (lower) {
     case 'stop':
+    case 'end_turn':
+    case 'stop_sequence':
       return OPENAI_FINISH.STOP;
     case 'length':
+    case 'max_tokens':
       return OPENAI_FINISH.LENGTH;
     case 'tool-calls':
+    case 'tool_calls':
     case 'tool_use':
+    case 'tool-call':
+    case 'tool_call':
       return OPENAI_FINISH.TOOL_CALLS;
     case 'content-filter':
+    case 'content_filter':
+    case 'safety':
       return OPENAI_FINISH.CONTENT_FILTER;
     case 'error':
       return OPENAI_FINISH.STOP;
     default:
-      return reason || OPENAI_FINISH.STOP;
+      return reason;
   }
 }
 
@@ -438,13 +473,36 @@ function buildChunk(
   };
 }
 
-/** Command Code usage: { inputTokens, outputTokens, totalTokens }. */
+/** Command Code usage: { inputTokens, outputTokens, totalTokens } and variants. */
 function toOpenAIUsage(raw: unknown): Record<string, unknown> | null {
   if (!raw || typeof raw !== 'object') return null;
   const usage = raw as Record<string, unknown>;
-  const input = typeof usage.inputTokens === 'number' ? usage.inputTokens : 0;
-  const output = typeof usage.outputTokens === 'number' ? usage.outputTokens : 0;
-  const total = typeof usage.totalTokens === 'number' ? usage.totalTokens : input + output;
+  const input =
+    typeof usage.inputTokens === 'number'
+      ? usage.inputTokens
+      : typeof usage.promptTokens === 'number'
+        ? usage.promptTokens
+        : typeof usage.prompt_tokens === 'number'
+          ? usage.prompt_tokens
+          : typeof usage.input_tokens === 'number'
+            ? usage.input_tokens
+            : 0;
+  const output =
+    typeof usage.outputTokens === 'number'
+      ? usage.outputTokens
+      : typeof usage.completionTokens === 'number'
+        ? usage.completionTokens
+        : typeof usage.completion_tokens === 'number'
+          ? usage.completion_tokens
+          : typeof usage.output_tokens === 'number'
+            ? usage.output_tokens
+            : 0;
+  const total =
+    typeof usage.totalTokens === 'number'
+      ? usage.totalTokens
+      : typeof usage.total_tokens === 'number'
+        ? usage.total_tokens
+        : input + output;
   return { prompt_tokens: input, completion_tokens: output, total_tokens: total };
 }
 
@@ -476,7 +534,8 @@ export interface CommandCodeStreamError {
   retryAfter?: string;
 }
 
-const RATE_LIMIT_MESSAGE_PATTERN = /rate\s*limit|too many requests|\b429\b/i;
+const RATE_LIMIT_MESSAGE_PATTERN =
+  /rate\s*limit|too many requests|\b429\b|quota\s*exhausted|insufficient\s*quota|resource\s*exhausted|out of quota|balance\s*insufficient/i;
 
 function pickString(...sources: Array<Record<string, unknown>>): string | undefined {
   for (const source of sources) {
@@ -536,9 +595,17 @@ export function commandCodeErrorFromEvent(
 
 const CONTENT_EVENT_TYPES = new Set([
   'text-delta',
+  'reasoning',
   'reasoning-delta',
+  'thought',
+  'thought-delta',
+  'thinking',
+  'thinking-delta',
   'tool-input-start',
+  'tool-call-streaming-start',
+  'tool-call-start',
   'tool-input-delta',
+  'tool-call-delta',
   'tool-call',
   'finish-step',
   'finish',
@@ -680,15 +747,30 @@ export function commandCodeLineToOpenAiChunks(
 
   switch (event.type) {
     case 'text-delta': {
-      const text = typeof event.text === 'string' ? event.text : (event.delta ?? '');
+      const text =
+        (typeof event.textDelta === 'string' && event.textDelta) ||
+        (typeof event.text === 'string' && event.text) ||
+        (typeof event.delta === 'string' && event.delta) ||
+        '';
       if (!text) break;
       const delta = st.chunkIndex === 0 ? { role: 'assistant', content: text } : { content: text };
       st.chunkIndex++;
       out.push(buildChunk(st, delta));
       break;
     }
+    case 'thought':
+    case 'thought-delta':
+    case 'thinking':
+    case 'thinking-delta':
+    case 'reasoning':
     case 'reasoning-delta': {
-      const text = typeof event.text === 'string' ? event.text : '';
+      const text =
+        (typeof event.textDelta === 'string' && event.textDelta) ||
+        (typeof event.text === 'string' && event.text) ||
+        (typeof event.delta === 'string' && event.delta) ||
+        (typeof event.thought === 'string' && event.thought) ||
+        (typeof event.thinking === 'string' && event.thinking) ||
+        '';
       if (!text) break;
       // Map reasoning to OpenAI's `reasoning_content` (deepseek-reasoner-style).
       const delta =
@@ -699,11 +781,14 @@ export function commandCodeLineToOpenAiChunks(
       out.push(buildChunk(st, delta));
       break;
     }
+    case 'tool-call-streaming-start':
+    case 'tool-call-start':
     case 'tool-input-start': {
       const id =
         typeof event.id === 'string'
           ? event.id
           : ((event.toolCallId as string) ?? fallbackToolCallId(st.toolIndex));
+      const name = (event.toolName as string) ?? (event.name as string) ?? '';
       let index = st.toolIndexById.get(id);
       if (index == null) {
         index = st.toolIndex++;
@@ -717,7 +802,7 @@ export function commandCodeLineToOpenAiChunks(
               index,
               id,
               type: 'function',
-              function: { name: (event.toolName as string) ?? '', arguments: '' },
+              function: { name, arguments: '' },
             },
           ],
         }),
@@ -725,17 +810,26 @@ export function commandCodeLineToOpenAiChunks(
       st.chunkIndex++;
       break;
     }
+    case 'tool-call-delta':
     case 'tool-input-delta': {
       const id = (event.id as string) ?? (event.toolCallId as string);
-      const index = id ? st.toolIndexById.get(id) : undefined;
+      let index = id ? st.toolIndexById.get(id) : undefined;
+      if (index == null && st.toolIndex === 1) {
+        index = 0;
+      }
       if (index == null) break;
+      const delta =
+        (event.argsTextDelta as string) ??
+        (event.delta as string) ??
+        (event.inputTextDelta as string) ??
+        '';
       out.push(
         buildChunk(st, {
           tool_calls: [
             {
               index,
               function: {
-                arguments: (event.delta as string) ?? (event.inputTextDelta as string) ?? '',
+                arguments: delta,
               },
             },
           ],
@@ -745,12 +839,19 @@ export function commandCodeLineToOpenAiChunks(
     }
     case 'tool-call': {
       // Final consolidated tool call — only emit if we never saw tool-input-*.
-      const id = event.toolCallId as string;
+      const id = (event.toolCallId as string) ?? (event.id as string);
       if (id && st.toolIndexById.has(id)) break;
       const index = st.toolIndex++;
       if (id) st.toolIndexById.set(id, index);
+      const rawArgs =
+        event.args !== undefined
+          ? event.args
+          : event.arguments !== undefined
+            ? event.arguments
+            : event.input;
       const argsStr =
-        typeof event.input === 'string' ? event.input : JSON.stringify(event.input ?? {});
+        typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
+      const toolName = (event.toolName as string) ?? (event.name as string) ?? '';
       out.push(
         buildChunk(st, {
           ...(st.chunkIndex === 0 ? { role: 'assistant' } : {}),
@@ -759,7 +860,7 @@ export function commandCodeLineToOpenAiChunks(
               index,
               id: id ?? fallbackToolCallId(index),
               type: 'function',
-              function: { name: (event.toolName as string) ?? '', arguments: argsStr },
+              function: { name: toolName, arguments: argsStr },
             },
           ],
         }),
@@ -927,6 +1028,10 @@ export async function collectCommandCodeCompletion(
           }
           if (callDelta.function?.name && !call.function.name) {
             call.function.name = callDelta.function.name;
+          }
+          if (callDelta.id && !call.id) {
+            call.id = callDelta.id;
+            toolCallById.set(callDelta.id, index);
           }
           if (callDelta.function?.arguments) {
             call.function.arguments += callDelta.function.arguments;

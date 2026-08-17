@@ -106,7 +106,6 @@ describe('buildCommandCodeChatRequest', () => {
     const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
     expect(messages[0].role).toBe('assistant');
     expect(messages[0].content).toEqual([
-      { type: 'text', text: '' },
       {
         type: 'tool-call',
         toolCallId: 'call_1',
@@ -125,6 +124,34 @@ describe('buildCommandCodeChatRequest', () => {
         output: { type: 'text', value: '3 results' },
       },
     ]);
+  });
+
+  it('prunes redundant empty text blocks in assistant messages when tool_calls are present', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_glm',
+                type: 'function',
+                function: { name: 'search', arguments: '{"q":"manifest"}' },
+              },
+            ],
+          },
+        ],
+      },
+      'zhipu/glm-5.3',
+    );
+    const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
+    expect(messages[0].content).toHaveLength(1);
+    expect(messages[0].content[0]).toMatchObject({
+      type: 'tool-call',
+      toolCallId: 'call_glm',
+      toolName: 'search',
+    });
   });
 
   it('renders tool-result output as the typed AI SDK v5 output shape', () => {
@@ -235,7 +262,7 @@ describe('buildCommandCodeChatRequest', () => {
     );
 
     const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
-    const call = messages[0].content?.[1] as Record<string, unknown>;
+    const call = messages[0].content?.[0] as Record<string, unknown>;
     expect(call).toMatchObject({
       type: 'tool-call',
       toolCallId: 'bad',
@@ -430,6 +457,34 @@ describe('commandCodeLineToOpenAiChunks', () => {
     expect(
       chunkOf('{"type":"reasoning-delta","text":"thinking"}', state, 'm')?.choices[0].delta,
     ).toEqual({ role: 'assistant', reasoning_content: 'thinking' });
+
+    const stateThought = {
+      responseId: 'r_thought',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf('{"type":"thought-delta","thought":"pondering"}', stateThought, 'm')?.choices[0].delta,
+    ).toEqual({ role: 'assistant', reasoning_content: 'pondering' });
+
+    const stateThinking = {
+      responseId: 'r_thinking',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf('{"type":"thinking-delta","thinking":"analyzing"}', stateThinking, 'm')?.choices[0].delta,
+    ).toEqual({ role: 'assistant', reasoning_content: 'analyzing' });
   });
 
   it('streams tool-input-start + tool-input-delta into accumulated tool_calls', () => {
@@ -463,8 +518,39 @@ describe('commandCodeLineToOpenAiChunks', () => {
     });
   });
 
-  it('emits a consolidated tool-call chunk when no input deltas preceded it', () => {
+  it('streams AI SDK tool-call-start and tool-call-delta with argsTextDelta', () => {
     const state = {
+      responseId: 'r1',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+
+    expect(
+      chunkOf('{"type":"tool-call-start","id":"call_123","toolName":"bash"}', state, 'm')?.choices[0]
+        .delta,
+    ).toMatchObject({
+      tool_calls: [
+        { index: 0, id: 'call_123', type: 'function', function: { name: 'bash', arguments: '' } },
+      ],
+    });
+    expect(
+      chunkOf(
+        '{"type":"tool-call-delta","id":"call_123","argsTextDelta":"{\\"command\\":\\"ls\\"}"}',
+        state,
+        'm',
+      )?.choices[0].delta,
+    ).toEqual({
+      tool_calls: [{ index: 0, function: { arguments: '{"command":"ls"}' } }],
+    });
+  });
+
+  it('emits a consolidated tool-call chunk when no input deltas preceded it (with input, args, or arguments)', () => {
+    const state1 = {
       responseId: 'r1',
       created: 1,
       model: 'm',
@@ -477,7 +563,7 @@ describe('commandCodeLineToOpenAiChunks', () => {
     expect(
       chunkOf(
         '{"type":"tool-call","toolCallId":"c9","toolName":"search","input":{"q":"x"}}',
-        state,
+        state1,
         'm',
       )?.choices[0].delta,
     ).toMatchObject({
@@ -490,9 +576,144 @@ describe('commandCodeLineToOpenAiChunks', () => {
         },
       ],
     });
+
+    const state2 = {
+      responseId: 'r2',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf(
+        '{"type":"tool-call","id":"c10","toolName":"bash","args":{"command":"npm test"}}',
+        state2,
+        'm',
+      )?.choices[0].delta,
+    ).toMatchObject({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'c10',
+          type: 'function',
+          function: { name: 'bash', arguments: '{"command":"npm test"}' },
+        },
+      ],
+    });
+
+    const state3 = {
+      responseId: 'r3',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf(
+        '{"type":"tool-call","toolCallId":"c11","name":"read","arguments":"{\\"filePath\\":\\"foo.ts\\"}"}',
+        state3,
+        'm',
+      )?.choices[0].delta,
+    ).toMatchObject({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'c11',
+          type: 'function',
+          function: { name: 'read', arguments: '{"filePath":"foo.ts"}' },
+        },
+      ],
+    });
   });
 
-  it('maps finish + usage onto the final chunk', () => {
+  it('handles Anthropic-style and AI SDK style tool_calls in assistant history', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_anthropic',
+                type: 'tool_use',
+                name: 'bash',
+                input: { command: 'echo hi' },
+              } as unknown as { id: string; function: { name: string; arguments: string } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_anthropic', content: 'hi' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                toolCallId: 'call_aisdk',
+                toolName: 'read',
+                args: { filePath: 'README.md' },
+              } as unknown as { id: string; function: { name: string; arguments: string } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_aisdk', content: 'docs' },
+        ],
+      },
+      'gpt-5.6-luna',
+    );
+
+    const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
+    expect(messages[0].content).toEqual([
+      {
+        type: 'tool-call',
+        toolCallId: 'call_anthropic',
+        toolName: 'bash',
+        input: { command: 'echo hi' },
+        arguments: '{"command":"echo hi"}',
+      },
+    ]);
+    expect(messages[2].content).toEqual([
+      {
+        type: 'tool-call',
+        toolCallId: 'call_aisdk',
+        toolName: 'read',
+        input: { filePath: 'README.md' },
+        arguments: '{"filePath":"README.md"}',
+      },
+    ]);
+  });
+
+  it('supports body.functions and body.max_completion_tokens', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hello' }],
+        functions: [
+          {
+            name: 'get_weather',
+            description: 'Get weather',
+            parameters: { type: 'object', properties: { loc: { type: 'string' } } },
+          },
+        ],
+        max_completion_tokens: 1024,
+      },
+      'google/gemini-2.5-pro',
+    );
+
+    expect(paramsOf(request).max_tokens).toBe(1024);
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'get_weather',
+        description: 'Get weather',
+        input_schema: { type: 'object', properties: { loc: { type: 'string' } } },
+      },
+    ]);
+  });
+
+  it('maps finish + usage onto the final chunk with diverse finish reasons and usage shapes', () => {
     const state = {
       responseId: 'r1',
       created: 1,
@@ -504,21 +725,21 @@ describe('commandCodeLineToOpenAiChunks', () => {
       usage: null,
     };
     commandCodeLineToOpenAiChunks(
-      '{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+      '{"type":"finish-step","finishReason":"end_turn","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
       state,
       'm',
     );
 
     expect(
       chunkOf(
-        '{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+        '{"type":"finish","totalUsage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
         state,
         'm',
       )?.choices[0].finish_reason,
     ).toBe('stop');
     expect(
       chunkOf(
-        '{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+        '{"type":"finish","totalUsage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
         state,
         'm',
       )?.usage,
@@ -673,6 +894,18 @@ describe('commandCodeErrorFromEvent', () => {
       commandCodeErrorFromEvent({
         type: 'error',
         error: { message: 'Too many requests, slow down' },
+      })?.status,
+    ).toBe(429);
+    expect(
+      commandCodeErrorFromEvent({
+        type: 'error',
+        error: { message: 'Quota exhausted for this resource' },
+      })?.status,
+    ).toBe(429);
+    expect(
+      commandCodeErrorFromEvent({
+        type: 'error',
+        error: { message: 'Insufficient quota balance' },
       })?.status,
     ).toBe(429);
   });
