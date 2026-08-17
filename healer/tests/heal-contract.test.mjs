@@ -339,3 +339,89 @@ test('existing rules still work (top_p_zero) with ctx param change', async () =>
   assert.equal(body.patchId, 'patch_top_p_zero');
   assert.equal(body.healedBody.top_p, undefined);
 });
+
+// ── tool calls and schema healing tests ────────────────────────
+test('invalid_tool_call_arguments stringifies object arguments in assistant messages', async () => {
+  const res = await post(`${base}/api/heal`, healBody({
+    request: {
+      model: 'gpt-5.6-luna',
+      messages: [
+        { role: 'user', content: 'test' },
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'bash', arguments: { command: 'echo hello' } },
+            },
+          ],
+        },
+      ],
+    },
+    response: {
+      statusCode: 400,
+      error: { message: "Invalid type for 'messages[1].tool_calls[0].function.arguments': expected a string, got object." },
+    },
+  }));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, 'patched');
+  assert.equal(body.patchId, 'patch_invalid_tool_call_arguments');
+  assert.equal(body.healedBody.messages[1].tool_calls[0].function.arguments, '{"command":"echo hello"}');
+});
+
+test('invalid_function_schema heals parameterless tools and functions', async () => {
+  const res = await post(`${base}/api/heal`, healBody({
+    request: {
+      model: 'gpt-5.6-luna',
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'no_params' },
+        },
+      ],
+      functions: [
+        {
+          name: 'legacy_fn',
+        },
+      ],
+    },
+    response: {
+      statusCode: 400,
+      error: { message: 'Function tool parameters root schema must have type \'object\'' },
+    },
+  }));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, 'patched');
+  assert.equal(body.patchId, 'patch_invalid_function_schema');
+  assert.deepEqual(body.healedBody.tools[0].function.parameters, { type: 'object', properties: {} });
+  assert.deepEqual(body.healedBody.functions[0].parameters, { type: 'object', properties: {} });
+});
+
+test('reasoning_content_missing matches various provider phrasings', async () => {
+  const res = await post(`${base}/api/heal`, healBody({
+    request: {
+      model: 'deepseek-v4-flash',
+      messages: [
+        { role: 'user', content: 'test' },
+        {
+          role: 'assistant',
+          tool_calls: [{ id: 'call_xyz', type: 'function', function: { name: 'bash', arguments: '{}' } }],
+        },
+      ],
+    },
+    response: {
+      statusCode: 400,
+      error: { message: "Missing required parameter: 'reasoning_content' for model deepseek-v4-flash." },
+    },
+    reasoningContentCache: { call_xyz: 'cached thoughts' },
+  }));
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, 'patched');
+  assert.equal(body.patchId, 'patch_reasoning_content_missing');
+  assert.equal(body.healedBody.messages[1].reasoning_content, 'cached thoughts');
+});
+

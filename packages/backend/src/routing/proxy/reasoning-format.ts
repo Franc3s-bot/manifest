@@ -37,6 +37,15 @@ const REASONING_CONTENT_AWARE_ENDPOINTS = new Set([
   'opencode-go',
   'opencode-zen',
   'custom',
+  'commandcode',
+  'byteplus',
+  'fireworks',
+  'ollama',
+  'ollama-cloud',
+  'kiro',
+  'clinepass',
+  'qwen',
+  'together',
 ]);
 
 const REASONING_MODEL_FAMILY_RE = /^(?:deepseek|kimi|glm|qwen|minimax|mimo)(?:[-_.\d]|$)/i;

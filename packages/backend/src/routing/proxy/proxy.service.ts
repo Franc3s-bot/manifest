@@ -526,6 +526,7 @@ export class ProxyService {
           resolveChatBody,
           stream,
           sessionKey,
+          sessionCacheKey,
           providerCacheKey,
           sessionMomentumKey,
           signal,
@@ -567,6 +568,7 @@ export class ProxyService {
       resolveChatBody,
       stream,
       sessionKey,
+      sessionCacheKey,
       providerCacheKey,
       signal,
       agentId,
@@ -599,7 +601,7 @@ export class ProxyService {
     const autofixApiMode = wireApiMode ?? apiMode;
     const reasoningContentCache = await this.reasoningCache.reasoningContentForHeal(
       wireRequestBody ?? body,
-      sessionKey,
+      sessionCacheKey,
     );
     const autofixAttempt =
       wireRequestBody && retryWireBody && (wireApiMode || wireFormat)
@@ -719,6 +721,7 @@ export class ProxyService {
           resolveChatBody,
           stream,
           sessionKey,
+          sessionCacheKey,
           providerCacheKey,
           sessionMomentumKey,
           signal,
@@ -828,6 +831,7 @@ export class ProxyService {
           resolveChatBody,
           stream,
           sessionKey,
+          sessionCacheKey,
           providerCacheKey,
           sessionMomentumKey,
           signal,
@@ -1627,6 +1631,7 @@ export class ProxyService {
     resolveChatBody?: ResolveChatBody;
     stream: boolean;
     sessionKey: string;
+    sessionCacheKey?: string;
     providerCacheKey?: string;
     sessionMomentumKey?: string;
     signal?: AbortSignal;
@@ -1655,6 +1660,7 @@ export class ProxyService {
       resolveChatBody,
       stream,
       sessionKey,
+      sessionCacheKey,
       providerCacheKey,
       sessionMomentumKey,
       signal,
@@ -1695,6 +1701,7 @@ export class ProxyService {
       args.credentialDashboardUrl,
       providerCacheKey,
       args.keyRotationState,
+      sessionCacheKey,
     );
 
     this.recordTierIfScoring(sessionMomentumKey, resolved.tier);

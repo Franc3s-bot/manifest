@@ -36,6 +36,7 @@ interface ForwardProviderOptions {
   resolveChatBody?: ResolveChatBody;
   stream: boolean;
   sessionKey: string;
+  sessionCacheKey?: string;
   providerCacheKey?: string;
   signal?: AbortSignal;
   authType?: string;
@@ -215,6 +216,7 @@ export class ProxyFallbackService {
      * behavior (no rotation).
      */
     keyRotationState?: KeyRotationState,
+    sessionCacheKey?: string,
   ): Promise<{
     success: {
       forward: ForwardResult;
@@ -373,6 +375,7 @@ export class ProxyFallbackService {
           resolveChatBody,
           stream,
           sessionKey,
+          sessionCacheKey,
           providerCacheKey,
           signal,
           agentId,
@@ -796,7 +799,7 @@ export class ProxyFallbackService {
             );
             resolved = await this.reasoningCache.prepareRequest(
               resolved,
-              opts.sessionKey,
+              opts.sessionCacheKey ?? opts.sessionKey,
               reasoningEndpointKey,
               forwardModel,
             );
@@ -807,7 +810,7 @@ export class ProxyFallbackService {
       : undefined;
     body = await this.reasoningCache.prepareRequest(
       body,
-      opts.sessionKey,
+      opts.sessionCacheKey ?? opts.sessionKey,
       reasoningEndpointKey,
       forwardModel,
     );
