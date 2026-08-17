@@ -178,7 +178,7 @@ opencode_path = os.path.expanduser("~/.config/opencode/opencode.jsonc")
 base_url = "unknown"
 if os.path.exists(opencode_path):
     with open(opencode_path, "r") as f:
-        m = re.search(r'"manifest"\s*:\s*\{[^}]*"baseURL"\s*:\s*"([^"]+)"', f.read(), re.DOTALL)
+        m = re.search(r'"manifest"\s*:\s*\{.*?"baseURL"\s*:\s*"([^"]+)"', f.read(), re.DOTALL)
         if m: base_url = m.group(1)
 print(f"BaseURL: {base_url}")
 if "2098" in base_url:
