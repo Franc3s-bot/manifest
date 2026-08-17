@@ -7,8 +7,8 @@
  *   - Staging / Dev (port 2100)
  *   - Feature Worktrees (port 2100+N)
  *
- * OpenCode, Paseo, and other AI agents connect to http://127.0.0.1:2098/v1
- * and never need config file edits or restarts when switching environments.
+ * OpenCode, Paseo, and other AI agents connect to http://100.69.158.7:2098/v1
+ * (or http://127.0.0.1:2098/v1) and never need config file edits or restarts.
  */
 
 const http = require('http');
@@ -18,16 +18,17 @@ const { URL } = require('url');
 
 const ROUTER_PORT = parseInt(process.env.ROUTER_PORT || '2098', 10);
 const HOST_BIND = process.env.HOST_BIND_ADDRESS || '0.0.0.0';
+const BACKEND_HOST = process.env.BACKEND_HOST || '100.69.158.7';
 const STATE_DIR = process.env.STATE_DIR || path.join(process.env.HOME || '/root', '.config/manifest-router');
 const STATE_FILE = process.env.STATE_FILE || path.join(STATE_DIR, 'state.json');
 
 // Standard backend ports
 const KNOWN_BACKENDS = {
-  prod: { name: 'prod', port: 2099, url: 'http://127.0.0.1:2099' },
-  production: { name: 'prod', port: 2099, url: 'http://127.0.0.1:2099' },
-  staging: { name: 'staging', port: 2100, url: 'http://127.0.0.1:2100' },
-  dev: { name: 'staging', port: 2100, url: 'http://127.0.0.1:2100' },
-  'manifest-dev': { name: 'staging', port: 2100, url: 'http://127.0.0.1:2100' },
+  prod: { name: 'prod', port: 2099, url: `http://${BACKEND_HOST}:2099` },
+  production: { name: 'prod', port: 2099, url: `http://${BACKEND_HOST}:2099` },
+  staging: { name: 'staging', port: 2100, url: `http://${BACKEND_HOST}:2100` },
+  dev: { name: 'staging', port: 2100, url: `http://${BACKEND_HOST}:2100` },
+  'manifest-dev': { name: 'staging', port: 2100, url: `http://${BACKEND_HOST}:2100` },
 };
 
 // Worktree stacks state file paths to check for dynamic worktree ports
@@ -40,7 +41,7 @@ const WORKTREE_STATE_PATHS = [
 let state = {
   active: 'prod',
   port: 2099,
-  targetUrl: 'http://127.0.0.1:2099',
+  targetUrl: `http://${BACKEND_HOST}:2099`,
   lastSwitched: new Date().toISOString()
 };
 
@@ -67,11 +68,11 @@ function loadState() {
   try {
     if (fs.existsSync(STATE_FILE)) {
       const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      if (data && data.active && data.port && data.targetUrl) {
+      if (data && data.active && data.port) {
         state = {
           active: data.active,
           port: data.port,
-          targetUrl: data.targetUrl,
+          targetUrl: `http://${BACKEND_HOST}:${data.port}`,
           lastSwitched: data.lastSwitched || new Date().toISOString()
         };
         return;
@@ -123,14 +124,14 @@ function resolveTarget(targetName) {
   const portMatch = lower.match(/^:?(\d{4,5})$/);
   if (portMatch) {
     const port = parseInt(portMatch[1], 10);
-    return { name: `custom-${port}`, port, url: `http://127.0.0.1:${port}` };
+    return { name: `custom-${port}`, port, url: `http://${BACKEND_HOST}:${port}` };
   }
 
   // Worktree slug: "wt-myfeature" or "wt:myfeature" or "myfeature"
   const wtSlug = lower.replace(/^wt[:-]/, '');
   const wtPort = resolveWorktreePort(wtSlug);
   if (wtPort) {
-    return { name: `wt-${wtSlug}`, port: wtPort, url: `http://127.0.0.1:${wtPort}` };
+    return { name: `wt-${wtSlug}`, port: wtPort, url: `http://${BACKEND_HOST}:${wtPort}` };
   }
 
   return null;
@@ -227,33 +228,16 @@ function handleControlRequest(req, res, reqUrl) {
   res.end(JSON.stringify({ status: 'error', message: `Unknown control route: ${pathname}` }));
 }
 
-function proxyRequest(req, res, reqUrl) {
-  stats.totalRequests++;
-  const activeRoute = state.active;
-  if (activeRoute.startsWith('wt-')) {
-    stats.routesHandled.worktree = (stats.routesHandled.worktree || 0) + 1;
-  } else if (activeRoute === 'staging' || activeRoute === 'dev') {
-    stats.routesHandled.staging = (stats.routesHandled.staging || 0) + 1;
-  } else {
-    stats.routesHandled.prod = (stats.routesHandled.prod || 0) + 1;
-  }
-
-  const startTime = Date.now();
-  const currentTarget = state.targetUrl;
-  const currentPort = state.port;
-  const currentActive = state.active;
-
-  const targetHost = '127.0.0.1';
+function tryForward(req, res, reqUrl, targetHost, targetPort, activeRoute, startTime, isFallback = false) {
   const proxyHeaders = { ...req.headers };
-  proxyHeaders.host = `${targetHost}:${currentPort}`;
-  // Ensure x-forwarded headers are present
+  proxyHeaders.host = `${targetHost}:${targetPort}`;
   proxyHeaders['x-forwarded-for'] = req.socket.remoteAddress || '127.0.0.1';
   proxyHeaders['x-forwarded-proto'] = 'http';
   proxyHeaders['x-forwarded-host'] = req.headers.host || `localhost:${ROUTER_PORT}`;
 
   const options = {
     hostname: targetHost,
-    port: currentPort,
+    port: targetPort,
     path: req.url,
     method: req.method,
     headers: proxyHeaders,
@@ -261,37 +245,38 @@ function proxyRequest(req, res, reqUrl) {
   };
 
   const proxyReq = http.request(options, (proxyRes) => {
-    // Forward response headers immediately without buffering
     const responseHeaders = { ...proxyRes.headers };
-    responseHeaders['x-manifest-routed-to'] = `${currentActive} (:${currentPort})`;
+    responseHeaders['x-manifest-routed-to'] = `${activeRoute} (:${targetPort})`;
     responseHeaders['x-manifest-router'] = '1.0';
 
     res.writeHead(proxyRes.statusCode || 200, responseHeaders);
-
-    // Stream chunks directly to client (SSE / JSON)
     proxyRes.pipe(res);
 
     proxyRes.on('end', () => {
       const duration = Date.now() - startTime;
-      const logTag = currentActive.toUpperCase();
-      console.log(`[ROUTER] ${req.method} ${reqUrl.pathname} -> ${logTag} (:${currentPort}) | ${proxyRes.statusCode} | ${duration}ms`);
+      console.log(`[ROUTER] ${req.method} ${reqUrl.pathname} -> ${activeRoute.toUpperCase()} (${targetHost}:${targetPort}) | ${proxyRes.statusCode} | ${duration}ms`);
     });
   });
 
   proxyReq.on('error', (err) => {
+    // If connecting to BACKEND_HOST failed with ECONNREFUSED and we haven't tried 127.0.0.1 yet, try 127.0.0.1 fallback
+    if (!isFallback && targetHost !== '127.0.0.1' && err.code === 'ECONNREFUSED') {
+      return tryForward(req, res, reqUrl, '127.0.0.1', targetPort, activeRoute, startTime, true);
+    }
+
     stats.errors++;
     const duration = Date.now() - startTime;
-    console.error(`[ROUTER] ❌ Error proxying to ${currentActive} (:${currentPort}) [${duration}ms]: ${err.message}`);
+    console.error(`[ROUTER] ❌ Error proxying to ${activeRoute} (${targetHost}:${targetPort}) [${duration}ms]: ${err.message}`);
 
     if (!res.headersSent) {
       res.writeHead(502, {
         'Content-Type': 'application/json; charset=utf-8',
-        'x-manifest-routed-to': `${currentActive} (:${currentPort})`,
+        'x-manifest-routed-to': `${activeRoute} (:${targetPort})`,
         'x-manifest-router': 'error'
       });
       res.end(JSON.stringify({
         error: {
-          message: `Manifest Router: Backend '${currentActive}' on port ${currentPort} is unreachable (${err.code || err.message}). Verify the stack is running with './scripts/switch-manifest.sh status'.`,
+          message: `Manifest Router: Backend '${activeRoute}' on port ${targetPort} is unreachable (${err.code || err.message}). Verify the stack is running with './scripts/switch-manifest.sh status'.`,
           type: 'router_gateway_error',
           param: null,
           code: 502
@@ -306,8 +291,25 @@ function proxyRequest(req, res, reqUrl) {
     proxyReq.destroy(new Error('Gateway Timeout (300s exceeded)'));
   });
 
-  // Pipe incoming request stream (payload) to backend
   req.pipe(proxyReq);
+}
+
+function proxyRequest(req, res, reqUrl) {
+  stats.totalRequests++;
+  const activeRoute = state.active;
+  if (activeRoute.startsWith('wt-')) {
+    stats.routesHandled.worktree = (stats.routesHandled.worktree || 0) + 1;
+  } else if (activeRoute === 'staging' || activeRoute === 'dev') {
+    stats.routesHandled.staging = (stats.routesHandled.staging || 0) + 1;
+  } else {
+    stats.routesHandled.prod = (stats.routesHandled.prod || 0) + 1;
+  }
+
+  const startTime = Date.now();
+  const currentPort = state.port;
+  const targetHost = BACKEND_HOST;
+
+  tryForward(req, res, reqUrl, targetHost, currentPort, activeRoute, startTime);
 }
 
 // ── Server Startup ───────────────────────────────────────────────────────────
@@ -332,8 +334,9 @@ server.listen(ROUTER_PORT, HOST_BIND, () => {
   console.log(`=======================================================`);
   console.log(` Manifest Dynamic Router v1.0 running on ${HOST_BIND}:${ROUTER_PORT}`);
   console.log(` Active Route:   ${state.active.toUpperCase()} (${state.targetUrl})`);
+  console.log(` Backend Host:   ${BACKEND_HOST} (with 127.0.0.1 fallback)`);
   console.log(` State File:     ${STATE_FILE}`);
-  console.log(` Control API:    http://127.0.0.1:${ROUTER_PORT}/__router/status`);
+  console.log(` Control API:    http://${BACKEND_HOST}:${ROUTER_PORT}/__router/status`);
   console.log(`=======================================================`);
 });
 
@@ -348,7 +351,7 @@ try {
           if (fresh && (fresh.active !== state.active || fresh.port !== state.port)) {
             state.active = fresh.active;
             state.port = fresh.port;
-            state.targetUrl = fresh.targetUrl;
+            state.targetUrl = `http://${BACKEND_HOST}:${fresh.port}`;
             state.lastSwitched = fresh.lastSwitched;
             console.log(`[ROUTER] 🔄 State updated from disk: ${state.active.toUpperCase()} (:${state.port})`);
           }
