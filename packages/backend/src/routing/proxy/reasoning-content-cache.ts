@@ -283,12 +283,18 @@ function reasoningReplayCandidate(message: unknown): ReasoningReplayCandidate | 
   const record = message as Record<string, unknown>;
   if (typeof record.reasoning_content === 'string' && record.reasoning_content) return null;
   if (!Array.isArray(record.tool_calls) || record.tool_calls.length === 0) return null;
-  const firstToolCall = record.tool_calls[0];
-  if (!firstToolCall || typeof firstToolCall !== 'object' || Array.isArray(firstToolCall)) {
-    return { cacheKey: null };
+  for (const call of record.tool_calls) {
+    if (!call || typeof call !== 'object' || Array.isArray(call)) continue;
+    const callRec = call as Record<string, unknown>;
+    const id =
+      typeof callRec.id === 'string' && callRec.id
+        ? callRec.id
+        : typeof callRec.toolCallId === 'string' && callRec.toolCallId
+          ? callRec.toolCallId
+          : null;
+    if (id) return { cacheKey: id };
   }
-  const id = (firstToolCall as Record<string, unknown>).id;
-  return { cacheKey: typeof id === 'string' && id ? id : null };
+  return { cacheKey: null };
 }
 
 function repeatedReplayKeys(keys: string[]): Set<string> {
