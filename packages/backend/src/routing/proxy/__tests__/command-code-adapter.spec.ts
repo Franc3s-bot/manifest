@@ -632,6 +632,52 @@ describe('commandCodeLineToOpenAiChunks', () => {
     });
   });
 
+  it('emits arguments on consolidated tool-call even if tool-call-start preceded it without deltas', () => {
+    const state = {
+      responseId: 'r_start_and_consolidated',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      toolArgBytesById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+
+    // 1. Upstream emits tool-call-start with empty arguments
+    const startChunk = chunkOf(
+      '{"type":"tool-call-start","id":"call_luna_1","toolName":"bash"}',
+      state,
+      'm',
+    );
+    expect(startChunk?.choices[0].delta).toMatchObject({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'call_luna_1',
+          type: 'function',
+          function: { name: 'bash', arguments: '' },
+        },
+      ],
+    });
+
+    // 2. Upstream emits NO tool-call-delta, but immediately emits consolidated tool-call
+    const consolidatedChunk = chunkOf(
+      '{"type":"tool-call","toolCallId":"call_luna_1","toolName":"bash","args":{"command":"npm test"}}',
+      state,
+      'm',
+    );
+    expect(consolidatedChunk?.choices[0].delta).toEqual({
+      tool_calls: [
+        {
+          index: 0,
+          function: { arguments: '{"command":"npm test"}' },
+        },
+      ],
+    });
+  });
+
   it('handles Anthropic-style and AI SDK style tool_calls in assistant history', () => {
     const request = buildCommandCodeChatRequest(
       {
