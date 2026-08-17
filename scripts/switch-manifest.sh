@@ -174,12 +174,15 @@ PY
   echo "═══ OpenCode Manifest Provider ═══"
   python3 - <<'PY'
 import json, os, re
-opencode_path = os.path.expanduser("~/.config/opencode/opencode.jsonc")
+opencode_paths = [os.path.expanduser("~/.config/opencode/opencode.jsonc"), "/root/.config/opencode/opencode.jsonc"]
 base_url = "unknown"
-if os.path.exists(opencode_path):
-    with open(opencode_path, "r") as f:
-        m = re.search(r'"manifest"\s*:\s*\{.*?"baseURL"\s*:\s*"([^"]+)"', f.read(), re.DOTALL)
-        if m: base_url = m.group(1)
+for opencode_path in opencode_paths:
+    if os.path.exists(opencode_path):
+        with open(opencode_path, "r") as f:
+            m = re.search(r'"manifest"\s*:\s*\{.*?"baseURL"\s*:\s*"([^"]+)"', f.read(), re.DOTALL)
+            if m:
+                base_url = m.group(1)
+                break
 print(f"BaseURL: {base_url}")
 if "2098" in base_url:
     print("✓ OpenCode is connected to the Dynamic Router (:2098).")
