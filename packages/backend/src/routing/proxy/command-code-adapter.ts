@@ -401,6 +401,7 @@ interface CommandCodeStreamState {
   chunkIndex: number;
   toolIndex: number;
   toolIndexById: Map<string, number>;
+  toolArgBytesById?: Map<string, number>;
   finishReason: string | null;
   usage: Record<string, unknown> | null;
 }
@@ -443,7 +444,7 @@ function mapFinishReason(reason: string | undefined): string {
 function ensureState(
   state: CommandCodeStreamState | undefined,
   model: string,
-): CommandCodeStreamState {
+): CommandCodeStreamState & { toolArgBytesById: Map<string, number> } {
   if (!state || !state.responseId) {
     return {
       responseId: `chatcmpl-${Date.now()}`,
@@ -452,11 +453,15 @@ function ensureState(
       chunkIndex: 0,
       toolIndex: 0,
       toolIndexById: new Map(),
+      toolArgBytesById: new Map(),
       finishReason: null,
       usage: null,
     };
   }
-  return state;
+  if (!state.toolArgBytesById) {
+    state.toolArgBytesById = new Map();
+  }
+  return state as CommandCodeStreamState & { toolArgBytesById: Map<string, number> };
 }
 
 function buildChunk(
@@ -793,6 +798,7 @@ export function commandCodeLineToOpenAiChunks(
       if (index == null) {
         index = st.toolIndex++;
         st.toolIndexById.set(id, index);
+        st.toolArgBytesById.set(id, 0);
       }
       out.push(
         buildChunk(st, {
@@ -823,6 +829,10 @@ export function commandCodeLineToOpenAiChunks(
         (event.delta as string) ??
         (event.inputTextDelta as string) ??
         '';
+      if (id) {
+        const currentBytes = st.toolArgBytesById.get(id) ?? 0;
+        st.toolArgBytesById.set(id, currentBytes + delta.length);
+      }
       out.push(
         buildChunk(st, {
           tool_calls: [
@@ -838,11 +848,7 @@ export function commandCodeLineToOpenAiChunks(
       break;
     }
     case 'tool-call': {
-      // Final consolidated tool call — only emit if we never saw tool-input-*.
       const id = (event.toolCallId as string) ?? (event.id as string);
-      if (id && st.toolIndexById.has(id)) break;
-      const index = st.toolIndex++;
-      if (id) st.toolIndexById.set(id, index);
       const rawArgs =
         event.args !== undefined
           ? event.args
@@ -852,6 +858,35 @@ export function commandCodeLineToOpenAiChunks(
       const argsStr =
         typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
       const toolName = (event.toolName as string) ?? (event.name as string) ?? '';
+
+      const existingIndex = id ? st.toolIndexById.get(id) : undefined;
+      if (existingIndex !== undefined) {
+        // We already saw tool-call-start for this id.
+        const streamedBytes = id ? (st.toolArgBytesById.get(id) ?? 0) : 0;
+        if (streamedBytes === 0 && argsStr) {
+          // No deltas were emitted! Emit the arguments delta chunk now.
+          out.push(
+            buildChunk(st, {
+              tool_calls: [
+                {
+                  index: existingIndex,
+                  function: { arguments: argsStr },
+                },
+              ],
+            }),
+          );
+          if (id) st.toolArgBytesById.set(id, argsStr.length);
+        }
+        // If streamedBytes > 0, arguments were already streamed via deltas.
+        break;
+      }
+
+      // We NEVER saw tool-call-start for this id. Emit the whole tool call in one chunk.
+      const index = st.toolIndex++;
+      if (id) {
+        st.toolIndexById.set(id, index);
+        st.toolArgBytesById.set(id, argsStr.length);
+      }
       out.push(
         buildChunk(st, {
           ...(st.chunkIndex === 0 ? { role: 'assistant' } : {}),
