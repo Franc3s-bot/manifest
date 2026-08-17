@@ -1,148 +1,96 @@
 ---
 name: manifest-dev
-description: Manage the Manifest Prod/Dev dual-stack setup (prod 2099 / dev 2100). Use when the user asks to switch between prod and dev, snapshot the database, check stack status, rebuild containers, or anything related to the dev environment protocol.
+description: Manage the Manifest Prod/Staging/Worktree multi-stack setup (router 2098 / prod 2099 / staging 2100 / worktrees 2100+N). Use when the user asks to switch between prod and staging/dev models, snapshot the database, check stack status, rebuild containers, manage worktree stacks, or anything related to the dev environment protocol.
 ---
 
-# Manifest Dev Protocol
+# Manifest Dev & Staging Protocol
 
-Two Manifest instances run side-by-side on the same host:
+Two permanent Manifest instances run side-by-side on the host, plus on-demand isolated worktree stacks, routed via the **Manifest Dynamic Router (Port 2098)**:
 
-| Stack | Port | Healer | DB Volume | Docker Project |
-|-------|------|--------|-----------|----------------|
-| Prod  | 2099 | 3100   | `manifest_pgdata` | `mnfst` |
-| Dev   | 2100 | 3101   | `manifest_dev_pgdata` | `mnfst-dev` |
+| Service / Stack | Port | Healer | DB Volume | Docker Project | Managed by |
+|---|---|---|---|---|---|
+| **Dynamic Router** | **2098** | - | - | Systemd daemon (`manifest-router.service`) | `switch-manifest.sh` |
+| **Prod** | 2099 | 3100 | `manifest_pgdata` | `mnfst` | `switch-manifest.sh` |
+| **Staging (Dev)** | 2100 | 3101 | `manifest_dev_pgdata` | `mnfst-dev` | `switch-manifest.sh` |
+| **Feature worktree** | 2100+N | 3100+N | `manifest_wt_<slug>_pgdata` | `mnfst-wt-<slug>` | `worktree-stack.sh` |
 
-**Rule:** All development happens on Dev (2100). Prod (2099) is stable and snapshotted into Dev when ready.
+---
 
-## Worktree Stacks (Isolation by Default)
+## 1. Quick Model & Provider Routing (Prod ↔ Staging)
 
-Three tiers of Manifest stacks coexist on the host:
-
-| Tier | Project | Port | Image | DB Volume | Managed by |
-|------|---------|------|-------|-----------|------------|
-| Prod | `mnfst` | 2099 | `manifestdotbuild/manifest:latest` | `manifest_pgdata` | `switch-manifest.sh` |
-| Dev | `mnfst-dev` | 2100 | `MANIFEST_VERSION` from `docker/.env.dev` | `manifest_dev_pgdata` | `switch-manifest.sh` |
-| Feature worktree | `mnfst-wt-<slug>` | 2100+N | `manifestdotbuild/manifest:<slug>` | `manifest_wt_<slug>_pgdata` | `worktree-stack.sh` |
-
-- **Prod 2099** — released main, untouched by feature work.
-- **Dev 2100** — the always-on safe test bed and daily driver (`switch-manifest.sh dev`).
-- **Feature worktrees** — EVERY feature worktree gets its own disposable, isolated stack by default, so parallel lanes never interfere with each other or with dev. Containers are `mnfst-wt-<slug>-manifest-1`, `mnfst-wt-<slug>-postgres-1`, `mnfst-wt-<slug>-healer-1`.
-
-**Naming scheme:** slug = sanitized worktree-dir basename (`[a-z0-9-]`, `--slug` overrides). Port slot N is the lowest free integer in 2..99 (skipping bound/taken ports); manifest = `2100+N`, healer = `3100+N`. Volumes: `manifest_wt_<slug>_pgdata`, `manifest_wt_<slug>_request_recordings`. Slot allocation is recorded in `docker/.worktree-stacks.json` (gitignored) and guarded with `flock`; `down` frees the slot.
-
-**Bind address:** `HOST_BIND_ADDRESS` is forced to the host's live Tailscale IP (`tailscale ip -4`, fallback `100.69.158.7`) in the generated per-stack env, so every test stack is reachable over the tailnet (e.g. `http://100.69.158.7:2102/v1`) — never just localhost, regardless of what a worktree's own `.env.dev` says.
-
-**Commands** (run from the worktree's repo root):
+Switching is **immediate** via the dynamic router without modifying config files or restarting OpenCode:
 
 ```bash
-# Start an isolated stack for a worktree (snapshot = DEFAULT: copies prod DB in)
-./scripts/worktree-stack.sh up ../other-worktree --slug mylane            # with prod-DB snapshot
-./scripts/worktree-stack.sh up ../other-worktree --slug mylane --no-snapshot  # fresh empty DB
-./scripts/worktree-stack.sh up . --slug scratchtest --no-snapshot
+# Route ALL models and sub-agents to STAGING (port 2100):
+./scripts/switch-manifest.sh staging
 
-# Rebuild image from the worktree source + recreate stack (DB volume retained)
-./scripts/worktree-stack.sh rebuild mylane
+# Route ALL models and sub-agents to PRODUCTION (port 2099):
+./scripts/switch-manifest.sh prod
 
-# Status table (ports, branch, worktree, health; orphans flagged) + prod/dev one-liner
+# Check current active route and stack health:
+./scripts/switch-manifest.sh status
+```
+
+---
+
+## 2. Restarts
+
+```bash
+# Restart the dynamic router (:2098):
+./scripts/switch-manifest.sh restart-router
+
+# Rebuild image from main and restart Production (:2099):
+./scripts/switch-manifest.sh restart-prod
+
+# Rebuild image from staging and restart Staging (:2100):
+./scripts/switch-manifest.sh restart-staging
+```
+
+---
+
+## 3. Database Snapshots (Bidirectional)
+
+```bash
+# Copy Production DB (2099) -> Staging DB (2100):
+./scripts/switch-manifest.sh snapshot prod-to-staging
+
+# Copy Staging DB (2100) -> Production DB (2099):
+./scripts/switch-manifest.sh snapshot staging-to-prod
+```
+
+---
+
+## 4. Local Feature Worktrees (`worktree-stack.sh`)
+
+```bash
+# Start an isolated stack for the current worktree:
+./scripts/worktree-stack.sh up
+
+# Check status and port for the current worktree stack:
 ./scripts/worktree-stack.sh status
 
-# Teardown — stops containers, removes generated files, frees the slot
-./scripts/worktree-stack.sh down mylane
-# ...and delete the stack's volumes too
-./scripts/worktree-stack.sh down mylane --purge-volume
+# Rebuild worktree image:
+./scripts/worktree-stack.sh build
+# (or ./scripts/worktree-stack.sh rebuild)
 
-# Follow the stack's manifest logs
-./scripts/worktree-stack.sh logs mylane
-
-# Help
-./scripts/worktree-stack.sh help
+# Stop worktree stack and release port slot:
+./scripts/worktree-stack.sh down
 ```
 
-**Safety:** worktree stacks never touch prod/dev containers, volumes, or images; only the project names prefixed `mnfst-wt-` are ever created/managed. The gitignored `docker/.env.dev` is read from the worktree (falling back to the repo's main checkout) and copied into `docker/.env.wt-<slug>` with PORT / HEALER_PORT / MANIFEST_VERSION / BETTER_AUTH_URL / HOST_BIND_ADDRESS overridden.
+---
 
-**Login:** every stack (and Dev after each `snapshot`) is seeded with `admin@manifest.local` / `admin1234` (product enforces an 8-char min password). Override with `WT_ADMIN_EMAIL` / `WT_ADMIN_PASSWORD`; skip per-stack with `--no-admin`. Fresh DBs go through `POST /api/v1/setup/admin` (first admin); snapshotted DBs use `POST /api/auth/sign-up/email` since prod users already exist.
+## 5. Paseo UI Shortcuts (`paseo.json`)
 
-## File Locations
-
-```
-/root/.paseo/worktrees/1p7riqru/evil-husky/
-├── docker/
-│   ├── docker-compose.yml       # prod compose
-│   ├── docker-compose.dev.yml   # dev compose
-│   ├── .env                     # prod env (gitignored)
-│   └── .env.dev                 # dev env (gitignored)
-├── scripts/
-│   └── switch-manifest.sh       # management script
-└── healer/                      # healer source (shared by both stacks)
-```
-
-## Switch Script
-
-Location: `scripts/switch-manifest.sh` (relative to repo root)
-
-```bash
-# Check both stacks + active OpenCode preset
-./scripts/switch-manifest.sh status
-
-# Switch OpenCode preset (restart OpenCode after)
-./scripts/switch-manifest.sh dev      # → manifest-dev preset (2100)
-./scripts/switch-manifest.sh prod     # → manifest preset (2099)
-
-# Copy prod DB into Dev (replaces entire Dev database)
-./scripts/switch-manifest.sh snapshot
-
-# Lifecycle
-./scripts/switch-manifest.sh up       # start both
-./scripts/switch-manifest.sh down     # stop both
-./scripts/switch-manifest.sh rebuild  # rebuild image + restart both
-
-# Help
-./scripts/switch-manifest.sh help
-```
-
-## OpenCode Config
-
-Provider definitions in `~/.config/opencode/opencode.jsonc`:
-- `manifest` → `http://100.69.158.7:2099/v1` (prod)
-- `manifest-dev` → `http://100.69.158.7:2100/v1` (dev)
-
-Preset definitions in `~/.config/opencode/oh-my-opencode-slim.jsonc`:
-- `manifest` — tiered models (auto-simple/standard/complex/vision) via prod
-- `manifest-dev` — same tiered models via Dev
-- `opencode-go` — fallback direct provider
-
-## Docker Commands (Direct)
-
-If the switch script isn't available, run from the repo root:
-
-```bash
-REPO=/root/.paseo/worktrees/1p7riqru/evil-husky
-
-# Prod
-docker compose -f $REPO/docker/docker-compose.yml \
-  --project-directory $REPO/docker --env-file $REPO/docker/.env up -d
-
-# Dev
-docker compose -f $REPO/docker/docker-compose.dev.yml \
-  --project-directory $REPO/docker --env-file $REPO/docker/.env.dev up -d
-
-# Dev postgres is on the same host port as prod (5432 is internal only).
-# Both stacks use isolated Docker networks (mnfst_internal vs mnfst-dev_internal).
-```
-
-## Typical Workflow
-
-1. **Start developing:** `switch-manifest.sh dev` → restart OpenCode
-2. **Test changes:** send requests to `http://100.69.158.7:2100/v1`
-3. **When stable:** `switch-manifest.sh snapshot` or promote
-4. **After code changes:** `switch-manifest.sh rebuild`
-
-## Snapshot Details
-
-The snapshot uses `pg_dump -Fc` (custom format) for reliable binary transfer:
-1. Stops Dev manifest (releases DB connections)
-2. Dumps prod DB to `/tmp/prod.dump`
-3. Copies dump into Dev postgres container
-4. Drops + recreates Dev database
-5. Restores via `pg_restore`
-6. Starts Dev manifest + health check
+The following clean set of 12 shortcuts is configured in `paseo.json`:
+- `status`: Show router and stack status
+- `route-prod`: Switch router to Production (:2099)
+- `route-staging`: Switch router to Staging (:2100)
+- `restart-prod`: Rebuild and restart Production (:2099)
+- `restart-staging`: Rebuild and restart Staging (:2100)
+- `restart-router`: Restart the Dynamic Router (:2098)
+- `snapshot-prod-to-staging`: Copy Prod DB -> Staging DB
+- `snapshot-staging-to-prod`: Copy Staging DB -> Prod DB
+- `worktree-status`: Check worktree stack status
+- `worktree-build`: Rebuild worktree image
+- `worktree-up`: Start worktree stack
+- `worktree-down`: Stop worktree stack
