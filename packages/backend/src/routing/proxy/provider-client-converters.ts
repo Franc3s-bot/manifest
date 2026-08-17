@@ -341,8 +341,11 @@ function sanitizeOpenAiMessages(
         } else {
           fn.arguments = '{}';
         }
-        record.function = fn;
-        return record;
+        return {
+          id: finalId,
+          type: 'function',
+          function: fn,
+        };
       });
     }
 
@@ -360,6 +363,8 @@ function sanitizeOpenAiMessages(
               : '';
         cleaned.tool_call_id = isMistral ? normalizeMistralToolCallId(fallbackId) : fallbackId;
       }
+      delete cleaned.toolCallId;
+      delete cleaned.toolName;
       if (
         cleaned.content !== undefined &&
         cleaned.content !== null &&
@@ -457,8 +462,6 @@ export function sanitizeOpenAiBody(
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
   const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
-  const convertMaxTokens =
-    needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
 
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
@@ -489,8 +492,10 @@ export function sanitizeOpenAiBody(
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that
     // require it (native OpenAI + Copilot for o-series / GPT-5+). Applies in both
     // passthrough and non-passthrough branches.
-    if (convertMaxTokens && key === 'max_tokens') {
-      cleaned['max_completion_tokens'] = value;
+    if (needsMaxCompletionTokens && key === 'max_tokens') {
+      if (!('max_completion_tokens' in body)) {
+        cleaned['max_completion_tokens'] = value;
+      }
       continue;
     }
     if (passthroughTopLevel) {

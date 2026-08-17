@@ -2180,6 +2180,40 @@ describe('ProxyService — orchestration', () => {
       expect(momentum.recordTier).not.toHaveBeenCalled();
     });
 
+    it('propagates sessionCacheKey to tryForwardToProvider and reasoningContentForHeal', async () => {
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('deepseek', 'api_key', 'deepseek-v4-flash'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockResolvedValue({
+        response: new Response(JSON.stringify({ error: { message: 'Missing reasoning_content' } }), {
+          status: 400,
+        }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+        wireRequestBody: { messages: [{ role: 'user', content: 'hi' }] },
+        retryWireBody: jest.fn(),
+        wireFormat: 'openai',
+      });
+
+      await svc.proxyRequest(baseOpts());
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionCacheKey: 'cache-sess-1',
+          sessionKey: 'sess-1',
+        }),
+      );
+      expect(reasoningCache.reasoningContentForHeal).toHaveBeenCalledWith(
+        expect.anything(),
+        'cache-sess-1',
+      );
+    });
+
     // Telemetry snapshot proofs. The `RoutingMeta.request_params` field
     // drives the per-row Model Parameters accordion in the dashboard; these
     // tests pin (a) it gets populated for the primary provider on success,

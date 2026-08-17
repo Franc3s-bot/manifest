@@ -1395,8 +1395,57 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
     const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
     const messages = result.messages as Array<Record<string, unknown>>;
     const toolCalls = messages[0].tool_calls as Array<Record<string, unknown>>;
-    expect(toolCalls[0].function).toEqual({ name: 'bash', arguments: '{"command":"echo hi"}' });
-    expect(toolCalls[1].function).toEqual({ name: 'read_file', arguments: '{"path":"README.md"}' });
+    expect(toolCalls[0]).toEqual({
+      id: 'call_abc',
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"echo hi"}' },
+    });
+    expect(toolCalls[1]).toEqual({
+      id: 'call_def',
+      type: 'function',
+      function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+    });
+  });
+
+  it('strips non-standard properties from role: tool messages', () => {
+    const body = {
+      messages: [
+        {
+          role: 'tool',
+          toolCallId: 'call_abc',
+          toolName: 'bash',
+          content: { output: 'success' },
+        },
+      ],
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_abc',
+      content: '{"output":"success"}',
+    });
+  });
+
+  it('drops max_tokens when max_completion_tokens is already set for GPT-5 models', () => {
+    const body = {
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 1000,
+      max_completion_tokens: 2000,
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    expect(result.max_completion_tokens).toBe(2000);
+    expect(result.max_tokens).toBeUndefined();
+  });
+
+  it('converts max_tokens to max_completion_tokens when max_completion_tokens is absent for GPT-5', () => {
+    const body = {
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 1000,
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    expect(result.max_completion_tokens).toBe(1000);
+    expect(result.max_tokens).toBeUndefined();
   });
 
   it('normalizes parameterless tools and legacy functions in request body', () => {

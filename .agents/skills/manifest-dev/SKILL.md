@@ -1,148 +1,101 @@
 ---
 name: manifest-dev
-description: Manage the Manifest Prod/Dev dual-stack setup (prod 2099 / dev 2100). Use when the user asks to switch between prod and dev, snapshot the database, check stack status, rebuild containers, or anything related to the dev environment protocol.
+description: Manage the Manifest Prod/Staging/Worktree multi-stack setup (prod 2099 / staging 2100 / worktrees 2100+N). Use when the user asks to switch between prod and staging/dev models, snapshot the database, check stack status, rebuild containers, manage worktree stacks, or anything related to the dev environment protocol.
 ---
 
-# Manifest Dev Protocol
+# Manifest Dev & Staging Protocol
 
-Two Manifest instances run side-by-side on the same host:
+Two permanent Manifest instances run side-by-side on the host, plus on-demand isolated worktree stacks:
 
-| Stack | Port | Healer | DB Volume | Docker Project |
-|-------|------|--------|-----------|----------------|
-| Prod  | 2099 | 3100   | `manifest_pgdata` | `mnfst` |
-| Dev   | 2100 | 3101   | `manifest_dev_pgdata` | `mnfst-dev` |
+| Stack | Port | Healer | DB Volume | Docker Project | Managed by |
+|-------|------|--------|-----------|----------------|------------|
+| Prod | 2099 | 3100 | `manifest_pgdata` | `mnfst` | `switch-manifest.sh` |
+| Staging (Dev) | 2100 | 3101 | `manifest_dev_pgdata` | `mnfst-dev` | `switch-manifest.sh` |
+| Feature worktree | 2100+N | 3100+N | `manifest_wt_<slug>_pgdata` | `mnfst-wt-<slug>` | `worktree-stack.sh` |
 
-**Rule:** All development happens on Dev (2100). Prod (2099) is stable and snapshotted into Dev when ready.
+- **Prod 2099** — released `main` branch image (`manifest:latest`), untouched by feature work.
+- **Staging 2100** — the always-on test bed running the `staging` branch image (`manifest:staging`).
+- **Feature worktrees** — every feature worktree gets its own disposable, isolated stack with automatic port allocation and prod DB snapshot baseline.
 
-## Worktree Stacks (Isolation by Default)
+---
 
-Three tiers of Manifest stacks coexist on the host:
+## 1. Quick Model & Provider Switching (Prod ↔ Staging)
 
-| Tier | Project | Port | Image | DB Volume | Managed by |
-|------|---------|------|-------|-----------|------------|
-| Prod | `mnfst` | 2099 | `manifestdotbuild/manifest:latest` | `manifest_pgdata` | `switch-manifest.sh` |
-| Dev | `mnfst-dev` | 2100 | `MANIFEST_VERSION` from `docker/.env.dev` | `manifest_dev_pgdata` | `switch-manifest.sh` |
-| Feature worktree | `mnfst-wt-<slug>` | 2100+N | `manifestdotbuild/manifest:<slug>` | `manifest_wt_<slug>_pgdata` | `worktree-stack.sh` |
-
-- **Prod 2099** — released main, untouched by feature work.
-- **Dev 2100** — the always-on safe test bed and daily driver (`switch-manifest.sh dev`).
-- **Feature worktrees** — EVERY feature worktree gets its own disposable, isolated stack by default, so parallel lanes never interfere with each other or with dev. Containers are `mnfst-wt-<slug>-manifest-1`, `mnfst-wt-<slug>-postgres-1`, `mnfst-wt-<slug>-healer-1`.
-
-**Naming scheme:** slug = sanitized worktree-dir basename (`[a-z0-9-]`, `--slug` overrides). Port slot N is the lowest free integer in 2..99 (skipping bound/taken ports); manifest = `2100+N`, healer = `3100+N`. Volumes: `manifest_wt_<slug>_pgdata`, `manifest_wt_<slug>_request_recordings`. Slot allocation is recorded in `docker/.worktree-stacks.json` (gitignored) and guarded with `flock`; `down` frees the slot.
-
-**Bind address:** `HOST_BIND_ADDRESS` is forced to the host's live Tailscale IP (`tailscale ip -4`, fallback `100.69.158.7`) in the generated per-stack env, so every test stack is reachable over the tailnet (e.g. `http://100.69.158.7:2102/v1`) — never just localhost, regardless of what a worktree's own `.env.dev` says.
-
-**Commands** (run from the worktree's repo root):
+When you want to test the staging version in your everyday workflow with OpenCode and Paseo:
 
 ```bash
-# Start an isolated stack for a worktree (snapshot = DEFAULT: copies prod DB in)
-./scripts/worktree-stack.sh up ../other-worktree --slug mylane            # with prod-DB snapshot
-./scripts/worktree-stack.sh up ../other-worktree --slug mylane --no-snapshot  # fresh empty DB
-./scripts/worktree-stack.sh up . --slug scratchtest --no-snapshot
+# Switch ALL models and sub-agents to STAGING (port 2100):
+./scripts/switch-manifest.sh staging
+# or: ./scripts/switch-manifest.sh dev
 
-# Rebuild image from the worktree source + recreate stack (DB volume retained)
-./scripts/worktree-stack.sh rebuild mylane
+# Switch ALL models and sub-agents back to PRODUCTION (port 2099):
+./scripts/switch-manifest.sh prod
 
-# Status table (ports, branch, worktree, health; orphans flagged) + prod/dev one-liner
+# Or simply toggle between them:
+./scripts/switch-manifest.sh toggle
+
+# Check current active mode and health across all stacks:
+./scripts/switch-manifest.sh status
+```
+
+### What gets synchronized automatically:
+1. **OhMyOpenCodeSlim Preset**: `~/.config/opencode/oh-my-opencode-slim.jsonc` (`preset: "manifest"` ↔ `"manifest-dev"`). Sub-agents (oracle, council, orchestrator, designer, fixer, librarian, explorer, observer) route to the matching tier models.
+2. **OpenCode Core Models**: `~/.config/opencode/opencode.jsonc` (`model: "manifest/auto"` ↔ `"manifest-dev/auto"`, `small_model: "manifest/auto-simple"` ↔ `"manifest-dev/auto-simple"`).
+3. **OpenCode Custom Agents**: `~/.config/opencode/agents/*.md` (`build.md`, `plan.md`, `paseo-coordinator.md`).
+4. **Paseo Coordinator Agent Profile**: `~/.paseo/config.json` (`agent_profile_msth4nm4_lritziw6ft` model: `manifest/auto-standard` ↔ `manifest-dev/auto-standard`).
+5. **Paseo Metadata Generation**: `~/.paseo/config.json` (`metadataGeneration.providers`: `manifest/auto-simple` ↔ `manifest-dev/auto-simple`).
+6. **Paseo Orchestration Preferences**: `~/.paseo/orchestration-preferences.json` (all specialist providers: `opencode/manifest/auto-{tier}` ↔ `opencode/manifest-dev/auto-{tier}`).
+
+> **Note:** After switching, restart OpenCode once to apply the changes to running sessions.
+
+---
+
+## 2. Local Worktree Stacks (`worktree-stack.sh`)
+
+Every feature worktree gets an isolated disposable stack so parallel lanes never collide.
+
+All commands support **zero-argument defaults** when executed inside a worktree directory:
+
+```bash
+# Start an isolated stack for the current worktree (copies prod DB snapshot + seeds admin login):
+./scripts/worktree-stack.sh up
+
+# Start for a specific worktree directory or with options:
+./scripts/worktree-stack.sh up ../other-worktree --slug mylane
+./scripts/worktree-stack.sh up . --no-snapshot    # fresh empty DB
+
+# Check deployment status and URLs for the local worktree:
 ./scripts/worktree-stack.sh status
 
-# Teardown — stops containers, removes generated files, frees the slot
-./scripts/worktree-stack.sh down mylane
-# ...and delete the stack's volumes too
-./scripts/worktree-stack.sh down mylane --purge-volume
+# Rebuild image from worktree source and restart (retains database volume):
+./scripts/worktree-stack.sh rebuild
 
-# Follow the stack's manifest logs
-./scripts/worktree-stack.sh logs mylane
+# Teardown the stack and release the port slot:
+./scripts/worktree-stack.sh down
+./scripts/worktree-stack.sh down --purge-volume  # also delete DB volume
 
-# Help
-./scripts/worktree-stack.sh help
+# Follow manifest container logs:
+./scripts/worktree-stack.sh logs
 ```
 
-**Safety:** worktree stacks never touch prod/dev containers, volumes, or images; only the project names prefixed `mnfst-wt-` are ever created/managed. The gitignored `docker/.env.dev` is read from the worktree (falling back to the repo's main checkout) and copied into `docker/.env.wt-<slug>` with PORT / HEALER_PORT / MANIFEST_VERSION / BETTER_AUTH_URL / HOST_BIND_ADDRESS overridden.
+**Paseo UI Integration (`paseo.json`)**:
+- `worktree-up`: Starts the isolated stack for the current worktree.
+- `worktree-down`: Stops the current worktree stack and releases ports.
+- `worktree-status`: Displays current worktree port, URLs, and container status.
+- `worktree-rebuild`: Rebuilds the current worktree image and updates containers.
+- `preset-prod`: Switches all OpenCode & Paseo agents to Production.
+- `preset-staging`: Switches all OpenCode & Paseo agents to Staging.
+- `snapshot`: Copies prod DB into the Staging instance (2099 → 2100).
+- `status`: Shows status of all stacks and model routing.
 
-**Login:** every stack (and Dev after each `snapshot`) is seeded with `admin@manifest.local` / `admin1234` (product enforces an 8-char min password). Override with `WT_ADMIN_EMAIL` / `WT_ADMIN_PASSWORD`; skip per-stack with `--no-admin`. Fresh DBs go through `POST /api/v1/setup/admin` (first admin); snapshotted DBs use `POST /api/auth/sign-up/email` since prod users already exist.
+---
 
-## File Locations
+## 3. Database Snapshots
 
-```
-/root/.paseo/worktrees/1p7riqru/evil-husky/
-├── docker/
-│   ├── docker-compose.yml       # prod compose
-│   ├── docker-compose.dev.yml   # dev compose
-│   ├── .env                     # prod env (gitignored)
-│   └── .env.dev                 # dev env (gitignored)
-├── scripts/
-│   └── switch-manifest.sh       # management script
-└── healer/                      # healer source (shared by both stacks)
-```
-
-## Switch Script
-
-Location: `scripts/switch-manifest.sh` (relative to repo root)
+To synchronize production data into Staging:
 
 ```bash
-# Check both stacks + active OpenCode preset
-./scripts/switch-manifest.sh status
-
-# Switch OpenCode preset (restart OpenCode after)
-./scripts/switch-manifest.sh dev      # → manifest-dev preset (2100)
-./scripts/switch-manifest.sh prod     # → manifest preset (2099)
-
-# Copy prod DB into Dev (replaces entire Dev database)
 ./scripts/switch-manifest.sh snapshot
-
-# Lifecycle
-./scripts/switch-manifest.sh up       # start both
-./scripts/switch-manifest.sh down     # stop both
-./scripts/switch-manifest.sh rebuild  # rebuild image + restart both
-
-# Help
-./scripts/switch-manifest.sh help
 ```
 
-## OpenCode Config
-
-Provider definitions in `~/.config/opencode/opencode.jsonc`:
-- `manifest` → `http://100.69.158.7:2099/v1` (prod)
-- `manifest-dev` → `http://100.69.158.7:2100/v1` (dev)
-
-Preset definitions in `~/.config/opencode/oh-my-opencode-slim.jsonc`:
-- `manifest` — tiered models (auto-simple/standard/complex/vision) via prod
-- `manifest-dev` — same tiered models via Dev
-- `opencode-go` — fallback direct provider
-
-## Docker Commands (Direct)
-
-If the switch script isn't available, run from the repo root:
-
-```bash
-REPO=/root/.paseo/worktrees/1p7riqru/evil-husky
-
-# Prod
-docker compose -f $REPO/docker/docker-compose.yml \
-  --project-directory $REPO/docker --env-file $REPO/docker/.env up -d
-
-# Dev
-docker compose -f $REPO/docker/docker-compose.dev.yml \
-  --project-directory $REPO/docker --env-file $REPO/docker/.env.dev up -d
-
-# Dev postgres is on the same host port as prod (5432 is internal only).
-# Both stacks use isolated Docker networks (mnfst_internal vs mnfst-dev_internal).
-```
-
-## Typical Workflow
-
-1. **Start developing:** `switch-manifest.sh dev` → restart OpenCode
-2. **Test changes:** send requests to `http://100.69.158.7:2100/v1`
-3. **When stable:** `switch-manifest.sh snapshot` or promote
-4. **After code changes:** `switch-manifest.sh rebuild`
-
-## Snapshot Details
-
-The snapshot uses `pg_dump -Fc` (custom format) for reliable binary transfer:
-1. Stops Dev manifest (releases DB connections)
-2. Dumps prod DB to `/tmp/prod.dump`
-3. Copies dump into Dev postgres container
-4. Drops + recreates Dev database
-5. Restores via `pg_restore`
-6. Starts Dev manifest + health check
+The snapshot uses `pg_dump -Fc` for atomic binary transfer, drops/recreates the staging DB, restores the dump, restarts the staging manifest, and seeds `admin@manifest.local` / `admin1234`.
