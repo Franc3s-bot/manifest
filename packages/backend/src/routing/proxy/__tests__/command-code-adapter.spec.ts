@@ -106,7 +106,6 @@ describe('buildCommandCodeChatRequest', () => {
     const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
     expect(messages[0].role).toBe('assistant');
     expect(messages[0].content).toEqual([
-      { type: 'text', text: '' },
       {
         type: 'tool-call',
         toolCallId: 'call_1',
@@ -125,6 +124,34 @@ describe('buildCommandCodeChatRequest', () => {
         output: { type: 'text', value: '3 results' },
       },
     ]);
+  });
+
+  it('prunes redundant empty text blocks in assistant messages when tool_calls are present', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_glm',
+                type: 'function',
+                function: { name: 'search', arguments: '{"q":"manifest"}' },
+              },
+            ],
+          },
+        ],
+      },
+      'zhipu/glm-5.3',
+    );
+    const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
+    expect(messages[0].content).toHaveLength(1);
+    expect(messages[0].content[0]).toMatchObject({
+      type: 'tool-call',
+      toolCallId: 'call_glm',
+      toolName: 'search',
+    });
   });
 
   it('renders tool-result output as the typed AI SDK v5 output shape', () => {
@@ -235,7 +262,7 @@ describe('buildCommandCodeChatRequest', () => {
     );
 
     const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
-    const call = messages[0].content?.[1] as Record<string, unknown>;
+    const call = messages[0].content?.[0] as Record<string, unknown>;
     expect(call).toMatchObject({
       type: 'tool-call',
       toolCallId: 'bad',
@@ -430,6 +457,34 @@ describe('commandCodeLineToOpenAiChunks', () => {
     expect(
       chunkOf('{"type":"reasoning-delta","text":"thinking"}', state, 'm')?.choices[0].delta,
     ).toEqual({ role: 'assistant', reasoning_content: 'thinking' });
+
+    const stateThought = {
+      responseId: 'r_thought',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf('{"type":"thought-delta","thought":"pondering"}', stateThought, 'm')?.choices[0].delta,
+    ).toEqual({ role: 'assistant', reasoning_content: 'pondering' });
+
+    const stateThinking = {
+      responseId: 'r_thinking',
+      created: 1,
+      model: 'm',
+      chunkIndex: 0,
+      toolIndex: 0,
+      toolIndexById: new Map(),
+      finishReason: null,
+      usage: null,
+    };
+    expect(
+      chunkOf('{"type":"thinking-delta","thinking":"analyzing"}', stateThinking, 'm')?.choices[0].delta,
+    ).toEqual({ role: 'assistant', reasoning_content: 'analyzing' });
   });
 
   it('streams tool-input-start + tool-input-delta into accumulated tool_calls', () => {
@@ -613,7 +668,6 @@ describe('commandCodeLineToOpenAiChunks', () => {
 
     const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
     expect(messages[0].content).toEqual([
-      { type: 'text', text: '' },
       {
         type: 'tool-call',
         toolCallId: 'call_anthropic',
@@ -623,7 +677,6 @@ describe('commandCodeLineToOpenAiChunks', () => {
       },
     ]);
     expect(messages[2].content).toEqual([
-      { type: 'text', text: '' },
       {
         type: 'tool-call',
         toolCallId: 'call_aisdk',
@@ -841,6 +894,18 @@ describe('commandCodeErrorFromEvent', () => {
       commandCodeErrorFromEvent({
         type: 'error',
         error: { message: 'Too many requests, slow down' },
+      })?.status,
+    ).toBe(429);
+    expect(
+      commandCodeErrorFromEvent({
+        type: 'error',
+        error: { message: 'Quota exhausted for this resource' },
+      })?.status,
+    ).toBe(429);
+    expect(
+      commandCodeErrorFromEvent({
+        type: 'error',
+        error: { message: 'Insufficient quota balance' },
       })?.status,
     ).toBe(429);
   });

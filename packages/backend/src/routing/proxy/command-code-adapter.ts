@@ -288,6 +288,10 @@ function convertMessages(messages: OpenAiMessage[]): {
 
     const blocks = toContentBlocks(message.content);
     if (role === 'assistant' && Array.isArray(message.tool_calls)) {
+      const hasTools = message.tool_calls.length > 0;
+      if (hasTools && blocks.length === 1 && blocks[0].type === 'text' && !blocks[0].text) {
+        blocks.pop();
+      }
       for (const rawCall of message.tool_calls) {
         if (!rawCall || typeof rawCall !== 'object') continue;
         const toolCall = rawCall as Record<string, unknown>;
@@ -530,7 +534,8 @@ export interface CommandCodeStreamError {
   retryAfter?: string;
 }
 
-const RATE_LIMIT_MESSAGE_PATTERN = /rate\s*limit|too many requests|\b429\b/i;
+const RATE_LIMIT_MESSAGE_PATTERN =
+  /rate\s*limit|too many requests|\b429\b|quota\s*exhausted|insufficient\s*quota|resource\s*exhausted|out of quota|balance\s*insufficient/i;
 
 function pickString(...sources: Array<Record<string, unknown>>): string | undefined {
   for (const source of sources) {
@@ -592,6 +597,10 @@ const CONTENT_EVENT_TYPES = new Set([
   'text-delta',
   'reasoning',
   'reasoning-delta',
+  'thought',
+  'thought-delta',
+  'thinking',
+  'thinking-delta',
   'tool-input-start',
   'tool-call-streaming-start',
   'tool-call-start',
@@ -749,12 +758,18 @@ export function commandCodeLineToOpenAiChunks(
       out.push(buildChunk(st, delta));
       break;
     }
+    case 'thought':
+    case 'thought-delta':
+    case 'thinking':
+    case 'thinking-delta':
     case 'reasoning':
     case 'reasoning-delta': {
       const text =
-        (typeof event.text === 'string' && event.text) ||
         (typeof event.textDelta === 'string' && event.textDelta) ||
+        (typeof event.text === 'string' && event.text) ||
         (typeof event.delta === 'string' && event.delta) ||
+        (typeof event.thought === 'string' && event.thought) ||
+        (typeof event.thinking === 'string' && event.thinking) ||
         '';
       if (!text) break;
       // Map reasoning to OpenAI's `reasoning_content` (deepseek-reasoner-style).
