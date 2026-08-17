@@ -577,7 +577,90 @@ describe('commandCodeLineToOpenAiChunks', () => {
     });
   });
 
-  it('maps finish + usage onto the final chunk', () => {
+  it('handles Anthropic-style and AI SDK style tool_calls in assistant history', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                id: 'call_anthropic',
+                type: 'tool_use',
+                name: 'bash',
+                input: { command: 'echo hi' },
+              } as unknown as { id: string; function: { name: string; arguments: string } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_anthropic', content: 'hi' },
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              {
+                toolCallId: 'call_aisdk',
+                toolName: 'read',
+                args: { filePath: 'README.md' },
+              } as unknown as { id: string; function: { name: string; arguments: string } },
+            ],
+          },
+          { role: 'tool', tool_call_id: 'call_aisdk', content: 'docs' },
+        ],
+      },
+      'gpt-5.6-luna',
+    );
+
+    const messages = paramsOf(request).messages as Array<{ role: string; content: unknown[] }>;
+    expect(messages[0].content).toEqual([
+      { type: 'text', text: '' },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_anthropic',
+        toolName: 'bash',
+        input: { command: 'echo hi' },
+        arguments: '{"command":"echo hi"}',
+      },
+    ]);
+    expect(messages[2].content).toEqual([
+      { type: 'text', text: '' },
+      {
+        type: 'tool-call',
+        toolCallId: 'call_aisdk',
+        toolName: 'read',
+        input: { filePath: 'README.md' },
+        arguments: '{"filePath":"README.md"}',
+      },
+    ]);
+  });
+
+  it('supports body.functions and body.max_completion_tokens', () => {
+    const request = buildCommandCodeChatRequest(
+      {
+        messages: [{ role: 'user', content: 'hello' }],
+        functions: [
+          {
+            name: 'get_weather',
+            description: 'Get weather',
+            parameters: { type: 'object', properties: { loc: { type: 'string' } } },
+          },
+        ],
+        max_completion_tokens: 1024,
+      },
+      'google/gemini-2.5-pro',
+    );
+
+    expect(paramsOf(request).max_tokens).toBe(1024);
+    expect(paramsOf(request).tools).toEqual([
+      {
+        name: 'get_weather',
+        description: 'Get weather',
+        input_schema: { type: 'object', properties: { loc: { type: 'string' } } },
+      },
+    ]);
+  });
+
+  it('maps finish + usage onto the final chunk with diverse finish reasons and usage shapes', () => {
     const state = {
       responseId: 'r1',
       created: 1,
@@ -589,21 +672,21 @@ describe('commandCodeLineToOpenAiChunks', () => {
       usage: null,
     };
     commandCodeLineToOpenAiChunks(
-      '{"type":"finish-step","finishReason":"stop","usage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+      '{"type":"finish-step","finishReason":"end_turn","usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
       state,
       'm',
     );
 
     expect(
       chunkOf(
-        '{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+        '{"type":"finish","totalUsage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
         state,
         'm',
       )?.choices[0].finish_reason,
     ).toBe('stop');
     expect(
       chunkOf(
-        '{"type":"finish","totalUsage":{"inputTokens":10,"outputTokens":5,"totalTokens":15}}',
+        '{"type":"finish","totalUsage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}',
         state,
         'm',
       )?.usage,
