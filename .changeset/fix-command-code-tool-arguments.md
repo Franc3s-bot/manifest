@@ -2,4 +2,5 @@
 'manifest': patch
 ---
 
-Preserve tool call arguments when streaming Command Code fallback responses.
+Sanitize tool schemas and arguments, preserve reasoning cache across aggregator endpoints, and enhance Auto-fix healer rules.
+
