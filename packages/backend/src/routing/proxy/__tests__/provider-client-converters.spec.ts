@@ -1356,4 +1356,82 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
     const messages = result.messages as Array<Record<string, unknown>>;
     expect(messages[0].reasoning_content).toBeUndefined();
   });
+
+  it.each([
+    ['commandcode', 'deepseek-v4-flash'],
+    ['byteplus', 'deepseek-v4-flash'],
+    ['fireworks', 'deepseek-v4'],
+    ['ollama-cloud', 'deepseek-v4:latest'],
+    ['kiro', 'deepseek-v4-flash'],
+    ['clinepass', 'deepseek-v4'],
+    ['qwen', 'deepseek-v4'],
+    ['together', 'deepseek-ai/DeepSeek-V4'],
+  ])('preserves reasoning_content for %s with reasoning model %s', (endpoint, model) => {
+    const result = sanitizeOpenAiBody(bodyWithReasoning(), endpoint, model);
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('upstream thinking');
+  });
+
+  it('stringifies object tool_calls arguments in assistant messages', () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          tool_calls: [
+            {
+              id: 'call_abc',
+              type: 'function',
+              function: { name: 'bash', arguments: { command: 'echo hi' } },
+            },
+            {
+              toolCallId: 'call_def',
+              toolName: 'read_file',
+              args: { path: 'README.md' },
+            },
+          ],
+        },
+      ],
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    const messages = result.messages as Array<Record<string, unknown>>;
+    const toolCalls = messages[0].tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls[0].function).toEqual({ name: 'bash', arguments: '{"command":"echo hi"}' });
+    expect(toolCalls[1].function).toEqual({ name: 'read_file', arguments: '{"path":"README.md"}' });
+  });
+
+  it('normalizes parameterless tools and legacy functions in request body', () => {
+    const body = {
+      messages: [{ role: 'user', content: 'test' }],
+      tools: [
+        {
+          type: 'function',
+          function: { name: 'no_params' },
+        },
+        {
+          type: 'function',
+          function: { name: 'null_params', parameters: null },
+        },
+      ],
+      functions: [
+        {
+          name: 'legacy_func',
+        },
+      ],
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    const tools = result.tools as Array<Record<string, unknown>>;
+    const functions = result.functions as Array<Record<string, unknown>>;
+    expect((tools[0].function as Record<string, unknown>).parameters).toEqual({
+      type: 'object',
+      properties: {},
+    });
+    expect((tools[1].function as Record<string, unknown>).parameters).toEqual({
+      type: 'object',
+      properties: {},
+    });
+    expect((functions[0] as Record<string, unknown>).parameters).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
 });

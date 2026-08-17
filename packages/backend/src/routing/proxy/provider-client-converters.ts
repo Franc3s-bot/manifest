@@ -296,19 +296,81 @@ function sanitizeOpenAiMessages(
       delete cleaned.reasoning_details;
     }
 
-    if (isMistral && Array.isArray(cleaned.tool_calls)) {
-      cleaned.tool_calls = cleaned.tool_calls.map((toolCall) => {
+    if (Array.isArray(cleaned.tool_calls)) {
+      cleaned.tool_calls = cleaned.tool_calls.map((toolCall, idx) => {
         if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) {
           return toolCall;
         }
-        const cleanedToolCall = { ...(toolCall as Record<string, unknown>) };
-        cleanedToolCall.id = normalizeMistralToolCallId(cleanedToolCall.id);
-        return cleanedToolCall;
+        const record = { ...(toolCall as Record<string, unknown>) };
+        const id =
+          typeof record.id === 'string' && record.id
+            ? record.id
+            : typeof record.toolCallId === 'string' && record.toolCallId
+              ? record.toolCallId
+              : `call_${idx}_${Date.now()}`;
+        const finalId = isMistral ? normalizeMistralToolCallId(id) : id;
+        record.id = finalId;
+        record.type = 'function';
+
+        const fn =
+          record.function && typeof record.function === 'object' && !Array.isArray(record.function)
+            ? { ...(record.function as Record<string, unknown>) }
+            : {};
+        const name =
+          typeof fn.name === 'string' && fn.name
+            ? fn.name
+            : typeof record.name === 'string' && record.name
+              ? record.name
+              : typeof record.toolName === 'string' && record.toolName
+                ? record.toolName
+                : '';
+        fn.name = name;
+
+        const rawArgs =
+          fn.arguments !== undefined
+            ? fn.arguments
+            : record.arguments !== undefined
+              ? record.arguments
+              : record.args !== undefined
+                ? record.args
+                : record.input;
+        if (typeof rawArgs === 'string') {
+          fn.arguments = rawArgs;
+        } else if (rawArgs && typeof rawArgs === 'object') {
+          fn.arguments = JSON.stringify(rawArgs);
+        } else {
+          fn.arguments = '{}';
+        }
+        record.function = fn;
+        return record;
       });
     }
 
-    if (isMistral && 'tool_call_id' in cleaned) {
-      cleaned.tool_call_id = normalizeMistralToolCallId(cleaned.tool_call_id);
+    if (cleaned.role === 'tool') {
+      if ('tool_call_id' in cleaned) {
+        cleaned.tool_call_id = isMistral
+          ? normalizeMistralToolCallId(cleaned.tool_call_id)
+          : cleaned.tool_call_id;
+      } else {
+        const fallbackId =
+          typeof cleaned.id === 'string' && cleaned.id
+            ? cleaned.id
+            : typeof cleaned.toolCallId === 'string' && cleaned.toolCallId
+              ? cleaned.toolCallId
+              : '';
+        cleaned.tool_call_id = isMistral ? normalizeMistralToolCallId(fallbackId) : fallbackId;
+      }
+      if (
+        cleaned.content !== undefined &&
+        cleaned.content !== null &&
+        typeof cleaned.content !== 'string'
+      ) {
+        if (typeof cleaned.content === 'object') {
+          cleaned.content = JSON.stringify(cleaned.content);
+        } else {
+          cleaned.content = String(cleaned.content);
+        }
+      }
     }
 
     return cleaned;
@@ -330,6 +392,24 @@ function normalizeDeepSeekMaxTokens(body: Record<string, unknown>): void {
   if ((body.max_tokens as number) < 1) delete body.max_tokens;
 }
 
+function sanitizeToolSchemaParameters(parameters: unknown): Record<string, unknown> {
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+    return { type: 'object', properties: {} };
+  }
+  const params = parameters as Record<string, unknown>;
+  const type = params.type;
+  const isTypeObject = type === 'object' || (Array.isArray(type) && type.includes('object'));
+  const properties =
+    params.properties && typeof params.properties === 'object' && !Array.isArray(params.properties)
+      ? params.properties
+      : {};
+  return {
+    ...params,
+    type: isTypeObject ? params.type : 'object',
+    properties,
+  };
+}
+
 /**
  * Normalize tool function schemas whose `parameters` is malformed. SDKs
  * sometimes emit `type: "null"` or omit `type` entirely; strict providers
@@ -342,20 +422,20 @@ function sanitizeToolSchemas(tools: unknown[]): unknown[] {
   return tools.map((tool) => {
     if (!tool || typeof tool !== 'object' || Array.isArray(tool)) return tool;
     const entry = tool as Record<string, unknown>;
-    if (entry.type !== 'function' || !entry.function || typeof entry.function !== 'object') {
-      return entry;
-    }
-    const fn = entry.function as Record<string, unknown>;
-    const params = fn.parameters as Record<string, unknown> | undefined;
-    if (
-      params &&
-      typeof params === 'object' &&
-      params.type !== 'object' &&
-      (!('type' in params) || params.type === 'null' || params.type === null)
-    ) {
+    if (entry.type === 'function' && entry.function && typeof entry.function === 'object') {
+      const fn = entry.function as Record<string, unknown>;
       return {
         ...entry,
-        function: { ...fn, parameters: { type: 'object', properties: params.properties ?? {} } },
+        function: {
+          ...fn,
+          parameters: sanitizeToolSchemaParameters(fn.parameters),
+        },
+      };
+    }
+    if (entry.parameters || entry.input_schema) {
+      return {
+        ...entry,
+        parameters: sanitizeToolSchemaParameters(entry.parameters ?? entry.input_schema),
       };
     }
     return entry;
@@ -393,6 +473,17 @@ export function sanitizeOpenAiBody(
     // round-trip through Auto-fix for a schema-only defect.
     if (key === 'tools' && Array.isArray(value)) {
       cleaned[key] = sanitizeToolSchemas(value);
+      continue;
+    }
+    if (key === 'functions' && Array.isArray(value)) {
+      cleaned[key] = value.map((fn) => {
+        if (!fn || typeof fn !== 'object' || Array.isArray(fn)) return fn;
+        const record = fn as Record<string, unknown>;
+        return {
+          ...record,
+          parameters: sanitizeToolSchemaParameters(record.parameters),
+        };
+      });
       continue;
     }
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that

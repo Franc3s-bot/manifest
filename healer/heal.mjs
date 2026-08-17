@@ -73,26 +73,35 @@ function getOrCreateIssue(fingerprint) {
   return issues.get(fingerprint);
 }
 
+function sanitizeToolSchemaParameters(parameters) {
+  if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
+    return { type: 'object', properties: {} };
+  }
+  const params = { ...parameters };
+  const type = params.type;
+  const isTypeObject = type === 'object' || (Array.isArray(type) && type.includes('object'));
+  params.type = isTypeObject ? params.type : 'object';
+  params.properties =
+    params.properties && typeof params.properties === 'object' && !Array.isArray(params.properties)
+      ? params.properties
+      : {};
+  return params;
+}
+
 function sanitizeToolSchemas(tools) {
   if (!Array.isArray(tools)) return tools;
   return tools.map((t) => {
-    if (!t || typeof t !== 'object') return t;
-    if (t.type === 'function' && t.function) {
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return t;
+    if (t.type === 'function' && t.function && typeof t.function === 'object') {
       const fn = { ...t.function };
-      if (
-        !fn.parameters ||
-        typeof fn.parameters !== 'object' ||
-        fn.parameters.type === 'null' ||
-        fn.parameters.type === 'NULL' ||
-        !fn.parameters.type ||
-        fn.parameters.type !== 'object'
-      ) {
-        fn.parameters = {
-          type: 'object',
-          properties: (fn.parameters && typeof fn.parameters === 'object' && fn.parameters.properties) || {},
-        };
-      }
+      fn.parameters = sanitizeToolSchemaParameters(fn.parameters);
       return { ...t, function: fn };
+    }
+    if (t.parameters || t.input_schema) {
+      return {
+        ...t,
+        parameters: sanitizeToolSchemaParameters(t.parameters || t.input_schema),
+      };
     }
     return t;
   });
@@ -106,40 +115,117 @@ const RULES = [
     name: 'invalid_function_schema',
     match: (req, res) => {
       // Proactive: check request body for tools with bad schemas
-      const tools = req.request?.tools;
+      const tools = req.request?.tools || req.request?.functions;
       if (Array.isArray(tools)) {
         for (const t of tools) {
-          const fn = t?.function;
-          if (fn && fn.parameters) {
-            const p = fn.parameters;
+          const fn = t && t.type === 'function' && t.function ? t.function : t;
+          if (fn) {
+            const p = fn.parameters ?? fn.input_schema;
             if (
+              !p ||
+              typeof p !== 'object' ||
               p.type === 'null' ||
               p.type === 'NULL' ||
               p.type === null ||
-              (typeof p === 'object' && !p.type)
+              (!p.type && !p.properties)
             ) {
               return true;
             }
-          }
-          if (fn && !fn.parameters) {
-            // parameters undefined/null — the provider may reject it
-            return true;
           }
         }
       }
       // Reactive: check error message
       const msg = res?.error?.message || '';
-      return /schema must be a JSON Schema/i.test(msg) || /Invalid schema for function/i.test(msg);
+      return (
+        /schema must be a JSON Schema/i.test(msg) ||
+        /Invalid schema for function/i.test(msg) ||
+        /Function tool parameters root schema/i.test(msg) ||
+        /parameters.*must be of type 'object'/i.test(msg) ||
+        /parameters.*must be an object/i.test(msg) ||
+        /Invalid parameter.*tools/i.test(msg) ||
+        /Invalid type for.*parameters/i.test(msg) ||
+        /schema must have type 'object'/i.test(msg) ||
+        /parameters: (?:Expected object|null)/i.test(msg)
+      );
     },
     patch: (body, _ctx) => {
       const fixed = { ...body };
       if (fixed.tools) {
         fixed.tools = sanitizeToolSchemas(fixed.tools);
       }
+      if (fixed.functions && Array.isArray(fixed.functions)) {
+        fixed.functions = fixed.functions.map((fn) => {
+          if (!fn || typeof fn !== 'object') return fn;
+          return { ...fn, parameters: sanitizeToolSchemaParameters(fn.parameters) };
+        });
+      }
       return fixed;
     },
     explanation: 'Sanitized tool function schemas to valid type: "object"',
     ops: [{ type: 'fix_param', from: 'tools', to: 'tools' }],
+  },
+  {
+    name: 'invalid_tool_call_arguments',
+    match: (req, res) => {
+      const body = req.request || {};
+      if (Array.isArray(body.messages)) {
+        for (const m of body.messages) {
+          if (m && Array.isArray(m.tool_calls)) {
+            for (const tc of m.tool_calls) {
+              const args = tc?.function?.arguments ?? tc?.arguments ?? tc?.args ?? tc?.input;
+              if (args !== undefined && typeof args !== 'string') return true;
+            }
+          }
+        }
+      }
+      const msg = res?.error?.message || '';
+      return (
+        /Invalid type for '.*tool_calls.*arguments'/i.test(msg) ||
+        /tool_calls.*arguments.*must be a string/i.test(msg) ||
+        /arguments.*must be a string/i.test(msg) ||
+        /expected a string, got object.*arguments/i.test(msg) ||
+        /tool_calls.*function\.arguments/i.test(msg)
+      );
+    },
+    patch: (body, _ctx) => {
+      const fixed = { ...body };
+      if (Array.isArray(fixed.messages)) {
+        fixed.messages = fixed.messages.map((m) => {
+          if (!m || typeof m !== 'object' || !Array.isArray(m.tool_calls)) return m;
+          const tool_calls = m.tool_calls.map((tc, idx) => {
+            if (!tc || typeof tc !== 'object') return tc;
+            const record = { ...tc };
+            const id = record.id || record.toolCallId || `call_${idx}_${Date.now()}`;
+            record.id = id;
+            record.type = 'function';
+            const fn =
+              record.function && typeof record.function === 'object' ? { ...record.function } : {};
+            const name = fn.name || record.name || record.toolName || '';
+            fn.name = name;
+            const rawArgs =
+              fn.arguments !== undefined
+                ? fn.arguments
+                : record.arguments !== undefined
+                  ? record.arguments
+                  : record.args !== undefined
+                    ? record.args
+                    : record.input;
+            fn.arguments =
+              typeof rawArgs === 'string'
+                ? rawArgs
+                : rawArgs && typeof rawArgs === 'object'
+                  ? JSON.stringify(rawArgs)
+                  : '{}';
+            record.function = fn;
+            return record;
+          });
+          return { ...m, tool_calls };
+        });
+      }
+      return fixed;
+    },
+    explanation: 'Serialized tool call arguments to valid JSON strings and normalized function call structure',
+    ops: [{ type: 'fix_param', from: 'messages.tool_calls', to: 'messages.tool_calls' }],
   },
   {
     name: 'top_p_zero',
@@ -202,24 +288,34 @@ const RULES = [
     name: 'reasoning_content_missing',
     match: (req, res) => {
       const msg = res?.error?.message || '';
-      return /reasoning_content.*must be passed/i.test(msg);
+      return (
+        /reasoning_content.*(?:must be passed|is required|missing|must be provided|must be passed back|cannot be empty|required)/i.test(msg) ||
+        /missing.*reasoning_content/i.test(msg) ||
+        /reasoning.*must be passed/i.test(msg)
+      );
     },
     patch: (body, ctx) => {
       const cache = ctx?.reasoningContentCache || {};
       const fixed = { ...body };
       if (fixed.messages) {
         fixed.messages = fixed.messages.map((m) => {
-          if (m.role === 'assistant' && m.reasoning_content === undefined) {
-            // DeepSeek requires the ORIGINAL reasoning_content it returned on the
-            // prior turn. Manifest caches it by the first tool_call id; use the
-            // cached value when available, else fall back to empty string (still
-            // satisfies the "must be passed" requirement, though the turn's
-            // reasoning won't be replayed).
-            const firstToolCallId =
-              Array.isArray(m.tool_calls) && m.tool_calls[0] && typeof m.tool_calls[0].id === 'string'
-                ? m.tool_calls[0].id
-                : null;
-            const content = (firstToolCallId && cache[firstToolCallId]) || '';
+          if (
+            m &&
+            m.role === 'assistant' &&
+            (m.reasoning_content === undefined || m.reasoning_content === '')
+          ) {
+            // Find tool_call id from tool_calls
+            let cacheHit = null;
+            if (Array.isArray(m.tool_calls)) {
+              for (const tc of m.tool_calls) {
+                const id = tc?.id || tc?.toolCallId;
+                if (id && cache[id]) {
+                  cacheHit = cache[id];
+                  break;
+                }
+              }
+            }
+            const content = cacheHit ?? '';
             return { ...m, reasoning_content: content };
           }
           return m;
