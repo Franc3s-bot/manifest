@@ -191,35 +191,46 @@ const RULES = [
       const fixed = { ...body };
       if (Array.isArray(fixed.messages)) {
         fixed.messages = fixed.messages.map((m) => {
-          if (!m || typeof m !== 'object' || !Array.isArray(m.tool_calls)) return m;
-          const tool_calls = m.tool_calls.map((tc, idx) => {
-            if (!tc || typeof tc !== 'object') return tc;
-            const record = { ...tc };
-            const id = record.id || record.toolCallId || `call_${idx}_${Date.now()}`;
-            record.id = id;
-            record.type = 'function';
-            const fn =
-              record.function && typeof record.function === 'object' ? { ...record.function } : {};
-            const name = fn.name || record.name || record.toolName || '';
-            fn.name = name;
-            const rawArgs =
-              fn.arguments !== undefined
-                ? fn.arguments
-                : record.arguments !== undefined
-                  ? record.arguments
-                  : record.args !== undefined
-                    ? record.args
-                    : record.input;
-            fn.arguments =
-              typeof rawArgs === 'string'
-                ? rawArgs
-                : rawArgs && typeof rawArgs === 'object'
-                  ? JSON.stringify(rawArgs)
-                  : '{}';
-            record.function = fn;
-            return record;
-          });
-          return { ...m, tool_calls };
+          if (!m || typeof m !== 'object') return m;
+          const cleaned = { ...m };
+          if (Array.isArray(cleaned.tool_calls)) {
+            cleaned.tool_calls = cleaned.tool_calls.map((tc, idx) => {
+              if (!tc || typeof tc !== 'object') return tc;
+              const record = { ...tc };
+              const id = record.id || record.toolCallId || `call_${idx}_${Date.now()}`;
+              const fn =
+                record.function && typeof record.function === 'object' ? { ...record.function } : {};
+              const name = fn.name || record.name || record.toolName || '';
+              fn.name = name;
+              const rawArgs =
+                fn.arguments !== undefined
+                  ? fn.arguments
+                  : record.arguments !== undefined
+                    ? record.arguments
+                    : record.args !== undefined
+                      ? record.args
+                      : record.input;
+              fn.arguments =
+                typeof rawArgs === 'string'
+                  ? rawArgs
+                  : rawArgs && typeof rawArgs === 'object'
+                    ? JSON.stringify(rawArgs)
+                    : '{}';
+              return {
+                id,
+                type: 'function',
+                function: fn,
+              };
+            });
+          }
+          if (cleaned.role === 'tool') {
+            if (!cleaned.tool_call_id) {
+              cleaned.tool_call_id = cleaned.id || cleaned.toolCallId || '';
+            }
+            delete cleaned.toolCallId;
+            delete cleaned.toolName;
+          }
+          return cleaned;
         });
       }
       return fixed;

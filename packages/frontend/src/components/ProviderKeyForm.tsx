@@ -190,11 +190,18 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
     return true;
   };
 
+  const regionFieldLabel = () =>
+    props.isSubMode()
+      ? (props.provDef.subscriptionEndpointRegionFieldLabel ??
+        props.provDef.endpointRegionFieldLabel ??
+        'Region')
+      : (props.provDef.endpointRegionFieldLabel ?? 'Region');
+
   const EndpointRegionSelect = (selectProps: { id: string; disabled?: boolean }) => (
     <Show when={hasEndpointRegions()}>
       <div class="provider-detail__field">
         <label class="provider-detail__label" for={selectProps.id}>
-          Region
+          {regionFieldLabel()}
         </label>
         <select
           id={selectProps.id}
@@ -698,7 +705,11 @@ export const AddAnotherKeyAction: Component<AddAnotherKeyActionProps> = (props) 
         />
         <Show when={props.endpointRegions?.length}>
           <label class="provider-detail__label" for="add-key-endpoint" style="margin-top: 8px;">
-            Region
+            {props.isSubscription
+              ? (props.provDef.subscriptionEndpointRegionFieldLabel ??
+                props.provDef.endpointRegionFieldLabel ??
+                'Region')
+              : (props.provDef.endpointRegionFieldLabel ?? 'Region')}
           </label>
           <select
             id="add-key-endpoint"

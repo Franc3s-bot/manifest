@@ -225,9 +225,9 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     requiresApiKey: true,
     localOnly: false,
     color: '#000000',
-    keyPrefix: 'user_',
-    minKeyLength: 50,
-    keyPlaceholder: 'user_...',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'user_... or API key',
   },
   {
     id: 'gemini',

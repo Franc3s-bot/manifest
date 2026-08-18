@@ -1,5 +1,6 @@
 import {
   createReasoningContentStreamTransformer,
+  detectProactiveAutofix,
   sanitizeOpenAiBody,
 } from '../provider-client-converters';
 
@@ -1395,8 +1396,57 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
     const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
     const messages = result.messages as Array<Record<string, unknown>>;
     const toolCalls = messages[0].tool_calls as Array<Record<string, unknown>>;
-    expect(toolCalls[0].function).toEqual({ name: 'bash', arguments: '{"command":"echo hi"}' });
-    expect(toolCalls[1].function).toEqual({ name: 'read_file', arguments: '{"path":"README.md"}' });
+    expect(toolCalls[0]).toEqual({
+      id: 'call_abc',
+      type: 'function',
+      function: { name: 'bash', arguments: '{"command":"echo hi"}' },
+    });
+    expect(toolCalls[1]).toEqual({
+      id: 'call_def',
+      type: 'function',
+      function: { name: 'read_file', arguments: '{"path":"README.md"}' },
+    });
+  });
+
+  it('strips non-standard properties from role: tool messages', () => {
+    const body = {
+      messages: [
+        {
+          role: 'tool',
+          toolCallId: 'call_abc',
+          toolName: 'bash',
+          content: { output: 'success' },
+        },
+      ],
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_abc',
+      content: '{"output":"success"}',
+    });
+  });
+
+  it('drops max_tokens when max_completion_tokens is already set for GPT-5 models', () => {
+    const body = {
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 1000,
+      max_completion_tokens: 2000,
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    expect(result.max_completion_tokens).toBe(2000);
+    expect(result.max_tokens).toBeUndefined();
+  });
+
+  it('converts max_tokens to max_completion_tokens when max_completion_tokens is absent for GPT-5', () => {
+    const body = {
+      messages: [{ role: 'user', content: 'test' }],
+      max_tokens: 1000,
+    };
+    const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.6-luna');
+    expect(result.max_completion_tokens).toBe(1000);
+    expect(result.max_tokens).toBeUndefined();
   });
 
   it('normalizes parameterless tools and legacy functions in request body', () => {
@@ -1429,9 +1479,126 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
       type: 'object',
       properties: {},
     });
-    expect((functions[0] as Record<string, unknown>).parameters).toEqual({
+    expect(functions[0] as Record<string, unknown>).toEqual({
       type: 'object',
       properties: {},
+    });
+  });
+
+  describe('detectProactiveAutofix', () => {
+    it('returns undefined for clean requests without formatting defects', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'hello' }],
+      };
+      const result = detectProactiveAutofix(body, body, 'openai', 'gpt-4o');
+      expect(result).toBeUndefined();
+    });
+
+    it('detects and constructs proactive AutofixRecord for malformed tool schemas', () => {
+      const rawBody = {
+        messages: [{ role: 'user', content: 'test' }],
+        tools: [{ type: 'function', function: { name: 'bash', parameters: null } }],
+      };
+      const wireBody = {
+        messages: [{ role: 'user', content: 'test' }],
+        tools: [
+          {
+            type: 'function',
+            function: { name: 'bash', parameters: { type: 'object', properties: {} } },
+          },
+        ],
+      };
+      const result = detectProactiveAutofix(rawBody, wireBody, 'deepseek', 'deepseek-chat');
+      expect(result).toBeDefined();
+      expect(result?.outcome).toBe('healed');
+      expect(result?.chain[0].patch_id).toBe('patch_invalid_function_schema');
+      expect(result?.chain[0].operations).toEqual([
+        { type: 'fix_param', from: 'tools', to: 'tools' },
+      ]);
+    });
+
+    it('detects and constructs proactive AutofixRecord for object tool call arguments and non-standard properties', () => {
+      const rawBody = {
+        messages: [
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                toolName: 'bash',
+                args: { command: 'ls' },
+              },
+            ],
+          },
+        ],
+      };
+      const wireBody = {
+        messages: [
+          {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'bash', arguments: '{"command":"ls"}' },
+              },
+            ],
+          },
+        ],
+      };
+      const result = detectProactiveAutofix(rawBody, wireBody, 'openai', 'gpt-5.6-luna');
+      expect(result).toBeDefined();
+      expect(result?.outcome).toBe('healed');
+      expect(result?.chain[0].patch_id).toBe('patch_invalid_tool_call_arguments');
+      expect(result?.chain[0].operations).toEqual([
+        { type: 'fix_param', from: 'messages.tool_calls', to: 'messages.tool_calls' },
+      ]);
+    });
+
+    it('detects and constructs proactive AutofixRecord when reasoning_content is restored from cache', () => {
+      const rawBody = {
+        messages: [
+          {
+            role: 'assistant',
+            tool_calls: [{ id: 'call_1', function: { name: 'bash', arguments: '{}' } }],
+          },
+        ],
+      };
+      const wireBody = {
+        messages: [
+          {
+            role: 'assistant',
+            reasoning_content: 'cached thoughts',
+            tool_calls: [{ id: 'call_1', function: { name: 'bash', arguments: '{}' } }],
+          },
+        ],
+      };
+      const result = detectProactiveAutofix(rawBody, wireBody, 'deepseek', 'deepseek-v4-flash');
+      expect(result).toBeDefined();
+      expect(result?.outcome).toBe('healed');
+      expect(result?.chain[0].patch_id).toBe('patch_reasoning_content_missing');
+      expect(result?.chain[0].operations).toEqual([
+        { type: 'add_param', from: null, to: 'reasoning_content' },
+      ]);
+    });
+
+    it('detects and constructs proactive AutofixRecord for max_tokens conversion on GPT-5 models', () => {
+      const rawBody = {
+        messages: [{ role: 'user', content: 'hi' }],
+        max_tokens: 1000,
+      };
+      const wireBody = {
+        messages: [{ role: 'user', content: 'hi' }],
+        max_completion_tokens: 1000,
+      };
+      const result = detectProactiveAutofix(rawBody, wireBody, 'openai', 'gpt-5.6-luna');
+      expect(result).toBeDefined();
+      expect(result?.outcome).toBe('healed');
+      expect(result?.chain[0].patch_id).toBe('patch_max_tokens_to_max_completion_tokens');
+      expect(result?.chain[0].operations).toEqual([
+        { type: 'rename_param', from: 'max_tokens', to: 'max_completion_tokens' },
+      ]);
     });
   });
 });

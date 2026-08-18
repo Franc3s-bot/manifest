@@ -195,7 +195,7 @@ describe('SHARED_PROVIDER_BY_ID', () => {
     expect(commandcode).toBeDefined();
     expect(commandcode!.displayName).toBe('Command Code');
     expect(commandcode!.openRouterPrefixes).toEqual([]);
-    expect(commandcode!.keyPrefix).toBe('user_');
+    expect(commandcode!.keyPrefix).toBe('');
   });
 
   it('byteplus has no OpenRouter prefixes (native Coding Plan /models is authoritative)', () => {

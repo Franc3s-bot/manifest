@@ -2854,6 +2854,94 @@ describe('ProviderClient', () => {
       expect(sentBody.system).toBeUndefined();
       expect(result.isAnthropic).toBe(true);
     });
+
+    it('routes non-Claude models through the direct OpenAI-compatible Provider API for Goat and Pro plans', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'commandcode',
+        apiKey: 'cmd_live_pro_key',
+        model: 'commandcode/deepseek/deepseek-v4-flash',
+        body,
+        stream: false,
+        authType: 'subscription',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.commandcode.ai/provider/v1/chat/completions',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer cmd_live_pro_key',
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('deepseek/deepseek-v4-flash');
+      expect(result.isAnthropic).toBe(false);
+      expect(result.isChatGpt).toBe(false);
+      expect(result.isGoogle).toBe(false);
+    });
+
+    it('routes through direct OpenAI-compatible Provider API when providerResource is /provider', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'commandcode',
+        apiKey: 'user_goat_plan',
+        model: 'commandcode/gpt-5.4',
+        body,
+        stream: false,
+        providerResource: 'https://api.commandcode.ai/provider',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.commandcode.ai/provider/v1/chat/completions',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer user_goat_plan',
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('gpt-5.4');
+      expect(result.isAnthropic).toBe(false);
+    });
+
+    it('disambiguates identical key formats using the selected plan (go vs goat)', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      // 1. Same user_ key format with Go plan -> CLI adapter
+      await client.forward({
+        provider: 'commandcode',
+        apiKey: 'user_identical_format_key',
+        model: 'commandcode/deepseek/deepseek-v4-flash',
+        body,
+        stream: false,
+        authType: 'subscription',
+        providerResource: 'go',
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://api.commandcode.ai/alpha/generate',
+        expect.anything(),
+      );
+
+      // 2. Same user_ key format with Goat plan -> direct Provider API
+      await client.forward({
+        provider: 'commandcode',
+        apiKey: 'user_identical_format_key',
+        model: 'commandcode/deepseek/deepseek-v4-flash',
+        body,
+        stream: false,
+        authType: 'subscription',
+        providerResource: 'goat',
+      });
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://api.commandcode.ai/provider/v1/chat/completions',
+        expect.anything(),
+      );
+    });
   });
 
   describe('BytePlus provider', () => {
