@@ -48,8 +48,12 @@ export interface ProviderDef {
   subscriptionAuthMode?: 'popup_oauth' | 'popup_paste' | 'device_code' | 'token';
   /** Optional endpoint selector for token-mode subscription providers. */
   subscriptionEndpointRegions?: SubscriptionEndpointRegion[];
+  /** Custom label for the subscription endpoint/region field (defaults to 'Region'). */
+  subscriptionEndpointRegionFieldLabel?: string;
   /** Optional endpoint selector for API-key providers with regional hosts. */
   apiKeyEndpointRegions?: SubscriptionEndpointRegion[];
+  /** Custom label for the API key endpoint/region field (defaults to 'Region'). */
+  endpointRegionFieldLabel?: string;
   /**
    * Optional secondary subscription path. Lets a provider expose a pasted-token
    * shortcut alongside its primary OAuth/device-code flow — currently used so
@@ -97,7 +101,9 @@ interface ProviderUIOverlay {
   deviceLogin?: boolean;
   subscriptionAuthMode?: 'popup_oauth' | 'popup_paste' | 'device_code' | 'token';
   subscriptionEndpointRegions?: SubscriptionEndpointRegion[];
+  subscriptionEndpointRegionFieldLabel?: string;
   apiKeyEndpointRegions?: SubscriptionEndpointRegion[];
+  endpointRegionFieldLabel?: string;
   subscriptionTokenAlternative?: {
     prefix: string;
     placeholder: string;
@@ -257,8 +263,13 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subscriptionLabel: 'Command Code subscription',
     subscriptionAuthMode: 'token',
     subscriptionCredentialKind: 'api-key',
-    subscriptionKeyPlaceholder: 'Paste your Command Code API key',
-    subscriptionRequirementNote: 'Requires Command Code Pro or higher.',
+    subscriptionKeyPlaceholder: 'Paste your Command Code session token or API key',
+    subscriptionRequirementNote: 'Requires Command Code Go, Goat, or Pro plan.',
+    subscriptionEndpointRegionFieldLabel: 'Plan',
+    subscriptionEndpointRegions: [
+      { value: 'go', label: 'Command Code Go Plan (CLI adapter)' },
+      { value: 'goat', label: 'Command Code Goat / Pro Plan (Direct API)' },
+    ],
     models: [],
   },
   gemini: {

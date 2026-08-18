@@ -84,6 +84,7 @@ import type { AutofixRecord } from '../autofix/autofix.types';
 import { hasRotateKeyOperation, type PhoenixOperation } from '../autofix/phoenix.types';
 import { ReasoningContentCache } from './reasoning-content-cache';
 import { recordingResponseFromText } from './attempt-recording-capture';
+import { detectProactiveAutofix } from './provider-client-converters';
 
 type ResolvedRouting = Awaited<ReturnType<ResolveService['resolve']>> & {
   explicit_model_override?: boolean;
@@ -493,6 +494,12 @@ export class ProxyService {
             effectivePrimaryCredentials = rotation.credentials!;
             effectivePrimaryKeyLabel = rotation.keyLabel!;
             recoveredByKeyRotation = true;
+            const proactiveAutofix = detectProactiveAutofix(
+              body,
+              currentForward.wireRequestBody ?? body,
+              route.provider,
+              primaryModel,
+            );
             return {
               forward: currentForward,
               meta: this.buildBaseMeta(resolved, primaryModel, {
@@ -503,6 +510,7 @@ export class ProxyService {
                 attempt: currentForward.attempt,
                 providerCallStarted: currentForward.providerCallStarted,
               }),
+              autofix: proactiveAutofix,
             };
           }
         }
@@ -881,6 +889,16 @@ export class ProxyService {
 
     this.recordTierIfScoring(sessionMomentumKey, resolved.tier);
     this.recordCategoryIfValid(sessionMomentumKey, resolved.specificity_category);
+    const effectiveAutofix =
+      autofixRecord ??
+      (forward.response.ok
+        ? detectProactiveAutofix(
+            body,
+            forward.wireRequestBody ?? body,
+            route.provider,
+            primaryModel,
+          )
+        : undefined);
     return {
       forward,
       meta: this.buildBaseMeta(resolved, primaryModel, {
@@ -894,7 +912,7 @@ export class ProxyService {
         autofixOriginalAttempt,
         autofixOriginalProviderCallStarted,
       }),
-      autofix: autofixRecord,
+      autofix: effectiveAutofix,
     };
   }
 

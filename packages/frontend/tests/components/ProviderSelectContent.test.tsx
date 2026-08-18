@@ -195,8 +195,9 @@ describe("ProviderSelectContent", () => {
       expect(link).not.toBeNull();
       expect(link!.textContent).toContain("Command Code");
     });
-    // The Pro-or-higher requirement note is shown for the subscription view.
-    expect(screen.getByText("Requires Command Code Pro or higher.")).toBeDefined();
+    // The Go, Goat, or Pro requirement note is shown for the subscription view.
+    expect(screen.getByText("Requires Command Code Go, Goat, or Pro plan.")).toBeDefined();
+    expect(container.querySelector('#commandcode-subscription-endpoint')).not.toBeNull();
     // No external sign-in button and no separate api-keys settings link — the
     // only link is the Studio key-form link asserted above.
     expect(container.querySelector(".provider-detail__signin-btn")).toBeNull();

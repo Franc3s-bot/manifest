@@ -818,8 +818,14 @@ export class ProxyFallbackService {
     // For Gemini OAuth, the OAuth blob's `u` field is the
     // CodeAssist project id (not a URL). It must be forwarded so the
     // CodeAssist envelope wrap can include it.
+    // For Command Code subscriptions, the region slot carries the plan
+    // selection ('go' vs 'goat'/'pro') or direct provider URL.
     const providerResource =
-      authType === 'subscription' && provider.toLowerCase() === 'gemini' ? resourceUrl : undefined;
+      authType === 'subscription' && provider.toLowerCase() === 'gemini'
+        ? resourceUrl
+        : provider.toLowerCase() === 'commandcode'
+          ? (providerRegion ?? resourceUrl)
+          : undefined;
 
     const attempt = opts.startProviderAttempt?.({
       provider,

@@ -248,6 +248,13 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     buildPath: () => '/alpha/generate',
     format: 'commandcode',
   },
+  'commandcode-openai': {
+    baseUrl: COMMAND_CODE_PROVIDER_BASE,
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
   cerebras: {
     baseUrl: 'https://api.cerebras.ai',
     buildHeaders: openaiHeaders,
