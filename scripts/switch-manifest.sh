@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# switch-manifest.sh — Manage the Manifest Prod/Staging dual-stack setup.
+# switch-manifest.sh — Manage the Manifest Dynamic Router & Dual-Stack Setup.
 #
-# Two Manifest instances run side-by-side:
-#   Port 2099 = Production  (stable, safe, snapshotted when ready)
-#   Port 2100 = Staging     (validates the `staging` branch image before promotion)
-#
-# Staging runs the `manifest:staging` image (built from the `staging` branch);
-# prod runs `manifest:latest` (built from `main`). When staging is stable,
-# snapshot prod (2099) → staging (2100) for realistic data, then promote the
-# staging branch to main via PR.
-# OpenCode presets switch between "manifest" (prod) and "manifest-dev" (staging).
+# Commands:
+#   switch-manifest.sh status
+#   switch-manifest.sh prod
+#   switch-manifest.sh staging
+#   switch-manifest.sh restart-prod
+#   switch-manifest.sh restart-staging
+#   switch-manifest.sh restart-router
+#   switch-manifest.sh snapshot [prod-to-staging | staging-to-prod]
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,13 +17,13 @@ PROD_COMPOSE="$DOCKER_DIR/docker-compose.yml"
 DEV_COMPOSE="$DOCKER_DIR/docker-compose.dev.yml"
 PROD_ENV="$DOCKER_DIR/.env"
 DEV_ENV="$DOCKER_DIR/.env.dev"
-OMOS_CONFIG="$HOME/.config/opencode/oh-my-opencode-slim.jsonc"
+ROUTER_SCRIPT="$REPO_DIR/scripts/manifest-router.js"
+ROUTER_PORT="${ROUTER_PORT:-2098}"
+ROUTER_URL="http://127.0.0.1:${ROUTER_PORT}"
+STATE_DIR="${HOME:-/root}/.config/manifest-router"
+STATE_FILE="$STATE_DIR/state.json"
 
-# Dedicated source checkouts per stack, so each stack builds from its own
-# branch:
-#   Prod    = /root/projects/manifest           (main)
-#   Staging = /root/projects/manifest-staging   (staging)
-# On a fresh clone (no sibling worktree), fall back to the current checkout.
+# Dedicated source checkouts per stack:
 PROD_REPO_DIR="${PROD_REPO_DIR:-/root/projects/manifest}"
 STAGING_REPO_DIR="${STAGING_REPO_DIR:-/root/projects/manifest-staging}"
 [[ -d "$STAGING_REPO_DIR" ]] || STAGING_REPO_DIR="$REPO_DIR"
@@ -42,97 +41,158 @@ dev_compose() {
   docker compose -f "$dir/docker-compose.dev.yml" --project-directory "$dir" --env-file "$dir/.env.dev" "$@"
 }
 
+ensure_router_running() {
+  if curl -s --max-time 1 "$ROUTER_URL/__router/health" >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl start manifest-router 2>/dev/null || true
+    sleep 0.5
+    if curl -s --max-time 1 "$ROUTER_URL/__router/health" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  if [[ -f "$ROUTER_SCRIPT" ]] && command -v node >/dev/null 2>&1; then
+    nohup node "$ROUTER_SCRIPT" >/tmp/manifest-router.log 2>&1 &
+    sleep 0.5
+  fi
+}
+
+write_state_file_direct() {
+  local target="$1"
+  local port=2099
+  local name="prod"
+  if [[ "$target" == "staging" || "$target" == "dev" ]]; then
+    port=2100
+    name="staging"
+  elif [[ "$target" =~ ^[0-9]+$ ]]; then
+    port="$target"
+    name="custom-$port"
+  fi
+
+  mkdir -p "$STATE_DIR"
+  cat > "$STATE_FILE" <<EOF
+{
+  "active": "$name",
+  "port": $port,
+  "targetUrl": "http://127.0.0.1:$port",
+  "lastSwitched": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+}
+EOF
+}
+
 # ── commands ─────────────────────────────────────────────────────────────
 
 cmd_help() {
   cat <<'EOF'
-switch-manifest.sh — Manifest Prod/Staging dual-stack manager
+switch-manifest.sh — Manifest Dynamic Router & Dual-Stack Manager
 
 USAGE
   switch-manifest.sh <command>
 
-COMMANDS
-  status       Show both stacks' health and the active OpenCode preset.
-               This is the default when no command is given.
+ROUTING (instant switch via router port 2098, no OpenCode restart):
+  prod                         Route all requests to PRODUCTION (:2099)
+  staging | dev                Route all requests to STAGING (:2100)
+  status                       Show active route, router status, and stack health
 
-  prod         Switch OpenCode to the PRODUCTION preset (port 2099).
-               All agents (orchestrator, fixer, explorer, etc.) will use
-               the stable prod instance. Restart OpenCode after running.
+RESTART:
+  restart-prod                 Rebuild image and restart Production stack (:2099)
+  restart-staging | restart-dev
+                               Rebuild image and restart Staging stack (:2100)
+  restart-router               Restart the Dynamic Router daemon (:2098)
 
-  dev|staging  Switch OpenCode to the STAGING preset (port 2100).
-               All agents use the staging instance (manifest:staging image)
-               where you validate new features before promoting to main.
-               Restart OpenCode after running.
+SNAPSHOTS:
+  snapshot prod-to-staging     Copy Production DB (2099) -> Staging DB (2100)
+  snapshot staging-to-prod     Copy Staging DB (2100) -> Production DB (2099)
 
-  snapshot     Copy the production database into the STAGING instance (2099 → 2100).
-               Use this when prod is stable and you want staging to match it,
-               or before a big change so you have a clean baseline.
-               ⚠️  This REPLACES the entire STAGING database.
-
-  up           Start both stacks (prod + staging).
-
-  down         Stop both stacks.
-
-  rebuild      Rebuild the manifest image from source (prod: latest, staging:
-               staging tag) and restart both stacks. Use after pulling new
-               code or changing the healer.
-
-  help         Show this help message.
-
-WORKFLOW
-  1. Develop on the staging branch, validate on Staging (2100):
-       switch-manifest.sh dev     # point OpenCode at Staging
-       # ... merge to staging, CI publishes manifest:staging, 2100 pulls it ...
-
-  2. When stable, snapshot prod into staging or promote:
-       switch-manifest.sh snapshot   # copy prod DB → staging
-       switch-manifest.sh prod       # point OpenCode at prod
-       # merge staging → main via PR, dispatch Docker workflow → latest → 2099
-
-PORTS & CONTAINERS
-  Prod:    2099 (manifest) / 3100 (healer) / 5432 (postgres)  — project: mnfst
-  Staging: 2100 (manifest) / 3101 (healer) / 5432 (postgres)  — project: mnfst-dev
-
-FILES
-  docker/docker-compose.yml      Prod compose (manifest:latest)
-  docker/docker-compose.dev.yml  Staging compose (manifest:staging)
-  docker/.env                    Prod env (secrets, port 2099)
-  docker/.env.dev                Staging env (secrets, port 2100)
-  ~/.config/opencode/oh-my-opencode-slim.jsonc   Preset config
+LIFECYCLE:
+  up                           Start both stacks (prod + staging) + router
+  down                         Stop both stacks
+  rebuild                      Rebuild both stack images from source
 EOF
 }
 
-cmd_status() {
-  echo "═══ Production (2099) ═══"
-  prod_compose ps 2>/dev/null || echo "(not running)"
-  check_stale_image prod
-  echo ""
-  echo "═══ Staging (2100) ═══"
-  dev_compose ps 2>/dev/null || echo "(not running)"
-  check_stale_image dev
-  echo ""
-  echo "═══ OpenCode preset ═══"
-  local preset
-  preset=$(grep -oP '"preset"\s*:\s*"\K[^"]+' "$OMOS_CONFIG" 2>/dev/null || echo "unknown")
-  echo "Active: $preset"
-  echo ""
-  echo "Run 'switch-manifest.sh help' for usage."
-}
-
-cmd_switch_preset() {
+cmd_route() {
   local target="$1"
   local label="$2"
-  if [[ ! -f "$OMOS_CONFIG" ]]; then
-    echo "ERROR: oh-my-opencode-slim config not found at $OMOS_CONFIG"
-    exit 1
+
+  ensure_router_running
+
+  local resp
+  resp=$(curl -s --max-time 3 -X POST "$ROUTER_URL/__router/route?target=$target" 2>/dev/null || true)
+
+  if [[ -n "$resp" && "$resp" == *'"status": "ok"'* ]]; then
+    local active port
+    active=$(python3 -c "import json, sys; d=json.loads(sys.argv[1]); print(d.get('active',''))" "$resp" 2>/dev/null || echo "$target")
+    port=$(python3 -c "import json, sys; d=json.loads(sys.argv[1]); print(d.get('port',''))" "$resp" 2>/dev/null || echo "$label")
+    echo "✓ Active route switched to: ${active^^} (port $port)"
+    echo "  OpenCode and Paseo requests are now routed immediately to $active (no restart needed)."
+  else
+    write_state_file_direct "$target"
+    echo "✓ Active route updated in state file: $target ($label)"
   fi
-  sed -i "s/\"preset\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"preset\": \"$target\"/" "$OMOS_CONFIG"
-  echo "✓ Switched OpenCode preset: $target ($label)"
-  echo "  Restart OpenCode for the change to take effect."
 }
 
-cmd_snapshot() {
-  echo "Snapshot: prod (2099) → staging (2100)"
+cmd_status() {
+  echo "═══ Dynamic Router (Port $ROUTER_PORT) ═══"
+  local router_status
+  router_status=$(curl -s --max-time 2 "$ROUTER_URL/__router/status" 2>/dev/null || true)
+  if [[ -n "$router_status" && "$router_status" == *'"status": "ok"'* ]]; then
+    python3 - "$router_status" <<'PY'
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    active = d.get('active', 'unknown').upper()
+    port = d.get('port', 'unknown')
+    target = d.get('targetUrl', 'unknown')
+    stats = d.get('stats', {})
+    reqs = stats.get('totalRequests', 0)
+    uptime = stats.get('uptimeSec', 0)
+    print(f"Router Status:        ACTIVE (running on port 2098)")
+    print(f"Current Target Route: {active} -> {target}")
+    print(f"Total Proxied Reqs:   {reqs}")
+    print(f"Router Uptime:        {uptime}s")
+except Exception as e:
+    print(f"Router Status:        ACTIVE (error parsing status: {e})")
+PY
+  else
+    echo "Router Status:        INACTIVE or UNREACHABLE on port $ROUTER_PORT"
+    if [[ -f "$STATE_FILE" ]]; then
+      echo "State file says:      $(cat "$STATE_FILE" 2>/dev/null || true)"
+    fi
+  fi
+
+  echo ""
+  echo "═══ Production Stack (2099) ═══"
+  prod_compose ps 2>/dev/null || echo "(not running)"
+
+  echo ""
+  echo "═══ Staging Stack (2100) ═══"
+  dev_compose ps 2>/dev/null || echo "(not running)"
+
+  echo ""
+  echo "═══ OpenCode Manifest Provider ═══"
+  python3 - <<'PY'
+import json, os, re
+opencode_paths = [os.path.expanduser("~/.config/opencode/opencode.jsonc"), "/root/.config/opencode/opencode.jsonc"]
+base_url = "unknown"
+for opencode_path in opencode_paths:
+    if os.path.exists(opencode_path):
+        with open(opencode_path, "r") as f:
+            m = re.search(r'"manifest"\s*:\s*\{.*?"baseURL"\s*:\s*"([^"]+)"', f.read(), re.DOTALL)
+            if m:
+                base_url = m.group(1)
+                break
+print(f"BaseURL: {base_url}")
+if "2098" in base_url:
+    print("✓ OpenCode is connected to the Dynamic Router (:2098).")
+else:
+    print("⚠ OpenCode is not using the Dynamic Router (:2098).")
+PY
+}
+
+cmd_snapshot_prod_to_staging() {
+  echo "Snapshot: PROD (2099) → STAGING (2100)"
   echo "⚠️  This REPLACES the entire STAGING database."
   echo ""
 
@@ -140,7 +200,7 @@ cmd_snapshot() {
   docker stop mnfst-dev-manifest-1 2>/dev/null || true
   sleep 2
 
-  echo "Dumping prod DB (custom format)..."
+  echo "Dumping prod DB..."
   docker exec mnfst-postgres-1 pg_dump -U manifest -Fc manifest > /tmp/prod.dump
 
   echo "Copying dump into Staging postgres..."
@@ -158,122 +218,144 @@ cmd_snapshot() {
 
   rm -f /tmp/prod.dump
   echo ""
-  echo "✓ Snapshot complete. Staging (2100) is now a copy of prod (2099)."
+  echo "✓ Snapshot complete. Staging (2100) is now a copy of Prod (2099)."
   echo "  Waiting for Staging to be healthy..."
-  sleep 15
+  sleep 12
   local code
-  code=$(curl -s -o /dev/null -w "%{http_code}" http://100.69.158.7:2100/api/v1/health 2>/dev/null || echo "000")
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2100/api/v1/health 2>/dev/null || echo "000")
   if [[ "$code" == "200" ]]; then
     echo "  ✓ Staging is healthy (HTTP 200)"
   else
-    echo "  ⚠ Staging returned HTTP $code — check logs: docker logs mnfst-dev-manifest-1"
+    echo "  ⚠ Staging returned HTTP $code"
   fi
   seed_dev_admin
 }
 
-# seed_dev_admin — give the always-on Staging (2100) stack a predictable login so
-# you never have to know prod credentials after a snapshot. Defaults
-# admin@manifest.local / admin1234 (product enforces an 8-char min password);
-# override with WT_ADMIN_EMAIL / WT_ADMIN_PASSWORD.
-seed_dev_admin() {
-  local base="http://100.69.158.7:2100"
-  local email="${WT_ADMIN_EMAIL:-admin@manifest.local}"
-  local password="${WT_ADMIN_PASSWORD:-admin1234}"
-  echo "Seeding Staging login ($email / $password) ..."
-  local status code
-  status="$(curl -s --max-time 10 "$base/api/v1/setup/status" 2>/dev/null || true)"
-  if [[ "$status" == *'"needsSetup":true'* ]]; then
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/v1/setup/admin" \
-      -H 'Content-Type: application/json' \
-      -d "{\"email\":\"$email\",\"name\":\"Admin\",\"password\":\"$password\"}")"
-    if [[ "$code" == "200" || "$code" == "201" ]]; then
-      echo "  ✓ Staging admin seeded — log in at $base with $email / $password"
-    else
-      echo "  ⚠ Setup admin returned HTTP $code — open $base/setup once to create the account."
-    fi
+cmd_snapshot_staging_to_prod() {
+  echo "Snapshot: STAGING (2100) → PROD (2099)"
+  echo "⚠️  This REPLACES the entire PRODUCTION database with Staging data."
+  echo ""
+
+  echo "Stopping Prod manifest..."
+  docker stop mnfst-manifest-1 2>/dev/null || true
+  sleep 2
+
+  echo "Dumping Staging DB..."
+  docker exec mnfst-dev-postgres-1 pg_dump -U manifest -Fc manifest > /tmp/staging.dump
+
+  echo "Copying dump into Prod postgres..."
+  docker cp /tmp/staging.dump mnfst-postgres-1:/tmp/staging.dump
+
+  echo "Recreating Prod database..."
+  docker exec mnfst-postgres-1 psql -U manifest -d postgres -c "DROP DATABASE IF EXISTS manifest;"
+  docker exec mnfst-postgres-1 psql -U manifest -d postgres -c "CREATE DATABASE manifest OWNER manifest;"
+
+  echo "Restoring into Prod..."
+  docker exec mnfst-postgres-1 pg_restore -U manifest -d manifest /tmp/staging.dump 2>/dev/null
+
+  echo "Starting Prod manifest..."
+  docker start mnfst-manifest-1
+
+  rm -f /tmp/staging.dump
+  echo ""
+  echo "✓ Snapshot complete. Prod (2099) is now a copy of Staging (2100)."
+  echo "  Waiting for Prod to be healthy..."
+  sleep 12
+  local code
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2099/api/v1/health 2>/dev/null || echo "000")
+  if [[ "$code" == "200" ]]; then
+    echo "  ✓ Prod is healthy (HTTP 200)"
   else
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "$base/api/auth/sign-up/email" \
-      -H 'Content-Type: application/json' \
-      -d "{\"email\":\"$email\",\"password\":\"$password\",\"name\":\"Admin\"}")"
-    if [[ "$code" == "200" || "$code" == "201" ]]; then
-      echo "  ✓ Staging user seeded — log in at $base with $email / $password"
-    else
-      echo "  ✓ Staging login $email / $password assumed present (sign-up HTTP $code)."
-    fi
+    echo "  ⚠ Prod returned HTTP $code"
   fi
 }
 
-# check_stale_image <prod|dev> — warn when the running manifest container's
-# image differs from what the compose config currently resolves to, i.e. a
-# restart/rebuild would silently swap in a different image. (dev == staging)
-check_stale_image() {
-  local tier="$1" ctr compose_file env_file
-  if [[ "$tier" == "prod" ]]; then
-    ctr="mnfst-manifest-1"; compose_file="${PROD_REPO_DIR}/docker/docker-compose.yml"; env_file="${PROD_REPO_DIR}/docker/.env"
+seed_dev_admin() {
+  local base="http://127.0.0.1:2100"
+  local email="${WT_ADMIN_EMAIL:-admin@manifest.local}"
+  local password="${WT_ADMIN_PASSWORD:-admin1234}"
+  local status
+  status="$(curl -s --max-time 10 "$base/api/v1/setup/status" 2>/dev/null || true)"
+  if [[ "$status" == *'"needsSetup":true'* ]]; then
+    curl -s -o /dev/null --max-time 15 -X POST "$base/api/v1/setup/admin" \
+      -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$email\",\"name\":\"Admin\",\"password\":\"$password\"}" || true
+    echo "  ✓ Staging admin seeded: $email / $password"
   else
-    ctr="mnfst-dev-manifest-1"; compose_file="${STAGING_REPO_DIR}/docker/docker-compose.dev.yml"; env_file="${STAGING_REPO_DIR}/docker/.env.dev"
+    curl -s -o /dev/null --max-time 15 -X POST "$base/api/auth/sign-up/email" \
+      -H 'Content-Type: application/json' \
+      -d "{\"email\":\"$email\",\"password\":\"$password\",\"name\":\"Admin\"}" || true
+    echo "  ✓ Staging login verified: $email / $password"
   fi
-  docker inspect "$ctr" >/dev/null 2>&1 || return 0
-  [[ -f "$env_file" ]] || return 0
-  local running declared
-  running="$(docker inspect "$ctr" --format '{{.Config.Image}}' 2>/dev/null || true)"
-  declared="$(docker compose -f "$compose_file" --project-directory "$(dirname "$compose_file")" --env-file "$env_file" config 2>/dev/null | grep 'image: manifestdotbuild/manifest' | awk '{print $2}' | head -n1 || true)"
-  [[ -n "$running" && -n "$declared" && "$running" != "$declared" ]] || return 0
-  echo ""
-  echo "⚠️  STALE IMAGE WARNING — ${tier} (${ctr})"
-  echo "    Running image:  ${running}"
-  echo "    Declared image: ${declared}  (${env_file})"
-  echo "    'services.sh restart' or 'switch-manifest.sh rebuild' would silently replace it."
-  echo "    Recommend recording MANIFEST_VERSION=${running#*:} explicitly in ${env_file}."
-  echo ""
 }
 
 cmd_restart_prod() {
   echo "Rebuilding image from main (${PROD_REPO_DIR}) and restarting PRODUCTION (2099)..."
-  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
   prod_compose up -d --force-recreate
   echo "✓ Prod (2099) restarted."
 }
 
 cmd_restart_dev() {
   echo "Rebuilding image from staging (${STAGING_REPO_DIR}) and restarting STAGING (2100)..."
-  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   dev_compose up -d --force-recreate
   echo "✓ Staging (2100) restarted."
 }
 
+cmd_restart_router() {
+  echo "Restarting Manifest Dynamic Router (:2098)..."
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl restart manifest-router
+  else
+    pkill -f "manifest-router.js" 2>/dev/null || true
+    sleep 0.5
+    ensure_router_running
+  fi
+  echo "✓ Dynamic Router restarted."
+}
+
 cmd_rebuild() {
   echo "Rebuilding production image from main (${PROD_REPO_DIR})..."
-  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
   echo "Rebuilding staging image from staging (${STAGING_REPO_DIR})..."
-  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
-  echo "Restarting prod..."
+  DOCKER_BUILDKIT=0 docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   prod_compose up -d --force-recreate
-  echo "Restarting staging..."
   dev_compose up -d --force-recreate
-  cmd_status
+  echo "✓ Rebuild complete. Both Prod (2099) and Staging (2100) are up."
 }
 
 # ── main ─────────────────────────────────────────────────────────────────
 
 case "${1:-status}" in
-  help|-h|--help)  cmd_help ;;
-  status)          cmd_status ;;
-  prod)            cmd_switch_preset "manifest" "port 2099" ;;
-  dev|staging)     cmd_switch_preset "manifest-dev" "port 2100 (staging)" ;;
-  restart-prod)    cmd_restart_prod ;;
-  restart-dev|restart-staging) cmd_restart_dev ;;
-  snapshot)        cmd_snapshot ;;
+  help|-h|--help) cmd_help ;;
+  status)         cmd_status ;;
+  prod)           cmd_route "prod" "port 2099 (prod)" ;;
+  staging|dev)    cmd_route "staging" "port 2100 (staging)" ;;
+  restart-prod)   cmd_restart_prod ;;
+  restart-staging|restart-dev) cmd_restart_dev ;;
+  restart-router|router-restart) cmd_restart_router ;;
+  snapshot-prod-to-staging|snapshot-prod-to-dev) cmd_snapshot_prod_to_staging ;;
+  snapshot-staging-to-prod|snapshot-dev-to-prod) cmd_snapshot_staging_to_prod ;;
+  snapshot)
+    direction="${2:-prod-to-staging}"
+    if [[ "$direction" == "staging-to-prod" || "$direction" == "dev-to-prod" ]]; then
+      cmd_snapshot_staging_to_prod
+    else
+      cmd_snapshot_prod_to_staging
+    fi
+    ;;
   up)
     prod_compose up -d
     dev_compose up -d
+    ensure_router_running
     cmd_status
     ;;
   down)
     prod_compose down
     dev_compose down
     ;;
-  rebuild)         cmd_rebuild ;;
+  rebuild) cmd_rebuild ;;
   *)
     echo "Unknown command: $1"
     echo "Run '$0 help' for usage."

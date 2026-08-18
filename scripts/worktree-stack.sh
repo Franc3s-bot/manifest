@@ -5,11 +5,11 @@
 # parallel lanes never interfere with each other or with the always-on
 # Prod (2099) / Dev (2100) stacks.
 #
-#   worktree-stack.sh up <worktree-dir> [--slug <name>] [--snapshot|--no-snapshot] [--rebuild]
-#   worktree-stack.sh down <slug> [--purge-volume]
-#   worktree-stack.sh rebuild <slug>
+#   worktree-stack.sh up [worktree-dir] [--slug <name>] [--snapshot|--no-snapshot] [--rebuild]
+#   worktree-stack.sh down [slug] [--purge-volume]
+#   worktree-stack.sh rebuild [slug]
 #   worktree-stack.sh status [slug]
-#   worktree-stack.sh logs <slug>
+#   worktree-stack.sh logs [slug]
 #   worktree-stack.sh help
 #
 # Isolation scheme (per slug):
@@ -25,7 +25,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DOCKER_DIR="$REPO_DIR/docker"
+MAIN_REPO_DIR="$(git -C "$REPO_DIR" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n1 || true)"
+[[ -n "$MAIN_REPO_DIR" && -d "$MAIN_REPO_DIR" ]] || MAIN_REPO_DIR="$REPO_DIR"
+DOCKER_DIR="$MAIN_REPO_DIR/docker"
 STATE_FILE="$DOCKER_DIR/.worktree-stacks.json"
 DEFAULT_BIND="100.69.158.7"
 SLUG_RE='^[a-z0-9][a-z0-9-]*$'
@@ -45,6 +47,40 @@ validate_slug() {
   local s="$1"
   [[ -n "$s" ]] || die "empty slug"
   [[ "$s" =~ $SLUG_RE ]] || die "invalid slug '$s' (must match [a-z0-9-])"
+}
+
+resolve_current_slug() {
+  local target_dir="${1:-$(pwd -P)}"
+  local real_dir
+  real_dir="$(cd "$target_dir" 2>/dev/null && pwd -P)" || real_dir="$target_dir"
+
+  # 1. Match against registered worktree paths in state
+  local state_slug=""
+  if [[ -f "$STATE_FILE" ]]; then
+    state_slug="$(python3 - "$STATE_FILE" "$real_dir" <<'PY'
+import json, os, sys
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    cur = os.path.realpath(sys.argv[2])
+    for s, v in d.get("slots", {}).items():
+        wt = v.get("worktree", "")
+        if wt and os.path.realpath(wt) == cur:
+            print(s)
+            sys.exit(0)
+except Exception:
+    pass
+PY
+)"
+  fi
+
+  if [[ -n "$state_slug" ]]; then
+    printf '%s' "$state_slug"
+    return 0
+  fi
+
+  # 2. Fallback to slugifying directory basename
+  slugify "$(basename "$real_dir")"
 }
 
 # port_bound <port> — 0 if something is listening on <port> (any interface).
@@ -417,12 +453,14 @@ cmd_up() {
     esac
     shift
   done
-  [[ -n "$wt_dir" ]] || die "usage: worktree-stack.sh up <worktree-dir> [--slug <name>] [--snapshot|--no-snapshot] [--rebuild] [--no-admin]"
+
+  # Default to current directory if omitted
+  [[ -n "$wt_dir" ]] || wt_dir="."
 
   local WT
   WT="$(cd "$wt_dir" 2>/dev/null && pwd)" || die "worktree directory not found: $wt_dir"
   [[ -f "$WT/docker/docker-compose.dev.yml" ]] || die "no docker/docker-compose.dev.yml in $WT — not a Manifest checkout?"
-  [[ -n "$slug" ]] || slug="$(slugify "$(basename "$WT")")"
+  [[ -n "$slug" ]] || slug="$(resolve_current_slug "$WT")"
   validate_slug "$slug"
 
   local bind_addr mp hp alloc was_running=0
@@ -491,7 +529,10 @@ cmd_down() {
     esac
     shift
   done
-  [[ -n "$slug" ]] || die "usage: worktree-stack.sh down <slug> [--purge-volume]"
+
+  if [[ -z "$slug" ]]; then
+    slug="$(resolve_current_slug)"
+  fi
   validate_slug "$slug"
 
   local wt mp hp
@@ -535,7 +576,9 @@ cmd_down() {
 
 cmd_rebuild() {
   local slug="${1:-}"
-  [[ -n "$slug" ]] || die "usage: worktree-stack.sh rebuild <slug>"
+  if [[ -z "$slug" ]]; then
+    slug="$(resolve_current_slug)"
+  fi
   validate_slug "$slug"
   local wt mp bind
   wt="$(slot_worktree "$slug")"
@@ -543,7 +586,7 @@ cmd_rebuild() {
   [[ -d "$wt" ]] || die "recorded worktree $wt is gone — cannot rebuild"
   ensure_stack_files "$slug"
   echo "Rebuilding image manifestdotbuild/manifest:$slug from $wt ..."
-  docker build -f "$wt/docker/Dockerfile" -t "manifestdotbuild/manifest:$slug" "$wt"
+  DOCKER_BUILDKIT=0 docker build -f "$wt/docker/Dockerfile" -t "manifestdotbuild/manifest:$slug" "$wt"
   echo "Recreating stack mnfst-wt-$slug ..."
   WT_VERBOSE=1 wt_compose "$slug" up -d --force-recreate
   mp="$(slot_field "$slug" manifest_port)"
@@ -569,6 +612,9 @@ print_stack_row() {
 
 cmd_status() {
   local filter="${1:-}"
+  local cur_pwd
+  cur_pwd="$(pwd -P)"
+
   if [[ -n "$filter" ]]; then
     validate_slug "$filter"
     local row
@@ -577,8 +623,30 @@ cmd_status() {
       echo "No worktree stack with slug '$filter' (see 'worktree-stack.sh status')."
       return 0
     fi
+    echo "═══ Worktree stack: $filter ═══"
     print_stack_row "$row"
     return 0
+  fi
+
+  # Highlight current worktree stack if active
+  local cur_slug
+  cur_slug="$(resolve_current_slug "$cur_pwd" 2>/dev/null || true)"
+  if [[ -n "$cur_slug" && -n "$(state_get "$cur_slug")" ]]; then
+    local cur_row
+    cur_row="$(state_all | awk -F'\t' -v s="$cur_slug" '$1==s')"
+    if [[ -n "$cur_row" ]]; then
+      echo "═══ Current Worktree Stack ($cur_slug) ═══"
+      local mp hp bind_addr
+      mp="$(slot_field "$cur_slug" manifest_port)"
+      hp="$(slot_field "$cur_slug" healer_port)"
+      bind_addr="$(resolve_bind_address 2>/dev/null || echo "$DEFAULT_BIND")"
+      echo "  Manifest: http://$bind_addr:$mp"
+      echo "  Healer:   http://$bind_addr:$hp"
+      local status_info
+      status_info="$(stack_container_status "$cur_slug" "$cur_pwd")"
+      echo "  Status:   ${status_info:-down}"
+      echo ""
+    fi
   fi
 
   echo "═══ Worktree stacks (mnfst-wt-*) ═══"
@@ -602,7 +670,9 @@ cmd_status() {
 
 cmd_logs() {
   local slug="${1:-}"
-  [[ -n "$slug" ]] || die "usage: worktree-stack.sh logs <slug>"
+  if [[ -z "$slug" ]]; then
+    slug="$(resolve_current_slug)"
+  fi
   validate_slug "$slug"
   [[ -n "$(slot_worktree "$slug")" ]] || die "no state entry for slug '$slug'"
   ensure_stack_files "$slug"
@@ -619,39 +689,42 @@ Prod (2099) / Dev (2100) stacks. Containers: mnfst-wt-<slug>-manifest-1,
 mnfst-wt-<slug>-postgres-1, mnfst-wt-<slug>-healer-1.
 
 USAGE
-  worktree-stack.sh up <worktree-dir> [--slug <name>] [--snapshot|--no-snapshot] [--rebuild]
-  worktree-stack.sh down <slug> [--purge-volume]
-  worktree-stack.sh rebuild <slug>
+  worktree-stack.sh up [worktree-dir] [--slug <name>] [--snapshot|--no-snapshot] [--rebuild]
+  worktree-stack.sh down [slug] [--purge-volume]
+  worktree-stack.sh rebuild [slug]
   worktree-stack.sh status [slug]
-  worktree-stack.sh logs <slug>
+  worktree-stack.sh logs [slug]
   worktree-stack.sh help
 
 COMMANDS
-  up <worktree-dir>
+  up [worktree-dir]
       Build image manifestdotbuild/manifest:<slug> from the worktree source,
       allocate a port slot, generate the per-stack env + compose override,
-      start the isolated stack and health-check it.
+      start the isolated stack and health-check it. Defaults to current dir (.).
       --slug <name>     Override the slug (default: sanitized dir basename).
       --snapshot        (DEFAULT) Copy the PROD database into this stack.
       --no-snapshot     Start with a fresh empty database.
       --rebuild         Rebuild the image even if the tag already exists.
       --no-admin        Skip seeding the predictable local login.
 
-  down <slug> [--purge-volume]
+  down [slug] [--purge-volume]
       Stop the stack, remove the generated env/override files, release the
-      port slot. --purge-volume also deletes the stack's two volumes.
+      port slot. Defaults to the current worktree slug.
+      --purge-volume also deletes the stack's two volumes.
 
-  rebuild <slug>
+  rebuild [slug]
       Rebuild the image from the recorded worktree and recreate the stack.
-      The database volume is kept (no data loss).
+      The database volume is kept (no data loss). Defaults to current worktree.
 
   status [slug]
       Table of active stacks (ports, branch, worktree, container health).
+      If inside a worktree, highlights the current stack first.
       Orphaned stacks (worktree or branch gone) are flagged. With no args
       also shows the always-on prod/dev one-liner.
 
-  logs <slug>
+  logs [slug]
       Follow the stack's manifest container logs (last 100 lines).
+      Defaults to the current worktree.
 
   help         Show this help.
 
@@ -676,7 +749,7 @@ EOF
 case "${1:-help}" in
   up)       shift; cmd_up "$@" ;;
   down)     shift; cmd_down "$@" ;;
-  rebuild)  shift; cmd_rebuild "$@" ;;
+  rebuild|build) shift; cmd_rebuild "$@" ;;
   status)   shift; cmd_status "$@" ;;
   logs)     shift; cmd_logs "$@" ;;
   help|-h|--help) cmd_help ;;

@@ -846,7 +846,7 @@ describe('provider-client-converters', () => {
       const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.2');
 
       expect(result).toHaveProperty('max_completion_tokens', 2000);
-      expect(result).toHaveProperty('max_tokens', 1000);
+      expect(result).not.toHaveProperty('max_tokens');
     });
 
     it('should not convert max_tokens for non-OpenAI providers', () => {
@@ -1480,8 +1480,11 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
       properties: {},
     });
     expect(functions[0] as Record<string, unknown>).toEqual({
-      type: 'object',
-      properties: {},
+      name: 'legacy_func',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
     });
   });
 

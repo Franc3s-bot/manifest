@@ -199,4 +199,24 @@ describe('ProviderSelectContent — providerDeepLink', () => {
     // No custom provider matches → the editor never opens (nothing renders).
     expect(screen.queryByText('Edit custom provider')).toBeNull();
   });
+
+  it('opens LocalServerDetailView with Host and Port inputs when providerDeepLink is unsloth', async () => {
+    const { container } = render(() => (
+      <ProviderSelectContent
+        agentName="test-agent"
+        providers={[]}
+        customProviders={[]}
+        providerDeepLink={{ providerId: 'unsloth', authType: 'local' }}
+        onUpdate={onUpdate}
+        onClose={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => {
+      expect(screen.getByText('Unsloth Studio')).toBeDefined();
+      expect(container.querySelector('#local-host')).not.toBeNull();
+      expect(container.querySelector('#local-port')).not.toBeNull();
+      expect(container.querySelector('#local-api-key')).not.toBeNull();
+    });
+  });
 });

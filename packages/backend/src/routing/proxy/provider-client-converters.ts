@@ -630,7 +630,7 @@ export function detectProactiveAutofix(
       }
     }
     if (reasoningRestored) {
-      ops.push({ type: 'add_param', to: 'reasoning_content' });
+      ops.push({ type: 'add_param', from: null, to: 'reasoning_content' });
       explanations.push(
         'Restored missing reasoning_content from cache on assistant tool-call turns',
       );
