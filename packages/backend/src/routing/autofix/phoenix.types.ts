@@ -93,8 +93,8 @@ export type PhoenixHealStatus = (typeof HEAL_STATUSES)[number];
 /** One deterministic edit from the Phoenix catalog (MVP #1: rename_param). */
 export interface PhoenixOperation {
   type: string;
-  from?: string;
-  to?: string;
+  from?: string | null;
+  to?: string | null;
 }
 
 /**

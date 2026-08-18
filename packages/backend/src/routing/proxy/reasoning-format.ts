@@ -46,6 +46,13 @@ const REASONING_CONTENT_AWARE_ENDPOINTS = new Set([
   'clinepass',
   'qwen',
   'together',
+  'zai',
+  'z.ai',
+  'cerebras',
+  'nvidia',
+  'xiaomi',
+  'mimo',
+  'minimax',
 ]);
 
 const REASONING_MODEL_FAMILY_RE = /^(?:deepseek|kimi|glm|qwen|minimax|mimo)(?:[-_.\d]|$)/i;
