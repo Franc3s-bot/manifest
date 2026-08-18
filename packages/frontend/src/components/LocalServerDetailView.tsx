@@ -1,4 +1,4 @@
-import { createResource, createSignal, For, Show, type Component } from 'solid-js';
+import { createEffect, createResource, createSignal, For, Show, type Component } from 'solid-js';
 import { LOCAL_SERVER_HINTS, type LocalServerHint } from 'manifest-shared';
 import type { ProviderDef } from '../services/providers.js';
 import {
@@ -33,16 +33,70 @@ interface ProbeState {
   baseUrl: string;
 }
 
+function parseHostAndPort(urlStr?: string, defaultPort?: number): { host: string; port: string } {
+  if (!urlStr) return { host: '', port: defaultPort ? String(defaultPort) : '' };
+  try {
+    const url = new URL(urlStr.startsWith('http') ? urlStr : `http://${urlStr}`);
+    return {
+      host: url.hostname.replace(/^\[|\]$/g, ''),
+      port: url.port || (defaultPort ? String(defaultPort) : ''),
+    };
+  } catch {
+    return { host: urlStr, port: defaultPort ? String(defaultPort) : '' };
+  }
+}
+
 const LocalServerDetailView: Component<Props> = (props) => {
   const isEdit = () => !!props.editData;
   const hint = (): LocalServerHint | undefined => LOCAL_SERVER_HINTS[props.provider.id];
 
   const [hostResource] = createResource(() => checkLocalLlmHost());
-  // `defaultLocalPort` is the gate that routes the tile click here in
-  // the first place (see ProviderApiKeyTab), so it's always defined.
+
+  const initialHost = () => {
+    if (props.editData) {
+      return parseHostAndPort(props.editData.base_url, props.provider.defaultLocalPort).host;
+    }
+    return hostResource() ?? 'localhost';
+  };
+
+  const initialPort = () => {
+    if (props.editData) {
+      return parseHostAndPort(props.editData.base_url, props.provider.defaultLocalPort).port;
+    }
+    return props.provider.defaultLocalPort ? String(props.provider.defaultLocalPort) : '';
+  };
+
+  const [host, setHost] = createSignal(initialHost());
+  const [port, setPort] = createSignal(initialPort());
+  const [apiKey, setApiKey] = createSignal('');
+  const [editingKey, setEditingKey] = createSignal(false);
+
+  createEffect(() => {
+    if (!props.editData && hostResource() && (host() === 'localhost' || !host())) {
+      setHost(hostResource() ?? 'localhost');
+    }
+  });
+
   const resolvedBaseUrl = () => {
-    if (props.editData) return props.editData.base_url;
-    return `http://${hostResource() ?? 'localhost'}:${props.provider.defaultLocalPort!}/v1`;
+    const h = host().trim() || hostResource() || 'localhost';
+    const p = port().trim();
+    if (h.startsWith('http://') || h.startsWith('https://')) {
+      try {
+        const u = new URL(h);
+        if (p) u.port = p;
+        let path = u.pathname.replace(/\/+$/, '');
+        if (!path.endsWith('/v1')) path += '/v1';
+        return `${u.protocol}//${u.host}${path}`;
+      } catch {
+        return h.endsWith('/v1') ? h : `${h.replace(/\/+$/, '')}/v1`;
+      }
+    }
+    const portPart = p
+      ? `:${p}`
+      : props.provider.defaultLocalPort
+        ? `:${props.provider.defaultLocalPort}`
+        : '';
+    return `http://${h}${portPart}/v1`;
   };
 
   // In edit mode, pre-select only the models that are already connected.
@@ -58,11 +112,13 @@ const LocalServerDetailView: Component<Props> = (props) => {
   const [hasSeeded, setHasSeeded] = createSignal(isEdit());
 
   const [probe] = createResource(
-    () => ({ key: refreshKey(), url: resolvedBaseUrl() }),
-    async ({ url }): Promise<ProbeState> => {
+    () => ({ key: refreshKey(), url: resolvedBaseUrl(), keyVal: apiKey().trim() }),
+    async ({ url, keyVal }): Promise<ProbeState> => {
       const wasConnected = hasSeeded();
       try {
-        const { models } = await probeCustomProvider(props.agentName, url);
+        const { models } = keyVal
+          ? await probeCustomProvider(props.agentName, url, keyVal, 'openai', props.provider.name)
+          : await probeCustomProvider(props.agentName, url);
         const names = models.map((m) => m.model_name);
         setSelected((prev) => {
           if (!hasSeeded()) {
@@ -100,15 +156,31 @@ const LocalServerDetailView: Component<Props> = (props) => {
     if (!state || state.models.length === 0) return;
     const picked = Array.from(selected());
     setConnecting(true);
+    const keyVal = apiKey().trim();
     try {
       if (props.editData) {
-        await updateCustomProvider(props.agentName, props.editData.id, {
+        const updatePayload: {
+          base_url?: string;
+          apiKey?: string;
+          models: {
+            model_name: string;
+            input_price_per_million_tokens: number;
+            output_price_per_million_tokens: number;
+          }[];
+        } = {
           models: picked.map((name) => ({
             model_name: name,
             input_price_per_million_tokens: 0,
             output_price_per_million_tokens: 0,
           })),
-        });
+        };
+        if (state.baseUrl !== props.editData.base_url) {
+          updatePayload.base_url = state.baseUrl;
+        }
+        if (keyVal) {
+          updatePayload.apiKey = keyVal;
+        }
+        await updateCustomProvider(props.agentName, props.editData.id, updatePayload);
         toast.success(
           `${props.provider.name} updated (${picked.length} model${picked.length === 1 ? '' : 's'})`,
         );
@@ -116,6 +188,7 @@ const LocalServerDetailView: Component<Props> = (props) => {
         await createCustomProvider(props.agentName, {
           name: props.provider.name,
           base_url: state.baseUrl,
+          ...(keyVal ? { apiKey: keyVal } : {}),
           models: picked.map((name) => ({
             model_name: name,
             input_price_per_million_tokens: 0,
@@ -196,6 +269,106 @@ const LocalServerDetailView: Component<Props> = (props) => {
 
       <div class="routing-modal__subtitle" style="margin-bottom: 20px;">
         {props.provider.subtitle}
+      </div>
+
+      {/* Connection fields (Host / IP, Port, API Key) */}
+      <div style="margin-bottom: 16px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label
+              class="provider-detail__label"
+              for="local-host"
+              style="font-size: var(--font-size-xs); margin-bottom: 4px; display: block;"
+            >
+              Host / IP
+            </label>
+            <input
+              id="local-host"
+              class="provider-detail__input"
+              type="text"
+              placeholder="localhost or 100.x.y.z"
+              value={host()}
+              onInput={(e) => setHost(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  retry();
+                }
+              }}
+            />
+          </div>
+          <div style="width: 100px;">
+            <label
+              class="provider-detail__label"
+              for="local-port"
+              style="font-size: var(--font-size-xs); margin-bottom: 4px; display: block;"
+            >
+              Port
+            </label>
+            <input
+              id="local-port"
+              class="provider-detail__input"
+              type="text"
+              placeholder={String(props.provider.defaultLocalPort ?? 8888)}
+              value={port()}
+              onInput={(e) => setPort(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  retry();
+                }
+              }}
+            />
+          </div>
+        </div>
+
+        <div>
+          <label
+            class="provider-detail__label"
+            for="local-api-key"
+            style="font-size: var(--font-size-xs); margin-bottom: 4px; display: flex; align-items: center; justify-content: space-between;"
+          >
+            <span>
+              API Key <span class="provider-detail__label-muted">(optional)</span>
+            </span>
+            <Show when={props.editData?.has_api_key && !editingKey()}>
+              <button
+                type="button"
+                class="link-button"
+                style="font-size: var(--font-size-xs); background: none; border: none; padding: 0; color: hsl(var(--primary)); cursor: pointer;"
+                onClick={() => setEditingKey(true)}
+              >
+                Change key
+              </button>
+            </Show>
+          </label>
+          <Show
+            when={!props.editData?.has_api_key || editingKey()}
+            fallback={
+              <input
+                class="provider-detail__input provider-detail__input--masked"
+                type="text"
+                disabled
+                value="••••••••••••••••"
+              />
+            }
+          >
+            <input
+              id="local-api-key"
+              class="provider-detail__input"
+              type="password"
+              placeholder={props.provider.keyPlaceholder || 'Optional API key'}
+              value={apiKey()}
+              onInput={(e) => setApiKey(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  retry();
+                }
+              }}
+            />
+          </Show>
+        </div>
       </div>
 
       <Show

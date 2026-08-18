@@ -26,6 +26,7 @@ const MODEL_PREFIX_MAP: [RegExp, string][] = [
   [/^opencode-zen\//, 'opencode-zen'],
   [/^kiro\//, 'kiro'],
   [/^llamacpp\//, 'llamacpp'],
+  [/^unsloth\//, 'unsloth'],
   [/^[a-z][\w-]*\//, 'openrouter'],
 ];
 

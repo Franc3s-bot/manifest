@@ -58,6 +58,21 @@ const llamacppProv: ProviderDef = {
   defaultLocalPort: 8080,
 };
 
+const unslothProv: ProviderDef = {
+  id: 'unsloth',
+  name: 'Unsloth Studio',
+  color: '#E65100',
+  initial: 'U',
+  subtitle: 'Run local and remote fine-tuned models with Unsloth Studio',
+  keyPrefix: '',
+  minKeyLength: 0,
+  keyPlaceholder: 'Unsloth API key (optional)',
+  noKeyRequired: true,
+  localOnly: true,
+  models: [],
+  defaultLocalPort: 8888,
+};
+
 describe('LocalServerDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -820,6 +835,78 @@ describe('LocalServerDetailView', () => {
 
     await waitFor(() => {
       expect(container.querySelector('.provider-detail__caveat')!.textContent).toContain('--bind 0.0.0.0');
+    });
+  });
+
+  it('allows customizing host, port, and API key for a remote or Tailscale instance', async () => {
+    mockProbe.mockResolvedValue({ models: [{ model_name: 'unsloth-llama-3.1-8b' }] });
+    mockCreate.mockResolvedValue({ id: 'cp-unsloth' });
+    const onConnected = vi.fn();
+
+    const { container } = render(() => (
+      <LocalServerDetailView
+        agentName="a1"
+        provider={unslothProv}
+        onConnected={onConnected}
+        onBack={vi.fn()}
+      />
+    ));
+
+    // Wait for initial probe
+    await waitFor(() => {
+      expect(mockProbe).toHaveBeenCalledWith('a1', 'http://localhost:8888/v1');
+    });
+
+    const hostInput = container.querySelector<HTMLInputElement>('#local-host')!;
+    const portInput = container.querySelector<HTMLInputElement>('#local-port')!;
+    const keyInput = container.querySelector<HTMLInputElement>('#local-api-key')!;
+
+    expect(hostInput).not.toBeNull();
+    expect(portInput).not.toBeNull();
+    expect(keyInput).not.toBeNull();
+
+    // Change host to Tailscale IP, port to 8888, and enter API key
+    fireEvent.input(hostInput, { target: { value: '100.85.12.34' } });
+    fireEvent.input(portInput, { target: { value: '8888' } });
+    fireEvent.input(keyInput, { target: { value: 'unsloth-secret-key-123' } });
+
+    // Trigger retry with Enter on the key input
+    fireEvent.keyDown(keyInput, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(mockProbe).toHaveBeenCalledWith(
+        'a1',
+        'http://100.85.12.34:8888/v1',
+        'unsloth-secret-key-123',
+        'openai',
+        'Unsloth Studio',
+      );
+    });
+
+    const connectBtn = await waitFor(() => {
+      const b = Array.from(container.querySelectorAll('button')).find((x) =>
+        x.textContent?.includes('Connect 1 model'),
+      );
+      if (!b) throw new Error('button not found yet');
+      return b as HTMLButtonElement;
+    });
+
+    fireEvent.click(connectBtn);
+
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledWith('a1', {
+        name: 'Unsloth Studio',
+        base_url: 'http://100.85.12.34:8888/v1',
+        apiKey: 'unsloth-secret-key-123',
+        models: [
+          {
+            model_name: 'unsloth-llama-3.1-8b',
+            input_price_per_million_tokens: 0,
+            output_price_per_million_tokens: 0,
+          },
+        ],
+      });
+      expect(onConnected).toHaveBeenCalled();
     });
   });
 });

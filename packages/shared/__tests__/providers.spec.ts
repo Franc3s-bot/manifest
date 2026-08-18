@@ -52,7 +52,7 @@ describe('SHARED_PROVIDER_BY_ID_OR_ALIAS', () => {
     }
   });
 
-  it('resolves llama.cpp and lm-studio aliases to their canonical tile-only entries', () => {
+  it('resolves llama.cpp, lm-studio, and unsloth aliases to their canonical tile-only entries', () => {
     // These are the aliases consumed by CustomProviderService.canonicalTileIdForName
     // to rewrite `custom:<uuid>` provider rows into first-class dashboard entries.
     expect(SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalizeProviderName('llama.cpp'))?.id).toBe(
@@ -60,6 +60,12 @@ describe('SHARED_PROVIDER_BY_ID_OR_ALIAS', () => {
     );
     expect(SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalizeProviderName('LM Studio'))?.id).toBe(
       'lmstudio',
+    );
+    expect(SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalizeProviderName('Unsloth Studio'))?.id).toBe(
+      'unsloth',
+    );
+    expect(SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalizeProviderName('unsloth'))?.id).toBe(
+      'unsloth',
     );
   });
 

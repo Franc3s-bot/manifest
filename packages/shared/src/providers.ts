@@ -484,6 +484,19 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     minKeyLength: 30,
     keyPlaceholder: 'API key',
   },
+  {
+    id: 'unsloth',
+    displayName: 'Unsloth Studio',
+    aliases: ['unsloth-studio', 'unsloth studio', 'unslothstudio'],
+    openRouterPrefixes: ['unsloth'],
+    requiresApiKey: false,
+    localOnly: true,
+    tileOnly: true,
+    color: '#E65100',
+    keyPrefix: '',
+    minKeyLength: 0,
+    keyPlaceholder: 'Unsloth API key (optional)',
+  },
 ] as const;
 
 /**
@@ -609,6 +622,21 @@ export const LOCAL_SERVER_HINTS: Readonly<Record<string, LocalServerHint>> = {
         'Recent llama.cpp builds expose /v1/models by default. If yours 404s, upgrade llama-server or use ',
       linkLabel: 'Add custom provider',
       after: ' to register the model manually.',
+    },
+  },
+  unsloth: {
+    defaultPort: 8888,
+    setupCommand: 'unsloth studio',
+    setupNote: 'Start Unsloth Studio with the OpenAI-compatible server enabled on port 8888.',
+    installUrl: 'https://docs.unsloth.ai',
+    dockerBindNote:
+      "Unsloth Studio listens on 127.0.0.1 by default unless you pass --host 0.0.0.0; the default bind isn't reachable from Docker.",
+    dockerBindCommand: 'unsloth studio --host 0.0.0.0 -p 8888',
+    notReachableHint: {
+      before:
+        'Make sure Unsloth Studio is running and accessible on your network or Tailscale. You can also ',
+      linkLabel: 'Add custom provider',
+      after: ' to register manually.',
     },
   },
 };

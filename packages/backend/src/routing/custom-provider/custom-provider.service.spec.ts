@@ -133,6 +133,8 @@ describe('CustomProviderService', () => {
       expect(CustomProviderService.canonicalTileIdForName('llama.cpp')).toBe('llamacpp');
       expect(CustomProviderService.canonicalTileIdForName('llama-cpp')).toBe('llamacpp');
       expect(CustomProviderService.canonicalTileIdForName('LM Studio')).toBe('lmstudio');
+      expect(CustomProviderService.canonicalTileIdForName('Unsloth Studio')).toBe('unsloth');
+      expect(CustomProviderService.canonicalTileIdForName('unsloth')).toBe('unsloth');
       expect(CustomProviderService.canonicalTileIdForName('Groq')).toBeNull();
       expect(CustomProviderService.canonicalTileIdForName('My Custom LLM')).toBeNull();
     });
