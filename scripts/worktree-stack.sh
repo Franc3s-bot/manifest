@@ -586,7 +586,7 @@ cmd_rebuild() {
   [[ -d "$wt" ]] || die "recorded worktree $wt is gone — cannot rebuild"
   ensure_stack_files "$slug"
   echo "Rebuilding image manifestdotbuild/manifest:$slug from $wt ..."
-  docker build -f "$wt/docker/Dockerfile" -t "manifestdotbuild/manifest:$slug" "$wt"
+  DOCKER_BUILDKIT=0 docker build -f "$wt/docker/Dockerfile" -t "manifestdotbuild/manifest:$slug" "$wt"
   echo "Recreating stack mnfst-wt-$slug ..."
   WT_VERBOSE=1 wt_compose "$slug" up -d --force-recreate
   mp="$(slot_field "$slug" manifest_port)"

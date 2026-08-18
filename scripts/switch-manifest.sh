@@ -291,14 +291,14 @@ seed_dev_admin() {
 
 cmd_restart_prod() {
   echo "Rebuilding image from main (${PROD_REPO_DIR}) and restarting PRODUCTION (2099)..."
-  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
   prod_compose up -d --force-recreate
   echo "✓ Prod (2099) restarted."
 }
 
 cmd_restart_dev() {
   echo "Rebuilding image from staging (${STAGING_REPO_DIR}) and restarting STAGING (2100)..."
-  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   dev_compose up -d --force-recreate
   echo "✓ Staging (2100) restarted."
 }
@@ -317,12 +317,12 @@ cmd_restart_router() {
 
 cmd_rebuild() {
   echo "Rebuilding production image from main (${PROD_REPO_DIR})..."
-  docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${PROD_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:latest "${PROD_REPO_DIR}"
   echo "Rebuilding staging image from staging (${STAGING_REPO_DIR})..."
-  docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
+  DOCKER_BUILDKIT=0 docker build -f "${STAGING_REPO_DIR}/docker/Dockerfile" -t manifestdotbuild/manifest:staging "${STAGING_REPO_DIR}"
   prod_compose up -d --force-recreate
   dev_compose up -d --force-recreate
-  cmd_status
+  echo "✓ Rebuild complete. Both Prod (2099) and Staging (2100) are up."
 }
 
 # ── main ─────────────────────────────────────────────────────────────────

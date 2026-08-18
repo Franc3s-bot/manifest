@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onMount, Show, type Component } from 'solid-js';
-import { normalizeProviderName } from 'manifest-shared';
+import { normalizeProviderName, SHARED_PROVIDER_BY_ID_OR_ALIAS } from 'manifest-shared';
 import { PROVIDERS, type ProviderDef } from '../services/providers.js';
 import {
   connectProvider,
@@ -39,6 +39,7 @@ const ProviderSelectContent: Component<ProviderSelectContentProps> = (props) => 
 
   const deepLink = props.providerDeepLink;
   const deepLinkProv = deepLink ? PROVIDERS.find((p) => p.id === deepLink.providerId) : null;
+  const isDeepLinkLocalServer = !!deepLinkProv?.defaultLocalPort;
   // A `custom:<id>` deep link can't resolve to a standard PROVIDERS entry; it
   // targets a custom provider whose editor we open directly (see onMount below).
   const deepLinkCustomId = deepLink?.providerId.startsWith('custom:')
@@ -68,7 +69,7 @@ const ProviderSelectContent: Component<ProviderSelectContentProps> = (props) => 
     });
   }
   const [selectedProvider, setSelectedProvider] = createSignal<string | null>(
-    deepLinkProv ? deepLinkProv.id : null,
+    deepLinkProv && !isDeepLinkLocalServer ? deepLinkProv.id : null,
   );
   const [selectedAuthType, setSelectedAuthType] = createSignal<AuthType>(
     deepLink?.authType ?? (deepLinkProv?.subscriptionOnly ? 'subscription' : 'api_key'),
@@ -78,7 +79,9 @@ const ProviderSelectContent: Component<ProviderSelectContentProps> = (props) => 
   const [editingCustomProvider, setEditingCustomProvider] = createSignal<CustomProviderData | null>(
     null,
   );
-  const [localServerProvider, setLocalServerProvider] = createSignal<ProviderDef | null>(null);
+  const [localServerProvider, setLocalServerProvider] = createSignal<ProviderDef | null>(
+    isDeepLinkLocalServer ? deepLinkProv : null,
+  );
   const [localServerEditData, setLocalServerEditData] = createSignal<
     CustomProviderData | undefined
   >(undefined);
@@ -165,6 +168,11 @@ const ProviderSelectContent: Component<ProviderSelectContentProps> = (props) => 
   };
 
   const openDetail = (provId: string, authType: AuthType, addKey?: boolean) => {
+    const provDef = PROVIDERS.find((p) => p.id === provId);
+    if (provDef?.defaultLocalPort !== undefined) {
+      openLocalServer(provDef);
+      return;
+    }
     setDirection('forward');
     setAddKeyIntent(false);
     setSelectedProvider(provId);
@@ -183,8 +191,15 @@ const ProviderSelectContent: Component<ProviderSelectContentProps> = (props) => 
 
   const openEditCustom = (cp: CustomProviderData) => {
     const normalized = normalizeProviderName(cp.name);
+    const shared =
+      SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalized) ??
+      SHARED_PROVIDER_BY_ID_OR_ALIAS.get(cp.name) ??
+      SHARED_PROVIDER_BY_ID_OR_ALIAS.get(cp.name.toLowerCase());
+    const targetId = shared?.id ?? normalized;
     const localProv = PROVIDERS.find(
-      (p) => p.defaultLocalPort && normalizeProviderName(p.name) === normalized,
+      (p) =>
+        p.defaultLocalPort !== undefined &&
+        (p.id === targetId || normalizeProviderName(p.name) === normalized),
     );
     if (localProv) {
       setDirection('forward');
