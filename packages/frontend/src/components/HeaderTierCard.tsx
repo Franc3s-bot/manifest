@@ -325,14 +325,22 @@ const HeaderTierCard: Component<Props> = (props) => {
       setSwappingFbIndex(null);
       return;
     }
+    // Insert: dragged fallback becomes primary, old primary moves to the top of
+    // the fallback chain; remaining fallbacks shift down preserving order.
     const fallbackRoutes = props.tier.fallback_routes ?? null;
     const fbRoute = fallbackRoutes?.[fbIndex] ?? null;
 
     const newFallbacks = [...fb];
-    newFallbacks[fbIndex] = m;
+    newFallbacks.splice(fbIndex, 1);
+    newFallbacks.splice(0, 0, m);
     const newRoutes =
       fallbackRoutes && currentRoute && fallbackRoutes.length === fb.length
-        ? fallbackRoutes.map((r, i) => (i === fbIndex ? currentRoute : r))
+        ? (() => {
+            const rs = [...fallbackRoutes];
+            rs.splice(fbIndex, 1);
+            rs.splice(0, 0, currentRoute);
+            return rs;
+          })()
         : null;
 
     props.onFallbacksUpdate(newFallbacks, newRoutes);

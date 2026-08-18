@@ -589,6 +589,44 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         </svg>
       );
 
+    /* ── Unsloth Studio ──────────────────────────── */
+    case 'unsloth':
+      return (
+        <svg
+          style={s}
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <rect width="24" height="24" rx="5" fill="#E65100" />
+          <path
+            d="M12 4.5C7.86 4.5 4.5 7.86 4.5 12C4.5 16.14 7.86 19.5 12 19.5C16.14 19.5 19.5 16.14 19.5 12C19.5 7.86 16.14 4.5 12 4.5Z"
+            fill="#FFF"
+          />
+          <path
+            d="M7.8 11.2C7.1 11.2 6.5 12.2 6.5 13.5C6.5 14.8 7.1 15.8 7.8 15.8C8.5 15.8 9.1 14.8 9.1 13.5C9.1 12.2 8.5 11.2 7.8 11.2Z"
+            fill="#E65100"
+          />
+          <path
+            d="M16.2 11.2C15.5 11.2 14.9 12.2 14.9 13.5C14.9 14.8 15.5 15.8 16.2 15.8C16.9 15.8 17.5 14.8 17.5 13.5C17.5 12.2 16.9 11.2 16.2 11.2Z"
+            fill="#E65100"
+          />
+          <circle cx="8" cy="13.2" r="0.7" fill="#2D2D2D" />
+          <circle cx="16" cy="13.2" r="0.7" fill="#2D2D2D" />
+          <path
+            d="M11.2 14.8C11.2 14.2 12.8 14.2 12.8 14.8C12.8 15.8 11.2 15.8 11.2 14.8Z"
+            fill="#2D2D2D"
+          />
+          <path
+            d="M10.5 16.5C11 17.2 13 17.2 13.5 16.5"
+            stroke="#2D2D2D"
+            stroke-width="0.8"
+            stroke-linecap="round"
+          />
+        </svg>
+      );
+
     /* ── OpenCode Zen ─────────────────────────────── */
     case 'opencode-zen':
       return (

@@ -59,6 +59,7 @@ describe('inferProviderFromModel', () => {
     ['opencode-zen/gpt-5.5', 'opencode-zen'],
     ['llamacpp/Qwen3.5-9B-Q4_K_M.gguf', 'llamacpp'],
     ['llamacpp/mistral-7b-instruct-v0.3.Q4_K_M.gguf', 'llamacpp'],
+    ['unsloth/llama-3.1-8b', 'unsloth'],
     ['openrouter/auto', 'openrouter'],
     ['anthropic/claude-sonnet-4', 'openrouter'],
   ])('infers %s as %s', (model, expected) => {

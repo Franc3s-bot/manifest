@@ -29,6 +29,7 @@ const KNOWN_PROVIDERS = [
   'zai',
   'opencode-go',
   'opencode-zen',
+  'unsloth',
 ];
 
 describe('providerIcon', () => {
@@ -206,6 +207,8 @@ describe('customProviderLogo', () => {
     ['llama-cpp', 'llamacpp'],
     ['LM Studio', 'lmstudio'],
     ['lm-studio', 'lmstudio'],
+    ['Unsloth Studio', 'unsloth'],
+    ['unsloth', 'unsloth'],
     ['Ollama', 'ollama'],
   ])(
     'resolves %s to the branded local-LLM logo via the shared registry',

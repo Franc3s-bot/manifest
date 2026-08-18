@@ -324,6 +324,12 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     models: [],
     defaultLocalPort: 1234,
   },
+  unsloth: {
+    initial: 'U',
+    subtitle: 'Run local and remote fine-tuned models with Unsloth Studio',
+    models: [],
+    defaultLocalPort: 8888,
+  },
   minimax: {
     initial: 'Mm',
     subtitle: 'MiniMax M3, M2.7, M2.5',
@@ -540,6 +546,7 @@ const PROVIDER_ORDER = [
   'opencode-zen',
   'openrouter',
   'pioneer',
+  'unsloth',
   'xai',
   'xiaomi',
   'zai',
