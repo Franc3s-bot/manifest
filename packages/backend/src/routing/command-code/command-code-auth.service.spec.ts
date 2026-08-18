@@ -61,4 +61,27 @@ describe('CommandCodeAuthService', () => {
     expect(result.ok).toBe(false);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it('accepts a valid Goat/Pro plan API key (/provider/v1/models 200)', async () => {
+    fetchSpy.mockResolvedValue({ ok: true, status: 200 });
+
+    await expect(service.validateApiKey('cmd_live_pro_key')).resolves.toEqual({ ok: true });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.commandcode.ai/provider/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer cmd_live_pro_key',
+        }),
+      }),
+    );
+  });
+
+  it('rejects an invalid Goat/Pro plan API key (/provider/v1/models 401)', async () => {
+    fetchSpy.mockResolvedValue({ ok: false, status: 401 });
+
+    const result = await service.validateApiKey('cmd_bad_key');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain('Goat or Pro');
+  });
 });

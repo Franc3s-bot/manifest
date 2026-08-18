@@ -752,6 +752,31 @@ describe('ProxyFallbackService', () => {
       );
     });
 
+    it('prefers sessionCacheKey over sessionKey for reasoningCache.prepareRequest when supplied', async () => {
+      const requestBody = {
+        messages: [{ role: 'assistant', content: '', tool_calls: [{ id: 'c1' }] }],
+      };
+      reasoningCache.prepareRequest.mockResolvedValueOnce(requestBody);
+
+      await service.tryForwardToProvider({
+        provider: 'deepseek',
+        apiKey: 'sk-test',
+        model: 'deepseek-chat',
+        body: requestBody,
+        stream: false,
+        sessionKey: 'sess-1',
+        sessionCacheKey: 'cache-sess-1',
+        authType: 'api_key',
+      });
+
+      expect(reasoningCache.prepareRequest).toHaveBeenCalledWith(
+        requestBody,
+        'cache-sess-1',
+        'deepseek',
+        'deepseek-chat',
+      );
+    });
+
     it('rethrows when signal is aborted', async () => {
       const ac = new AbortController();
       ac.abort();

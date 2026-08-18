@@ -9,6 +9,18 @@ export interface SubscriptionEndpointRegionConfig {
   validationMessage: string;
 }
 
+export function isCommandCodePlan(value: string | null | undefined): boolean {
+  if (!value) return true;
+  const lower = value.toLowerCase().trim();
+  return (
+    lower === 'go' ||
+    lower === 'goat' ||
+    lower === 'pro' ||
+    lower.startsWith('http://') ||
+    lower.startsWith('https://')
+  );
+}
+
 const SUBSCRIPTION_ENDPOINT_REGION_CONFIGS: readonly SubscriptionEndpointRegionConfig[] = [
   {
     matchesProvider: (provider) => provider === 'minimax',
@@ -24,6 +36,11 @@ const SUBSCRIPTION_ENDPOINT_REGION_CONFIGS: readonly SubscriptionEndpointRegionC
     matchesProvider: isZaiProviderId,
     isRegion: isZaiCodingPlanRegion,
     validationMessage: 'Z.ai subscription region must be one of: global, cn',
+  },
+  {
+    matchesProvider: (provider) => provider === 'commandcode',
+    isRegion: isCommandCodePlan,
+    validationMessage: 'Command Code subscription plan must be one of: go, goat, pro',
   },
 ];
 

@@ -202,7 +202,11 @@ function openRouterCacheMode(model: string): 'anthropic' | 'message' | null {
 function stripModelPrefix(model: string, endpointKey: string): string {
   // OpenRouter and managed free providers expect vendor prefixes.
   if (endpointKey === 'openrouter' || MANAGED_FREE_PROVIDER_BY_ID.has(endpointKey)) return model;
-  if (endpointKey === 'commandcode' || endpointKey === 'commandcode-anthropic') {
+  if (
+    endpointKey === 'commandcode' ||
+    endpointKey === 'commandcode-openai' ||
+    endpointKey === 'commandcode-anthropic'
+  ) {
     return model.startsWith('commandcode/') ? model.slice('commandcode/'.length) : model;
   }
   // Custom providers, Fireworks, Groq, Hugging Face, Kilo, Nous, NVIDIA NIM, Ollama, Pioneer, and ClinePass: model IDs from these APIs contain
@@ -224,6 +228,34 @@ function stripModelPrefix(model: string, endpointKey: string): string {
   )
     return model;
   return stripVendorPrefix(model);
+}
+
+/**
+ * Detect whether a Command Code credential is for the Go plan (requires
+ * the CLI-dialect adapter against /alpha/generate) or the Goat / Pro plan
+ * (exposes native OpenAI / Anthropic-compatible provider endpoints directly).
+ */
+export function isCommandCodeGoPlan(
+  apiKey?: string,
+  authType?: string,
+  providerResource?: string,
+): boolean {
+  if (providerResource) {
+    const resource = providerResource.toLowerCase().trim();
+    if (resource === 'goat' || resource === 'pro' || resource.includes('/provider')) {
+      return false;
+    }
+    if (resource === 'go') {
+      return true;
+    }
+  }
+  if (authType === 'api_key' && apiKey && !apiKey.startsWith('user_')) {
+    return false;
+  }
+  if (apiKey && !apiKey.startsWith('user_')) {
+    return false;
+  }
+  return true;
 }
 
 @Injectable()
@@ -268,6 +300,8 @@ export class ProviderClient {
       authType,
       model,
       opts.apiMode,
+      apiKey,
+      opts.providerResource,
     );
     const isGoogle = endpoint.format === 'google';
     const isAnthropic = endpoint.format === 'anthropic';
@@ -429,6 +463,8 @@ export class ProviderClient {
     authType: string | undefined,
     model: string,
     apiMode: ForwardOptions['apiMode'],
+    apiKey?: string,
+    providerResource?: string,
   ): Promise<{ endpoint: ProviderEndpoint; endpointKey: string }> {
     if (customEndpoint) {
       return { endpoint: customEndpoint, endpointKey: 'custom' };
@@ -483,12 +519,20 @@ export class ProviderClient {
         resolved = 'opencode-go-anthropic';
       }
     }
-    if (resolved === 'commandcode') {
+    if (
+      resolved === 'commandcode' ||
+      resolved === 'commandcode-openai' ||
+      resolved === 'commandcode-anthropic'
+    ) {
       const bareCommandCodeModel = model.startsWith('commandcode/')
         ? model.slice('commandcode/'.length).toLowerCase()
         : model.toLowerCase();
-      if (bareCommandCodeModel.startsWith('claude-')) {
-        resolved = 'commandcode-anthropic';
+      const isClaude = bareCommandCodeModel.startsWith('claude-');
+      const isGoPlan = isCommandCodeGoPlan(apiKey, authType, providerResource);
+      if (isGoPlan) {
+        resolved = isClaude ? 'commandcode-anthropic' : 'commandcode';
+      } else {
+        resolved = isClaude ? 'commandcode-anthropic' : 'commandcode-openai';
       }
     }
     if (

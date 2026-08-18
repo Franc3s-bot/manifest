@@ -19,6 +19,9 @@ import {
   fromResponsesResponse,
   collectChatGptSseResponse,
 } from './chatgpt-adapter';
+import { randomUUID } from 'crypto';
+import type { AutofixRecord } from '../autofix/autofix.types';
+import type { PhoenixOperation } from '../autofix/phoenix.types';
 import {
   normalizeOpenAiReasoningDelta,
   type OpenAiReasoningStreamFormat,
@@ -341,8 +344,11 @@ function sanitizeOpenAiMessages(
         } else {
           fn.arguments = '{}';
         }
-        record.function = fn;
-        return record;
+        return {
+          id: finalId,
+          type: 'function',
+          function: fn,
+        };
       });
     }
 
@@ -360,6 +366,8 @@ function sanitizeOpenAiMessages(
               : '';
         cleaned.tool_call_id = isMistral ? normalizeMistralToolCallId(fallbackId) : fallbackId;
       }
+      delete cleaned.toolCallId;
+      delete cleaned.toolName;
       if (
         cleaned.content !== undefined &&
         cleaned.content !== null &&
@@ -457,8 +465,6 @@ export function sanitizeOpenAiBody(
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
   const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
-  const convertMaxTokens =
-    needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
 
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
@@ -489,8 +495,10 @@ export function sanitizeOpenAiBody(
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that
     // require it (native OpenAI + Copilot for o-series / GPT-5+). Applies in both
     // passthrough and non-passthrough branches.
-    if (convertMaxTokens && key === 'max_tokens') {
-      cleaned['max_completion_tokens'] = value;
+    if (needsMaxCompletionTokens && key === 'max_tokens') {
+      if (!('max_completion_tokens' in body)) {
+        cleaned['max_completion_tokens'] = value;
+      }
       continue;
     }
     if (passthroughTopLevel) {
@@ -518,4 +526,159 @@ export function sanitizeOpenAiBody(
   }
   if (endpointKey === 'deepseek') normalizeDeepSeekMaxTokens(cleaned);
   return cleaned;
+}
+
+/**
+ * Detect whether an inbound request body required deterministic repair
+ * (schema fixes, argument stringification, max_tokens conversion, or reasoning
+ * content restoration) and construct a proactive AutofixRecord so the dashboard
+ * accurately reflects that the request was auto-healed.
+ */
+export function detectProactiveAutofix(
+  rawBody: Record<string, unknown> | undefined,
+  wireBody: Record<string, unknown> | undefined,
+  endpointKey: string,
+  model: string,
+): AutofixRecord | undefined {
+  if (!rawBody || typeof rawBody !== 'object') return undefined;
+
+  const ops: PhoenixOperation[] = [];
+  const explanations: string[] = [];
+  let primaryRule: string | null = null;
+
+  // 1. Function schemas
+  const tools = (rawBody.tools as unknown[]) || (rawBody.functions as unknown[]);
+  if (Array.isArray(tools)) {
+    for (const t of tools) {
+      if (t && typeof t === 'object') {
+        const fn = (t as Record<string, unknown>).function ?? t;
+        if (fn && typeof fn === 'object') {
+          const p =
+            (fn as Record<string, unknown>).parameters ??
+            (fn as Record<string, unknown>).input_schema;
+          if (
+            !p ||
+            typeof p !== 'object' ||
+            (p as Record<string, unknown>).type === 'null' ||
+            (p as Record<string, unknown>).type === null ||
+            !(p as Record<string, unknown>).type
+          ) {
+            ops.push({ type: 'fix_param', from: 'tools', to: 'tools' });
+            explanations.push('Sanitized tool function schemas to valid type: "object"');
+            primaryRule ??= 'invalid_function_schema';
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Tool calls and tool messages
+  if (Array.isArray(rawBody.messages)) {
+    let toolCallIssue = false;
+    for (const m of rawBody.messages) {
+      if (m && typeof m === 'object') {
+        const msg = m as Record<string, unknown>;
+        if (Array.isArray(msg.tool_calls)) {
+          for (const tc of msg.tool_calls) {
+            if (tc && typeof tc === 'object') {
+              const rec = tc as Record<string, unknown>;
+              const fn = rec.function as Record<string, unknown> | undefined;
+              const rawArgs = fn?.arguments ?? rec.arguments ?? rec.args ?? rec.input;
+              if (
+                (rawArgs !== undefined && typeof rawArgs !== 'string') ||
+                rec.toolCallId !== undefined ||
+                rec.toolName !== undefined ||
+                rec.args !== undefined ||
+                rec.input !== undefined
+              ) {
+                toolCallIssue = true;
+                break;
+              }
+            }
+          }
+        }
+        if (msg.role === 'tool' && (msg.toolCallId !== undefined || msg.toolName !== undefined)) {
+          toolCallIssue = true;
+        }
+        if (toolCallIssue) break;
+      }
+    }
+    if (toolCallIssue) {
+      ops.push({ type: 'fix_param', from: 'messages.tool_calls', to: 'messages.tool_calls' });
+      explanations.push(
+        'Serialized tool call arguments to valid JSON strings and normalized function call structure',
+      );
+      primaryRule ??= 'invalid_tool_call_arguments';
+    }
+  }
+
+  // 3. Reasoning content restoration
+  if (Array.isArray(rawBody.messages) && wireBody && Array.isArray(wireBody.messages)) {
+    let reasoningRestored = false;
+    for (let i = 0; i < rawBody.messages.length; i++) {
+      const rawMsg = rawBody.messages[i] as Record<string, unknown> | undefined;
+      const wireMsg = wireBody.messages[i] as Record<string, unknown> | undefined;
+      if (
+        rawMsg?.role === 'assistant' &&
+        Array.isArray(rawMsg?.tool_calls) &&
+        !rawMsg?.reasoning_content &&
+        wireMsg?.reasoning_content
+      ) {
+        reasoningRestored = true;
+        break;
+      }
+    }
+    if (reasoningRestored) {
+      ops.push({ type: 'add_param', to: 'reasoning_content' });
+      explanations.push(
+        'Restored missing reasoning_content from cache on assistant tool-call turns',
+      );
+      primaryRule ??= 'reasoning_content_missing';
+    }
+  }
+
+  // 4. Max tokens -> max_completion_tokens
+  const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
+  if (usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex) && 'max_tokens' in rawBody) {
+    ops.push({ type: 'rename_param', from: 'max_tokens', to: 'max_completion_tokens' });
+    explanations.push('Renamed max_tokens to max_completion_tokens');
+    primaryRule ??= 'max_tokens_to_max_completion_tokens';
+  }
+
+  if (ops.length === 0 || !primaryRule) {
+    return undefined;
+  }
+
+  const summary = explanations.join('; ');
+  return {
+    groupId: `heal_proactive_${randomUUID().slice(0, 8)}`,
+    outcome: 'healed',
+    original_http_status: 200,
+    chain: [
+      {
+        attempt: 0,
+        origin: 'original',
+        request: rawBody,
+        http_status: 200,
+        phoenix_status: 'patched',
+        issue_id: `issue_proactive_${randomUUID().slice(0, 6)}`,
+        patch_id: `patch_${primaryRule}`,
+        heal_attempt_id: `attempt_${randomUUID().slice(0, 8)}`,
+        operations: ops,
+        explanation: {
+          summary,
+          operations: ops.map((op) => ({ type: op.type, detail: summary })),
+          source: 'deterministic',
+        },
+        patch_worked: true,
+      },
+      {
+        attempt: 0,
+        origin: 'autofix',
+        request: wireBody ?? rawBody,
+        http_status: 200,
+      },
+    ],
+  };
 }
