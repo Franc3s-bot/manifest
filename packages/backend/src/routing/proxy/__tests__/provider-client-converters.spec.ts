@@ -846,7 +846,7 @@ describe('provider-client-converters', () => {
       const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.2');
 
       expect(result).toHaveProperty('max_completion_tokens', 2000);
-      expect((result as Record<string, unknown>).max_tokens).toBeUndefined();
+      expect(result).not.toHaveProperty('max_tokens');
     });
 
     it('should not convert max_tokens for non-OpenAI providers', () => {
@@ -1479,9 +1479,12 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
       type: 'object',
       properties: {},
     });
-    expect((functions[0] as Record<string, unknown>).parameters).toEqual({
-      type: 'object',
-      properties: {},
+    expect(functions[0] as Record<string, unknown>).toEqual({
+      name: 'legacy_func',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
     });
   });
 
@@ -1579,7 +1582,7 @@ describe('sanitizeOpenAiBody reasoning dialect', () => {
       expect(result?.outcome).toBe('healed');
       expect(result?.chain[0].patch_id).toBe('patch_reasoning_content_missing');
       expect(result?.chain[0].operations).toEqual([
-        { type: 'add_param', to: 'reasoning_content' },
+        { type: 'add_param', from: null, to: 'reasoning_content' },
       ]);
     });
 

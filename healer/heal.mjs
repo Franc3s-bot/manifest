@@ -145,7 +145,9 @@ const RULES = [
         /Invalid parameter.*tools/i.test(msg) ||
         /Invalid type for.*parameters/i.test(msg) ||
         /schema must have type 'object'/i.test(msg) ||
-        /parameters: (?:Expected object|null)/i.test(msg)
+        /parameters: (?:Expected object|null)/i.test(msg) ||
+        /tool.*(?:schema|parameters)/i.test(msg) ||
+        /function.*(?:schema|parameters)/i.test(msg)
       );
     },
     patch: (body, _ctx) => {
@@ -302,7 +304,9 @@ const RULES = [
       return (
         /reasoning_content.*(?:must be passed|is required|missing|must be provided|must be passed back|cannot be empty|required)/i.test(msg) ||
         /missing.*reasoning_content/i.test(msg) ||
-        /reasoning.*must be passed/i.test(msg)
+        /reasoning.*must be passed/i.test(msg) ||
+        /reasoning_content/i.test(msg) ||
+        /reasoning.*(?:is required|missing)/i.test(msg)
       );
     },
     patch: (body, ctx) => {

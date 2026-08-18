@@ -2190,9 +2190,12 @@ describe('ProxyService — orchestration', () => {
         reason: 'scored',
       });
       fallbackService.tryForwardToProvider.mockResolvedValue({
-        response: new Response(JSON.stringify({ error: { message: 'Missing reasoning_content' } }), {
-          status: 400,
-        }),
+        response: new Response(
+          JSON.stringify({ error: { message: 'Missing reasoning_content' } }),
+          {
+            status: 400,
+          },
+        ),
         isGoogle: false,
         isAnthropic: false,
         isChatGpt: false,

@@ -127,7 +127,7 @@ export class ReasoningContentCache {
     endpointKey: string | null,
     model: string,
   ): Promise<Record<string, unknown>> {
-    if (!endpointKey || !supportsReasoningContent(endpointKey, model, this.modelCatalog)) {
+    if (!endpointKey) {
       return body;
     }
     const messages = body.messages;
@@ -141,6 +141,12 @@ export class ReasoningContentCache {
     );
     const repeatedKeys = repeatedReplayKeys(keys);
     const cached = keys.length > 0 ? await this.retrieveMany(sessionKey, keys) : new Map();
+
+    const isSupported = supportsReasoningContent(endpointKey, model, this.modelCatalog);
+    const hasCachedHits = keys.some((k) => cached.has(k) && Boolean(cached.get(k)));
+    if (!isSupported && !hasCachedHits) {
+      return body;
+    }
 
     let changed = false;
     const nextMessages = messages.map((message, index) => {
