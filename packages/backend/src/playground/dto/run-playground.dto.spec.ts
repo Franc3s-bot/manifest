@@ -140,6 +140,26 @@ describe('RunPlaygroundDto', () => {
       expect(errors.length).toBeGreaterThan(0);
     });
 
+    it('accepts a valid providerKeyLabel', async () => {
+      const dto = toDto({
+        ...VALID_BASE,
+        messages: [{ role: 'user', content: 'hi' }],
+        providerKeyLabel: 'Work Key',
+      });
+      const errors = await validate(dto, { whitelist: true });
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects a non-string providerKeyLabel', async () => {
+      const dto = toDto({
+        ...VALID_BASE,
+        messages: [{ role: 'user', content: 'hi' }],
+        providerKeyLabel: 12345,
+      });
+      const errors = await validate(dto);
+      expect(errors.some((e) => e.property === 'providerKeyLabel')).toBe(true);
+    });
+
     it('rejects message content longer than the cap', async () => {
       const dto = toDto({
         ...VALID_BASE,

@@ -40,6 +40,7 @@ export interface PlaygroundHistoryColumn {
   model: string;
   provider: string;
   authType: AuthType | null;
+  providerKeyLabel?: string | null;
   displayName: string | null;
   status: 'success' | 'error';
   content: string | null;

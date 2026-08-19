@@ -16,6 +16,7 @@ export interface PlaygroundColumn {
   model: string;
   provider: string;
   authType: AuthType;
+  providerKeyLabel?: string;
   displayName: string;
   status: ColumnStatus;
   response?: string;
@@ -33,7 +34,13 @@ export interface PlaygroundStore {
   columns: readonly PlaygroundColumn[];
   prompt: () => string;
   setPrompt: (value: string) => void;
-  addColumn: (model: string, provider: string, authType: AuthType, displayName: string) => void;
+  addColumn: (
+    model: string,
+    provider: string,
+    authType: AuthType,
+    displayName: string,
+    providerKeyLabel?: string,
+  ) => void;
   removeColumn: (id: string) => void;
   replaceColumnModel: (
     id: string,
@@ -41,7 +48,9 @@ export interface PlaygroundStore {
     provider: string,
     authType: AuthType,
     displayName: string,
+    providerKeyLabel?: string,
   ) => void;
+  setColumnKeyLabel: (id: string, providerKeyLabel?: string) => void;
   runAll: (options?: RunOptions) => string | undefined;
   retryColumn: (id: string, options?: RunOptions) => Promise<void>;
   cancelColumn: (id: string) => void;
@@ -144,7 +153,13 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     inflight.delete(id);
   };
 
-  const addColumn: PlaygroundStore['addColumn'] = (model, provider, authType, displayName) => {
+  const addColumn: PlaygroundStore['addColumn'] = (
+    model,
+    provider,
+    authType,
+    displayName,
+    providerKeyLabel,
+  ) => {
     if (columns.length >= MAX_COLUMNS) return;
     setColumns((prev) => [
       ...prev,
@@ -153,6 +168,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         model,
         provider,
         authType,
+        providerKeyLabel,
         displayName,
         status: 'idle',
       },
@@ -170,6 +186,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     provider,
     authType,
     displayName,
+    providerKeyLabel,
   ) => {
     abortColumn(id);
     setColumns(
@@ -180,11 +197,22 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         col.provider = provider;
         col.authType = authType;
         col.displayName = displayName;
+        col.providerKeyLabel = providerKeyLabel;
         col.status = 'idle';
         col.response = undefined;
         col.metrics = undefined;
         col.headers = undefined;
         col.error = undefined;
+      }),
+    );
+  };
+
+  const setColumnKeyLabel: PlaygroundStore['setColumnKeyLabel'] = (id, providerKeyLabel) => {
+    setColumns(
+      produce((cols) => {
+        const col = cols.find((c) => c.id === id);
+        if (!col) return;
+        col.providerKeyLabel = providerKeyLabel;
       }),
     );
   };
@@ -219,6 +247,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
           model: col.model,
           provider: col.provider,
           authType: col.authType,
+          providerKeyLabel: col.providerKeyLabel,
           messages: [{ role: 'user', content: promptText }],
           runId,
           position,
@@ -313,6 +342,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
       model: c.model,
       provider: c.provider,
       authType: (c.authType ?? 'api_key') as AuthType,
+      providerKeyLabel: c.providerKeyLabel ?? undefined,
       displayName: c.displayName ?? c.model,
       status: c.status,
       response: c.content ?? undefined,
@@ -463,6 +493,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     addColumn,
     removeColumn,
     replaceColumnModel,
+    setColumnKeyLabel,
     runAll,
     retryColumn,
     cancelColumn,

@@ -193,13 +193,24 @@ describe('PlaygroundHistoryService', () => {
       expect(insertQb.orIgnore).toHaveBeenCalled();
       expect(insertQb.execute).toHaveBeenCalled();
       // column row was inserted
-      expect(columnRepo.insert).toHaveBeenCalledTimes(1);
       expect(columnRepo.insert.mock.calls[0][0]).toMatchObject({
         model: 'openai/gpt-4o-mini',
         status: 'success',
         content: 'hi there',
         input_tokens: 5,
         output_tokens: 2,
+        provider_key_label: null,
+      });
+    });
+
+    it('persists provider_key_label when provided in input', async () => {
+      const { service, columnRepo } = buildService();
+
+      await service.saveColumn(baseInput({ providerKeyLabel: 'Work Key' }));
+
+      expect(columnRepo.insert).toHaveBeenCalledTimes(1);
+      expect(columnRepo.insert.mock.calls[0][0]).toMatchObject({
+        provider_key_label: 'Work Key',
       });
     });
 
@@ -436,6 +447,7 @@ describe('PlaygroundHistoryService', () => {
           model: 'gpt-4o',
           provider: 'openai',
           auth_type: 'api_key',
+          provider_key_label: 'Production Key',
           display_name: 'GPT-4o',
           status: 'success',
           content: 'hello',
@@ -466,9 +478,11 @@ describe('PlaygroundHistoryService', () => {
       ]);
       const detail = await service.getRun('user-1', 'r1');
       expect(detail.columns).toHaveLength(2);
+      expect(detail.columns[0]?.providerKeyLabel).toBe('Production Key');
       expect(detail.columns[0]?.metrics?.cost).toBe(0.001);
       expect(detail.columns[0]?.content).toBe('hello');
       expect(detail.columns[1]?.status).toBe('error');
+      expect(detail.columns[1]?.providerKeyLabel).toBeNull();
       expect(detail.columns[1]?.metrics).toBeNull();
       expect(detail.starred).toBe(true);
       expect(detail.bestColumnId).toBe('c1');

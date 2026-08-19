@@ -86,6 +86,15 @@ export class RunPlaygroundDto {
   @IsIn(AUTH_TYPES)
   authType?: 'api_key' | 'subscription' | 'local';
 
+  /**
+   * Optional provider key label to target a specific connection when multiple
+   * keys exist for this provider.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  providerKeyLabel?: string;
+
   @IsOptional()
   @IsArray()
   @ArrayMinSize(1)

@@ -165,6 +165,7 @@ interface Mocks {
     hasActiveProvider: jest.Mock;
     getAuthType: jest.Mock;
     getProviderKeys: jest.Mock;
+    selectProviderKey: jest.Mock;
     getProviderApiKey: jest.Mock;
   };
   providerClient: {
@@ -198,6 +199,7 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
       hasActiveProvider: jest.fn().mockResolvedValue(true),
       getAuthType: jest.fn().mockResolvedValue('api_key'),
       getProviderKeys: jest.fn().mockResolvedValue([DEFAULT_PROVIDER_KEY]),
+      selectProviderKey: jest.fn().mockResolvedValue(DEFAULT_PROVIDER_KEY),
       getProviderApiKey: jest.fn().mockResolvedValue(DEFAULT_PROVIDER_KEY.apiKey),
     },
     providerClient: {
@@ -381,9 +383,10 @@ describe('PlaygroundService.runStream', () => {
     const { service, mocks } = buildService();
     // Stored value is a real OAuth blob, but unwrap fails (e.g. invalidated) —
     // resolveApiKey returns a null apiKey, which must surface as a 404.
-    mocks.providerKeyService.getProviderKeys.mockResolvedValue([
-      { ...DEFAULT_PROVIDER_KEY, apiKey: JSON.stringify({ t: 'a', r: 'b', e: 123 }) },
-    ]);
+    mocks.providerKeyService.selectProviderKey.mockResolvedValue({
+      ...DEFAULT_PROVIDER_KEY,
+      apiKey: JSON.stringify({ t: 'a', r: 'b', e: 123 }),
+    });
     mocks.openaiOauth.unwrapToken.mockResolvedValue(null);
     const res = mockRes();
 
@@ -423,7 +426,7 @@ describe('PlaygroundService.runStream', () => {
     const res = mockRes();
     res.headersSent = true;
     // Provider connected but key missing → sendPreStreamError path.
-    mocks.providerKeyService.getProviderKeys.mockResolvedValue([]);
+    mocks.providerKeyService.selectProviderKey.mockResolvedValue(null);
 
     await service.runStream(CTX, makeDto(), asRes(res));
 
@@ -493,6 +496,7 @@ describe('PlaygroundService.runStream', () => {
         hasActiveProvider: jest.fn().mockResolvedValue(false),
         getAuthType: jest.fn(),
         getProviderKeys: jest.fn(),
+        selectProviderKey: jest.fn(),
         getProviderApiKey: jest.fn(),
       },
       messageRepo: {
@@ -520,6 +524,7 @@ describe('PlaygroundService.runStream', () => {
         hasActiveProvider: jest.fn().mockResolvedValue(true),
         getAuthType: jest.fn().mockResolvedValue('api_key'),
         getProviderKeys: jest.fn().mockResolvedValue([]),
+        selectProviderKey: jest.fn().mockResolvedValue(null),
         getProviderApiKey: jest.fn(),
       },
     });
@@ -556,6 +561,35 @@ describe('PlaygroundService.runStream', () => {
     expect(mocks.messageRepo.insert.mock.calls[0][0].auth_type).toBe('subscription');
   });
 
+  it('selects specific key by providerKeyLabel when provided in dto', async () => {
+    const { service, mocks } = buildService();
+    const customKey = { ...DEFAULT_PROVIDER_KEY, label: 'Secondary Key', apiKey: 'sk-secondary' };
+    mocks.providerKeyService.selectProviderKey.mockResolvedValue(customKey);
+    mocks.providerClient.forward.mockResolvedValue(
+      okStream([
+        'data: {"choices":[{"delta":{"content":"secondary ok"}}]}\n\n',
+        'data: {"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\n',
+      ]),
+    );
+    const res = mockRes();
+
+    await service.runStream(CTX, makeDto({ providerKeyLabel: 'Secondary Key' }), asRes(res));
+
+    expect(mocks.providerKeyService.selectProviderKey).toHaveBeenCalledWith(
+      AGENT.tenant_id,
+      'openai',
+      'api_key',
+      'Secondary Key',
+      AGENT.id,
+    );
+    expect(mocks.providerClient.forward).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: 'sk-secondary' }),
+    );
+    expect(mocks.history.saveColumn).toHaveBeenCalledWith(
+      expect.objectContaining({ providerKeyLabel: 'Secondary Key' }),
+    );
+  });
+
   it('unwraps OpenAI OAuth blobs before forwarding subscription Playground requests', async () => {
     const oauthBlob = JSON.stringify({
       t: 'stored-access-token',
@@ -563,9 +597,11 @@ describe('PlaygroundService.runStream', () => {
       e: Date.now() + 10 * 60 * 1000,
     });
     const { service, mocks } = buildService();
-    mocks.providerKeyService.getProviderKeys.mockResolvedValue([
-      { ...DEFAULT_PROVIDER_KEY, label: 'Work', apiKey: oauthBlob },
-    ]);
+    mocks.providerKeyService.selectProviderKey.mockResolvedValue({
+      ...DEFAULT_PROVIDER_KEY,
+      label: 'Work',
+      apiKey: oauthBlob,
+    });
     mocks.providerKeyService.getProviderApiKey.mockResolvedValue(oauthBlob);
     mocks.openaiOauth.unwrapToken.mockResolvedValue('fresh-access-token');
     mocks.providerClient.forward.mockResolvedValue(
@@ -582,10 +618,11 @@ describe('PlaygroundService.runStream', () => {
       asRes(res),
     );
 
-    expect(mocks.providerKeyService.getProviderKeys).toHaveBeenCalledWith(
+    expect(mocks.providerKeyService.selectProviderKey).toHaveBeenCalledWith(
       AGENT.tenant_id,
       'openai',
       'subscription',
+      undefined,
       AGENT.id,
     );
     expect(mocks.openaiOauth.unwrapToken).toHaveBeenCalledWith(
@@ -617,9 +654,11 @@ describe('PlaygroundService.runStream', () => {
       e: Date.now() + 10 * 60 * 1000,
     });
     const { service, mocks } = buildService();
-    mocks.providerKeyService.getProviderKeys.mockResolvedValue([
-      { ...DEFAULT_PROVIDER_KEY, label: 'Work', apiKey: oauthBlob },
-    ]);
+    mocks.providerKeyService.selectProviderKey.mockResolvedValue({
+      ...DEFAULT_PROVIDER_KEY,
+      label: 'Work',
+      apiKey: oauthBlob,
+    });
     mocks.providerKeyService.getProviderApiKey.mockResolvedValue(refreshedBlob);
     mocks.openaiOauth.unwrapToken
       .mockResolvedValueOnce('fresh-access-token')
@@ -721,7 +760,7 @@ describe('PlaygroundService.runStream', () => {
         manager: { getRepository: jest.fn(() => ({ insert: requestInsert })) },
       },
     });
-    mocks.providerKeyService.getProviderKeys.mockRejectedValue(new Error('key service down'));
+    mocks.providerKeyService.selectProviderKey.mockRejectedValue(new Error('key service down'));
     const res = mockRes();
 
     await service.runStream(CTX, makeDto(), asRes(res));
@@ -740,7 +779,7 @@ describe('PlaygroundService.runStream', () => {
         manager: { getRepository: jest.fn(() => ({ insert: requestInsert })) },
       },
     });
-    mocks.providerKeyService.getProviderKeys.mockRejectedValue(new ForbiddenException('blocked'));
+    mocks.providerKeyService.selectProviderKey.mockRejectedValue(new ForbiddenException('blocked'));
     const res = mockRes();
 
     await service.runStream(CTX, makeDto(), asRes(res));

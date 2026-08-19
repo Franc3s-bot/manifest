@@ -103,13 +103,13 @@ export class PlaygroundService {
           undefined,
           agent.id,
         ));
-      const keys = await this.providerKeyService.getProviderKeys(
+      const key = await this.providerKeyService.selectProviderKey(
         agent.tenant_id,
         dto.provider,
         authType,
+        dto.providerKeyLabel,
         agent.id,
       );
-      const key = keys[0];
       if (!key || key.apiKey === null) {
         const message = `No usable API key found for provider "${dto.provider}"`;
         await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
@@ -282,7 +282,7 @@ export class PlaygroundService {
         durationMs,
       );
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, errorSummary),
+        this.errorColumn(ctx.userId, agent, dto, authType, headers, errorSummary, providerKeyLabel),
       );
       return this.sendPreStreamError(res, 502, errorSummary);
     }
@@ -306,7 +306,7 @@ export class PlaygroundService {
         Date.now() - startedAt,
       );
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, message),
+        this.errorColumn(ctx.userId, agent, dto, authType, headers, message, providerKeyLabel),
       );
       send({ type: 'error', message });
       res.end();
@@ -355,6 +355,7 @@ export class PlaygroundService {
         model: dto.model,
         provider: dto.provider,
         authType,
+        providerKeyLabel: providerKeyLabel ?? dto.providerKeyLabel ?? null,
         displayName: null,
         position: dto.position ?? 0,
         status: 'success',
@@ -383,7 +384,7 @@ export class PlaygroundService {
       const durationMs = Date.now() - startedAt;
       await this.recordError(ctx.userId, agent, dto, authType, 502, message, durationMs);
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, message),
+        this.errorColumn(ctx.userId, agent, dto, authType, headers, message, providerKeyLabel),
       );
       send({ type: 'error', message });
       if (!res.writableEnded) res.end();
@@ -402,6 +403,7 @@ export class PlaygroundService {
     authType: AuthType,
     headers: Record<string, string>,
     errorMessage: string,
+    providerKeyLabel?: string,
   ): Parameters<PlaygroundHistoryService['saveColumn']>[0] {
     return {
       createdByUserId,
@@ -411,6 +413,7 @@ export class PlaygroundService {
       model: dto.model,
       provider: dto.provider,
       authType,
+      providerKeyLabel: providerKeyLabel ?? dto.providerKeyLabel ?? null,
       displayName: null,
       position: dto.position ?? 0,
       status: 'error',
