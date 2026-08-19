@@ -515,6 +515,50 @@ describe('createPlaygroundStore', () => {
       for (let i = 0; i < 8; i++) store.addColumn(`m${i}`, 'openai', 'api_key', `M${i}`);
       expect(store.columns).toHaveLength(6);
     });
+
+    it('addColumn and replaceColumnModel store providerKeyLabel', () => {
+      const store = createPlaygroundStore('demo');
+      store.addColumn('openai/gpt-4o-mini', 'openai', 'api_key', 'GPT-4o Mini', 'Work Key');
+      expect(store.columns[0]!.providerKeyLabel).toBe('Work Key');
+
+      store.replaceColumnModel(
+        store.columns[0]!.id,
+        'anthropic/claude-3-5-sonnet',
+        'anthropic',
+        'api_key',
+        'Claude 3.5 Sonnet',
+        'Personal Key',
+      );
+      expect(store.columns[0]!.providerKeyLabel).toBe('Personal Key');
+    });
+
+    it('setColumnKeyLabel updates the key label on a column', () => {
+      const store = createPlaygroundStore('demo');
+      store.addColumn('openai/gpt-4o-mini', 'openai', 'api_key', 'GPT-4o Mini', 'Initial');
+      const id = store.columns[0]!.id;
+      store.setColumnKeyLabel(id, 'Updated Key');
+      expect(store.columns[0]!.providerKeyLabel).toBe('Updated Key');
+      store.setColumnKeyLabel(id, undefined);
+      expect(store.columns[0]!.providerKeyLabel).toBeUndefined();
+    });
+
+    it('passes providerKeyLabel in streamPlayground request', async () => {
+      const store = createPlaygroundStore('demo');
+      store.addColumn('openai/gpt-4o-mini', 'openai', 'api_key', 'GPT-4o Mini', 'Work Key');
+      store.setPrompt('hello');
+
+      let capturedReq: unknown = null;
+      streamPlaygroundMock.mockImplementation(async (req: unknown, init: StreamInit) => {
+        capturedReq = req;
+        init.onDelta('hi');
+        return okResult({ content: 'hi' });
+      });
+
+      await store.runAll();
+      expect(capturedReq).toMatchObject({
+        providerKeyLabel: 'Work Key',
+      });
+    });
   });
 
   describe('cancellation', () => {

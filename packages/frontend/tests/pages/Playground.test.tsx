@@ -53,12 +53,11 @@ vi.mock('../../src/services/right-sidebar.jsx', () => ({
   }),
 }));
 
-// ─── Leaf component stubs (keep the page + real store logic exercised) ───────
 let lastColProps: Record<string, unknown>[] = [];
 vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
   default: (props: Record<string, unknown>) => {
     lastColProps.push(props);
-    const c = props.column as { id: string };
+    const c = props.column as { id: string; providerKeyLabel?: string };
     return (
       <div data-testid={`col-${c.id}`}>
         <span data-testid={`isbest-${c.id}`}>{String(props.isBest)}</span>
@@ -66,6 +65,8 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
         <span data-testid={`fastest-${c.id}`}>{String(props.isFastest)}</span>
         <span data-testid={`readonly-${c.id}`}>{String(props.readOnly)}</span>
         <span data-testid={`hasmarkbest-${c.id}`}>{String(!!props.onMarkBest)}</span>
+        <span data-testid={`hasmultiplekeys-${c.id}`}>{String(props.hasMultipleKeys)}</span>
+        <span data-testid={`keylabel-${c.id}`}>{String(c.providerKeyLabel)}</span>
         <button
           data-testid={`markbest-${c.id}`}
           onClick={() => (props.onMarkBest as () => void)?.()}
@@ -85,6 +86,12 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
           ch
         </button>
         <button
+          data-testid={`changekey-${c.id}`}
+          onClick={() => (props.onChangeKey as ((id: string) => void) | undefined)?.(c.id)}
+        >
+          ck
+        </button>
+        <button
           data-testid={`retry-${c.id}`}
           onClick={() => (props.onRetry as (id: string) => void)(c.id)}
         >
@@ -93,6 +100,25 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
       </div>
     );
   },
+}));
+
+vi.mock('../../src/components/KeyPickerModal.jsx', () => ({
+  default: (props: Record<string, unknown>) => (
+    <div data-testid="key-picker-modal">
+      <span data-testid="key-picker-provider">{String(props.providerName)}</span>
+      <span data-testid="key-picker-model">{String(props.modelName)}</span>
+      <span data-testid="key-picker-count">{(props.keys as unknown[]).length}</span>
+      <button
+        data-testid="key-picker-pick"
+        onClick={() => (props.onPick as (label: string | null) => void)('Secondary Key')}
+      >
+        pick
+      </button>
+      <button data-testid="key-picker-close" onClick={() => (props.onClose as () => void)()}>
+        close
+      </button>
+    </div>
+  ),
 }));
 
 let mockPromptTextarea: HTMLTextAreaElement | null = null;
@@ -978,6 +1004,76 @@ describe('Playground page', () => {
     await waitFor(() => {
       const live = document.querySelector('[role="status"][aria-live="polite"]');
       expect(live?.textContent ?? '').toMatch(/responded in \d+ milliseconds/);
+    });
+  });
+
+  describe('multi-key provider selection', () => {
+    const MULTI_KEY_PROVIDERS = [
+      { ...ACTIVE_PROVIDER, id: 'p1', label: 'Primary Key', priority: 0 },
+      { ...ACTIVE_PROVIDER, id: 'p2', label: 'Secondary Key', priority: 1 },
+    ];
+
+    it('opens KeyPickerModal when adding a model for a provider with multiple keys', async () => {
+      mockGetProviders.mockResolvedValue(MULTI_KEY_PROVIDERS);
+      render(() => <Playground />);
+      await waitFor(() => expect(mockGetProviders).toHaveBeenCalled());
+
+      // Open add picker
+      const addBtn = await waitFor(() => {
+        const btn = document.querySelector('button.playground__add');
+        expect(btn).not.toBeNull();
+        return btn as HTMLButtonElement;
+      });
+      fireEvent.click(addBtn);
+
+      // Select model in picker
+      const selectBtn = await find('picker-select');
+      fireEvent.click(selectBtn);
+
+      // KeyPickerModal should open
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="key-picker-modal"]')).not.toBeNull();
+        expect(document.querySelector('[data-testid="key-picker-count"]')?.textContent).toBe('2');
+      });
+
+      // Pick a key
+      fireEvent.click(await find('key-picker-pick'));
+
+      // KeyPickerModal closes and column is added with the key label
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="key-picker-modal"]')).toBeNull();
+      });
+    });
+
+    it('opens KeyPickerModal when clicking changekey on a column with multiple keys', async () => {
+      mockGetProviders.mockResolvedValue(MULTI_KEY_PROVIDERS);
+      render(() => <Playground />);
+      await waitFor(() => expect(mockGetProviders).toHaveBeenCalled());
+
+      const cols = await waitFor(() => {
+        const el = document.querySelectorAll('[data-testid^="col-"]');
+        expect(el.length).toBeGreaterThan(0);
+        return el;
+      });
+      const firstColId = cols[0]?.getAttribute('data-testid')?.replace('col-', '');
+      expect(firstColId).toBeDefined();
+
+      // Click changekey
+      const changeKeyBtn = await find(`changekey-${firstColId}`);
+      fireEvent.click(changeKeyBtn);
+
+      // KeyPickerModal opens
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="key-picker-modal"]')).not.toBeNull();
+      });
+
+      // Pick a key
+      fireEvent.click(await find('key-picker-pick'));
+
+      // KeyPickerModal closes
+      await waitFor(() => {
+        expect(document.querySelector('[data-testid="key-picker-modal"]')).toBeNull();
+      });
     });
   });
 });

@@ -24,6 +24,9 @@ export class PlaygroundColumn {
   @Column('varchar', { nullable: true })
   auth_type!: string | null;
 
+  @Column('varchar', { nullable: true, default: null })
+  provider_key_label!: string | null;
+
   @Column('varchar', { nullable: true })
   display_name!: string | null;
 

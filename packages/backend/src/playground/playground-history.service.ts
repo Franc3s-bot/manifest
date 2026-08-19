@@ -20,6 +20,7 @@ export interface SaveColumnInput {
   model: string;
   provider: string;
   authType: AuthType | null;
+  providerKeyLabel?: string | null;
   displayName: string | null;
   position: number;
   status: 'success' | 'error';
@@ -61,6 +62,7 @@ export class PlaygroundHistoryService {
         model: input.model,
         provider: input.provider,
         auth_type: input.authType,
+        provider_key_label: input.providerKeyLabel ?? null,
         display_name: input.displayName,
         status: input.status,
         content: input.content,
@@ -200,6 +202,7 @@ export class PlaygroundHistoryService {
           model: c.model,
           provider: c.provider,
           authType: (c.auth_type ?? null) as PlaygroundHistoryColumn['authType'],
+          providerKeyLabel: c.provider_key_label ?? null,
           displayName: c.display_name,
           status: c.status === 'success' ? 'success' : 'error',
           content: c.content,
