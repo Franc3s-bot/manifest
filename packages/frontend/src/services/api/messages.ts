@@ -105,6 +105,7 @@ export interface MessageDetailResponse {
       provider: string | null;
       status: string;
       auth_type: string | null;
+      provider_key_label: string | null;
       error_message: string | null;
       error_origin: string | null;
       error_class: string | null;

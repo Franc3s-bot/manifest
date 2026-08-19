@@ -328,6 +328,7 @@ describe('MessageDetailsService', () => {
         id: 'attempt-1',
         status: 'error',
         provider: 'openai',
+        provider_key_label: 'Personal',
         input_tokens: 10,
         output_tokens: 5,
         cache_read_tokens: 1,
@@ -341,6 +342,7 @@ describe('MessageDetailsService', () => {
         recording_key: 'request-recordings/v1/attempt-2.json.gz',
         status: 'ok',
         provider: 'anthropic',
+        provider_key_label: 'Work',
         model: 'claude',
         input_tokens: 20,
         output_tokens: 8,
@@ -405,6 +407,7 @@ describe('MessageDetailsService', () => {
     expect(result.message.attempts![0]).toEqual(
       expect.objectContaining({
         status: 'error',
+        provider_key_label: 'Personal',
         input_tokens: 10,
         output_tokens: 5,
         error_message: null,
@@ -414,6 +417,7 @@ describe('MessageDetailsService', () => {
       expect.objectContaining({
         autofix_applied: true,
         autofix_role: 'retry',
+        provider_key_label: 'Work',
         fallback_from_model: 'gpt-4o',
         fallback_index: 0,
         input_tokens: 20,

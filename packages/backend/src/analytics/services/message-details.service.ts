@@ -73,6 +73,7 @@ export interface MessageDetailResponse {
       provider: string | null;
       status: string;
       auth_type: string | null;
+      provider_key_label: string | null;
       error_message: string | null;
       error_origin: string | null;
       error_class: string | null;
@@ -254,6 +255,7 @@ export class MessageDetailsService {
                 provider: attempt.provider,
                 status: attempt.status,
                 auth_type: attempt.auth_type,
+                provider_key_label: attempt.provider_key_label ?? null,
                 error_message: attempt.error_message,
                 error_origin: attempt.error_origin,
                 error_class: attempt.error_class,

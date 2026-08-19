@@ -5,12 +5,12 @@ import type { KeyRotationRule } from 'manifest-shared';
  * labels already attempted during THIS request. Created once per proxy request
  * and shared between the primary attempt flow (proxy.service), the fallback
  * chain (proxy-fallback.service), and the Auto-fix rotate_key reforward, so a
- * label burned by one hop is never re-tried later in the same request.
+ * label burned by one hop is never re-tried for the same model later in the
+ * same request.
  *
- * The state key follows the RULE's scope: a provider-scope rule shares one key
- * across every model of that provider (a hard-failed label must not be retried
- * for another model under the same provider rule), while a model-scope rule
- * keys by the model. See {@link keyRotationStateKey}.
+ * The state is keyed by (provider, model) so that a key that fails for one
+ * model does not burn that key for subsequent models in the fallback chain.
+ * See {@link keyRotationStateKey}.
  */
 export type KeyRotationState = Map<string, Set<string>>;
 
@@ -19,14 +19,13 @@ export function createKeyRotationState(): KeyRotationState {
 }
 
 /**
- * The state key for a rule+model pair. Provider-scope rules are keyed by the
- * provider so a failed label is not retried across models of the same provider
- * in one request; model-scope rules are keyed by the model as before.
+ * The state key for a rule+model pair. Key rotation state is tracked per
+ * (provider, model) so a failed label is not retried for the same model in one
+ * request, while subsequent models in a fallback chain (even under a
+ * provider-level rule) start fresh with the provider's key rotation list.
  */
 export function keyRotationStateKey(rule: KeyRotationRule, model: string): string {
-  return rule.scope === 'provider'
-    ? `provider:${rule.provider.toLowerCase()}`
-    : `model:${model.toLowerCase()}`;
+  return `${rule.provider.toLowerCase()}:${model.toLowerCase()}`;
 }
 
 /** Record that `label` was already attempted for `rule`+`model` in this request. */

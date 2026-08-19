@@ -326,8 +326,41 @@ describe('MessageDetails', () => {
     await screen.findByRole('table', { name: 'Provider attempts' });
     const rows = container.querySelectorAll('table[aria-label="Provider attempts"] tbody tr');
     expect(rows).toHaveLength(2);
-    expect(rows[0]?.textContent).toContain('1Unknown—error—');
-    expect(rows[1]?.textContent).toContain('2openaiGPT-4osuccess$0.012346');
+    expect(rows[0]?.textContent).toContain('1Unknown——error—');
+    expect(rows[1]?.textContent).toContain('2openai—GPT-4osuccess$0.012346');
+  });
+
+  it('renders API key label in Provider attempts table when present', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        id: 'request-2',
+        status: 'success',
+        attempts: [
+          {
+            id: 'attempt-1',
+            provider: 'google',
+            provider_key_label: 'Personal',
+            model: 'gemini-3.7-flash',
+            status: 'error',
+            cost_usd: null,
+          },
+          {
+            id: 'attempt-2',
+            provider: 'google',
+            provider_key_label: 'Work',
+            model: 'gemini-3.6-flash',
+            status: 'success',
+            cost_usd: '0.005',
+          },
+        ],
+      },
+    });
+
+    const { container } = render(() => <MessageDetails messageId="request-2" />);
+    await screen.findByRole('table', { name: 'Provider attempts' });
+    const rows = container.querySelectorAll('table[aria-label="Provider attempts"] tbody tr');
+    expect(rows[0]?.textContent).toContain('Personal');
+    expect(rows[1]?.textContent).toContain('Work');
   });
 
   it('shows error state on API failure', async () => {
