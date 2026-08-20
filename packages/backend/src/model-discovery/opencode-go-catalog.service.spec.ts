@@ -3,8 +3,10 @@ import { OPENCODE_GO_BUDGET_5H_USD, OpencodeGoCatalogService } from './opencode-
 const BT = String.fromCharCode(96);
 const OAI = BT + 'https://opencode.ai/zen/go/v1/chat/completions' + BT;
 const ANT = BT + 'https://opencode.ai/zen/go/v1/messages' + BT;
+const RESP = BT + 'https://opencode.ai/zen/go/v1/responses' + BT;
 const OAI_SDK = BT + '@ai-sdk/openai-compatible' + BT;
 const ANT_SDK = BT + '@ai-sdk/anthropic' + BT;
+const RESP_SDK = BT + '@ai-sdk/openai' + BT;
 
 const ENDPOINTS_TABLE = [
   '## Endpoints',
@@ -19,6 +21,7 @@ const ENDPOINTS_TABLE = [
   `| Qwen3.7 Max  | qwen3.7-max  | ${ANT} | ${ANT_SDK} |`,
   `| MiniMax M2.7 | minimax-m2.7 | ${ANT} | ${ANT_SDK} |`,
   `| MiniMax M2.5 | minimax-m2.5 | ${ANT} | ${ANT_SDK} |`,
+  `| Muse Spark 1.2 Contributor | muse-spark-1.2-contributor | ${RESP} | ${RESP_SDK} |`,
   '',
 ].join('\n');
 
@@ -35,6 +38,7 @@ const LIMITS_TABLE = [
   '| Qwen3.7 Max        | 770                 | 1,925             | 3,850              |',
   '| MiniMax M2.7       | 3,400               | 8,500             | 17,000             |',
   '| MiniMax M2.5       | 6,300               | 15,900            | 31,800             |',
+  '| Muse Spark 1.2 Contributor | 45,300      | 113,300           | 226,600            |',
   '',
 ].join('\n');
 
@@ -73,6 +77,7 @@ describe('OpencodeGoCatalogService', () => {
         'qwen3.7-max',
         'minimax-m2.7',
         'minimax-m2.5',
+        'muse-spark-1.2-contributor',
       ]);
     });
 
@@ -84,6 +89,7 @@ describe('OpencodeGoCatalogService', () => {
       expect(labels['mimo-v2-omni']).toBe('MiMo-V2-Omni');
       expect(labels['qwen3.7-max']).toBe('Qwen3.7 Max');
       expect(labels['minimax-m2.7']).toBe('MiniMax M2.7');
+      expect(labels['muse-spark-1.2-contributor']).toBe('Muse Spark 1.2 Contributor');
     });
 
     it('tags docs rows with the endpoint format they declare', () => {
@@ -95,6 +101,7 @@ describe('OpencodeGoCatalogService', () => {
       expect(byId['qwen3.7-max']).toBe('anthropic');
       expect(byId['minimax-m2.5']).toBe('anthropic');
       expect(byId['minimax-m2.7']).toBe('anthropic');
+      expect(byId['muse-spark-1.2-contributor']).toBe('openai');
     });
 
     it('never matches the header row (uppercase model ID column fails regex)', () => {

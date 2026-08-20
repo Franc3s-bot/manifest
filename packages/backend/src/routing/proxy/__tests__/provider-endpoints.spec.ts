@@ -182,6 +182,7 @@ describe('resolveEndpointKey', () => {
     expect(known).toContain('xiaomi-subscription');
     expect(known).toContain('kiro');
     expect(known).toContain('opencode-go');
+    expect(known).toContain('opencode-go-musespark');
     expect(known).toContain('opencode-go-anthropic');
     expect(known).toContain('opencode-zen');
     expect(known).toContain('opencode-zen-google');
@@ -672,6 +673,17 @@ describe('PROVIDER_ENDPOINTS', () => {
     });
   });
 
+  it('opencode-go-musespark uses Hugging Face proxy base URL with Responses format and proxy headers', () => {
+    const ep = PROVIDER_ENDPOINTS['opencode-go-musespark'];
+    expect(ep.baseUrl).toBe('https://franc3spo-opencode-proxy.hf.space');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('muse-spark-1.2-contributor')).toBe('/v1/responses');
+
+    const headers = ep.buildHeaders('og-token');
+    expect(headers['x-opencode-key']).toBe('og-token');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
   it('opencode-go-anthropic uses Anthropic format with /v1/messages', () => {
     const ep = PROVIDER_ENDPOINTS['opencode-go-anthropic'];
     expect(ep.baseUrl).toBe('https://opencode.ai/zen/go');
@@ -824,6 +836,7 @@ describe('PROVIDER_ENDPOINTS', () => {
       'byteplus-anthropic',
       'minimax-subscription',
       'qwen-subscription-responses',
+      'opencode-go-musespark',
       'opencode-go-anthropic',
       'opencode-zen-google',
     ];

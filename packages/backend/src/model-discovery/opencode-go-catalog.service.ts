@@ -196,7 +196,7 @@ export class OpencodeGoCatalogService implements OnModuleInit {
   parse(mdx: string): OpencodeGoCatalogEntry[] {
     const costByName = this.parseLimits(mdx);
     const rowRe =
-      /\|\s*([A-Za-z][^|]*?)\s*\|\s*([a-z][a-z0-9.-]*)\s*\|\s*`?https:\/\/opencode\.ai\/zen\/go\/v1\/(chat\/completions|messages)`?\s*\|/g;
+      /\|\s*([A-Za-z][^|]*?)\s*\|\s*([a-z][a-z0-9.-]*)\s*\|\s*`?https:\/\/opencode\.ai\/zen\/go\/v1\/(chat\/completions|messages|responses)`?\s*\|/g;
     const entries: OpencodeGoCatalogEntry[] = [];
     const seen = new Set<string>();
     let match: RegExpExecArray | null;

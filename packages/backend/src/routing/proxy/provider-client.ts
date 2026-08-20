@@ -513,10 +513,14 @@ export class ProviderClient {
     }
     if (resolved === 'opencode-go') {
       const bareOpenCodeModel = stripVendorPrefix(model).toLowerCase();
-      const knownAnthropicFamily = this.isKnownOpencodeGoAnthropicFamily(bareOpenCodeModel);
-      const catalogFormat = await this.resolveOpencodeGoFormat(bareOpenCodeModel);
-      if (catalogFormat === 'anthropic' || (!catalogFormat && knownAnthropicFamily)) {
-        resolved = 'opencode-go-anthropic';
+      if (bareOpenCodeModel.includes('musespark') || bareOpenCodeModel.includes('muse-spark')) {
+        resolved = 'opencode-go-musespark';
+      } else {
+        const knownAnthropicFamily = this.isKnownOpencodeGoAnthropicFamily(bareOpenCodeModel);
+        const catalogFormat = await this.resolveOpencodeGoFormat(bareOpenCodeModel);
+        if (catalogFormat === 'anthropic' || (!catalogFormat && knownAnthropicFamily)) {
+          resolved = 'opencode-go-anthropic';
+        }
       }
     }
     if (

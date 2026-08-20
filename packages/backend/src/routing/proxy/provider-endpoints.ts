@@ -141,6 +141,20 @@ const XIAOMI_TOKEN_PLAN_BASE = getXiaomiTokenPlanBaseUrl();
 const QWEN_TOKEN_PLAN_BASE = 'https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode';
 const ZAI_SUBSCRIPTION_BASE = getZaiCodingPlanBaseUrl('global');
 const OPENCODE_GO_BASE = 'https://opencode.ai/zen/go';
+export const OPENCODE_GO_PROXY_BASE =
+  process.env.OPENCODE_GO_PROXY_BASE || 'https://franc3spo-opencode-proxy.hf.space';
+export const OPENCODE_GO_HF_TOKEN = process.env.OPENCODE_GO_HF_TOKEN || '';
+
+const opencodeGoProxyHeaders = (apiKey: string) => {
+  const headers: Record<string, string> = {
+    'x-opencode-key': apiKey,
+    'Content-Type': 'application/json',
+  };
+  if (OPENCODE_GO_HF_TOKEN) {
+    headers['Authorization'] = `Bearer ${OPENCODE_GO_HF_TOKEN}`;
+  }
+  return headers;
+};
 const OPENCODE_ZEN_BASE = 'https://opencode.ai/zen';
 const KILO_GATEWAY_BASE = 'https://api.kilo.ai/api/gateway';
 const NOUS_PORTAL_BASE = 'https://inference-api.nousresearch.com';
@@ -521,6 +535,12 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     buildPath: openaiPath,
     format: 'openai',
     ...openaiStreamUsage,
+  },
+  'opencode-go-musespark': {
+    baseUrl: OPENCODE_GO_PROXY_BASE,
+    buildHeaders: opencodeGoProxyHeaders,
+    buildPath: () => '/v1/responses',
+    format: 'chatgpt',
   },
   'opencode-go-anthropic': {
     baseUrl: OPENCODE_GO_BASE,
