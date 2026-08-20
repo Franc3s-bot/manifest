@@ -156,6 +156,18 @@ const opencodeGoProxyHeaders = (apiKey: string) => {
   return headers;
 };
 const OPENCODE_ZEN_BASE = 'https://opencode.ai/zen';
+
+const opencodeZenProxyHeaders = (apiKey: string) => {
+  const headers: Record<string, string> = {
+    'x-opencode-key': apiKey,
+    'x-target-base': OPENCODE_ZEN_BASE,
+    'Content-Type': 'application/json',
+  };
+  if (OPENCODE_GO_HF_TOKEN) {
+    headers['Authorization'] = `Bearer ${OPENCODE_GO_HF_TOKEN}`;
+  }
+  return headers;
+};
 const KILO_GATEWAY_BASE = 'https://api.kilo.ai/api/gateway';
 const NOUS_PORTAL_BASE = 'https://inference-api.nousresearch.com';
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com';
@@ -565,6 +577,12 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     buildPath: () => '/v1/chat/completions',
     format: 'openai',
     ...openaiStreamUsage,
+  },
+  'opencode-zen-musespark': {
+    baseUrl: OPENCODE_GO_PROXY_BASE,
+    buildHeaders: opencodeZenProxyHeaders,
+    buildPath: () => '/v1/responses',
+    format: 'chatgpt',
   },
   // TODO(opencode-zen): collapse this back into the single `opencode-zen`
   // entry once Zen's gateway stops tunneling the client Authorization header
