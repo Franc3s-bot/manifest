@@ -42,6 +42,7 @@ interface Attempt {
   provider: string;
   model: string;
   auth_type: string;
+  provider_key_label?: string | null;
   error_message?: string;
   error_origin?: string;
   error_class?: string;
@@ -142,6 +143,7 @@ function buildAttempts(msg: any): Attempt[] {
       provider: att.provider ?? msg.provider,
       model: att.model ?? msg.model ?? msg.model_id,
       auth_type: att.auth_type ?? msg.auth_type,
+      provider_key_label: att.provider_key_label ?? undefined,
       error_message: attemptErrorMessage(att, msg.error_message),
       error_origin: att.error_origin ?? undefined,
       error_class: att.error_class ?? undefined,
@@ -184,6 +186,7 @@ function buildAttempts(msg: any): Attempt[] {
       provider: msg.provider,
       model: msg.model || msg.model_id,
       auth_type: msg.auth_type,
+      provider_key_label: msg.provider_key_label ?? undefined,
       error_message: attemptErrorMessage(msg, msg.error_message),
       error_origin: msg.error_origin,
       error_class: msg.error_class,
@@ -496,6 +499,14 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                                   <div class="drawer-kv">
                                     <span class="drawer-kv__key">Auth</span>
                                     <span>{att().auth_type}</span>
+                                  </div>
+                                </Show>
+                                <Show
+                                  when={att().provider_key_label || att().auth_type === 'api_key'}
+                                >
+                                  <div class="drawer-kv">
+                                    <span class="drawer-kv__key">API Key</span>
+                                    <span>{att().provider_key_label ?? 'Default'}</span>
                                   </div>
                                 </Show>
                                 <div class="drawer-kv">

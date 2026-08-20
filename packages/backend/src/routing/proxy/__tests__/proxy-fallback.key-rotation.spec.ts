@@ -441,13 +441,15 @@ describe('ProxyFallbackService.tryFallbacks — key rotation', () => {
       );
     });
 
-    it('provider-scope rules share state across models (failed label not retried)', () => {
+    it('provider-scope rules keep per-model state (keys not exhausted for different model)', () => {
       const providerRule = rule(null, ['Work', 'Personal'], 'openai', 'provider');
       const state = createKeyRotationState();
-      // Model X hard-failed on 'Work' under the provider rule…
+      // Model X failed on 'Work' under the provider rule…
       markKeyLabelUsed(state, providerRule, 'gpt-4o', 'Work');
-      // …so model Y of the same provider must NOT re-try 'Work'.
-      expect(nextUnusedKeyLabel(providerRule, state, 'claude-sonnet-4-5')).toBe('Personal');
+      // …so model Y of the same provider starts fresh with 'Work'.
+      expect(nextUnusedKeyLabel(providerRule, state, 'gpt-4o-mini')).toBe('Work');
+      // …while model X continues to 'Personal'.
+      expect(nextUnusedKeyLabel(providerRule, state, 'gpt-4o')).toBe('Personal');
     });
 
     it('model-scope rules keep per-model state', () => {
@@ -458,5 +460,39 @@ describe('ProxyFallbackService.tryFallbacks — key rotation', () => {
       const otherRule = rule('claude-sonnet-4-5', ['Work', 'Personal'], 'anthropic');
       expect(nextUnusedKeyLabel(otherRule, state, 'claude-sonnet-4-5')).toBe('Work');
     });
+  });
+
+  it('when primary exhausts keys under provider-scope rule, subsequent fallback model of same provider rotates fresh', async () => {
+    keyRotationRules.getRule.mockResolvedValue(
+      rule(null, ['Work', 'Personal'], 'openai', 'provider'),
+    );
+    providerClient.forward.mockResolvedValueOnce(forward(401)).mockResolvedValueOnce(forward(200));
+    const state = createKeyRotationState();
+    // Primary gpt-4o burned both labels under the provider rule
+    markKeyLabelUsed(
+      state,
+      rule(null, ['Work', 'Personal'], 'openai', 'provider'),
+      'gpt-4o',
+      'Work',
+    );
+    markKeyLabelUsed(
+      state,
+      rule(null, ['Work', 'Personal'], 'openai', 'provider'),
+      'gpt-4o',
+      'Personal',
+    );
+
+    const result = await runFallbacks(
+      ['gpt-4o-mini'],
+      [{ provider: 'openai', authType: 'api_key', model: 'gpt-4o-mini' }],
+      state,
+      'gpt-4o',
+    );
+
+    // gpt-4o-mini starts fresh on Work (which fails 401) then succeeds on Personal
+    expect(providerClient.forward).toHaveBeenCalledTimes(2);
+    expect(result.success).not.toBeNull();
+    expect(result.success!.model).toBe('gpt-4o-mini');
+    expect(result.success!.keyLabel).toBe('Personal');
   });
 });

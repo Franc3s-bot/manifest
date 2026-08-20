@@ -11,8 +11,11 @@ import {
 } from 'solid-js';
 import { useSearchParams, type RouteSectionProps } from '@solidjs/router';
 import { Meta, Title } from '@solidjs/meta';
-import type { AuthType, PlaygroundHistoryRunSummary } from '../services/api.js';
 import {
+  type AuthType,
+  type CustomProviderData,
+  type PlaygroundHistoryRunSummary,
+  type RoutingProvider,
   getAvailableModels,
   getPlaygroundAgent,
   getPlaygroundRun,
@@ -32,6 +35,9 @@ import PlaygroundSummaryTable from '../components/playground/PlaygroundSummaryTa
 import PlaygroundModelPicker from '../components/playground/PlaygroundModelPicker.jsx';
 import PlaygroundEmptyState from '../components/playground/PlaygroundEmptyState.jsx';
 import PlaygroundRecentSidebar from '../components/playground/PlaygroundHistoryDrawer.jsx';
+import KeyPickerModal from '../components/KeyPickerModal.jsx';
+import { activeRouteKeys } from '../services/routing-utils.js';
+import { PROVIDERS } from '../services/providers.js';
 import RequestHeadersPopover, {
   blankEntry,
   isBlockedHeaderKey,
@@ -122,6 +128,26 @@ function findWinners(columns: readonly ColumnData[]): {
   };
 }
 
+function providerDisplayName(
+  providerId: string,
+  customProviders: CustomProviderData[] = [],
+): string {
+  const custom = customProviders.find((cp) => cp.name.toLowerCase() === providerId.toLowerCase());
+  if (custom) return custom.name;
+  const known = PROVIDERS.find((p) => p.id.toLowerCase() === providerId.toLowerCase());
+  return known?.name ?? providerId;
+}
+
+interface PendingKeyPick {
+  mode: 'add' | 'replace' | 'changeKey';
+  columnId?: string;
+  model: string;
+  provider: string;
+  authType: AuthType;
+  displayName: string;
+  keys: RoutingProvider[];
+}
+
 interface PlaygroundProps {
   onBestModelChange?: (
     selection: { model: string; provider: string; authType: AuthType } | null,
@@ -163,6 +189,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   const store = createMemo(() => getOrCreatePlaygroundStore(agentName()));
   const [pickerForColumn, setPickerForColumn] = createSignal<string | null>(null);
   const [showAddPicker, setShowAddPicker] = createSignal(false);
+  const [pendingKeyPick, setPendingKeyPick] = createSignal<PendingKeyPick | null>(null);
   const [announcement, setAnnouncement] = createSignal('');
   const [promptHeight, setPromptHeight] = createSignal(0);
   const [historyOpen, setHistoryOpen] = createSignal(
@@ -378,9 +405,30 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
     provider: string,
     authType?: AuthType,
   ) => {
+    const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
-    store().replaceColumnModel(columnId, model, provider, authType ?? 'api_key', displayName);
     setPickerForColumn(null);
+    const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
+    if (keys.length > 1) {
+      setPendingKeyPick({
+        mode: 'replace',
+        columnId,
+        model,
+        provider,
+        authType: resolvedAuth,
+        displayName,
+        keys,
+      });
+    } else {
+      store().replaceColumnModel(
+        columnId,
+        model,
+        provider,
+        resolvedAuth,
+        displayName,
+        keys[0]?.label,
+      );
+    }
   };
 
   const handleAddModel = (
@@ -389,9 +437,64 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
     provider: string,
     authType?: AuthType,
   ) => {
+    const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
-    store().addColumn(model, provider, authType ?? 'api_key', displayName);
     setShowAddPicker(false);
+    const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
+    if (keys.length > 1) {
+      setPendingKeyPick({
+        mode: 'add',
+        model,
+        provider,
+        authType: resolvedAuth,
+        displayName,
+        keys,
+      });
+    } else {
+      store().addColumn(model, provider, resolvedAuth, displayName, keys[0]?.label);
+    }
+  };
+
+  const handleChangeKey = (columnId: string) => {
+    const col = store().columns.find((c) => c.id === columnId);
+    if (!col) return;
+    const keys = activeRouteKeys(providers() ?? [], col.provider, col.authType);
+    if (keys.length === 0) return;
+    setPendingKeyPick({
+      mode: 'changeKey',
+      columnId,
+      model: col.model,
+      provider: col.provider,
+      authType: col.authType,
+      displayName: col.displayName,
+      keys,
+    });
+  };
+
+  const resolvePendingKey = (label: string | null) => {
+    const pending = pendingKeyPick();
+    if (!pending) return;
+    if (pending.mode === 'add') {
+      store().addColumn(
+        pending.model,
+        pending.provider,
+        pending.authType,
+        pending.displayName,
+        label ?? undefined,
+      );
+    } else if (pending.mode === 'replace' && pending.columnId) {
+      store().replaceColumnModel(
+        pending.columnId,
+        pending.model,
+        pending.provider,
+        pending.authType,
+        pending.displayName,
+        label ?? undefined,
+      );
+    } else if (pending.mode === 'changeKey' && pending.columnId) {
+      store().setColumnKeyLabel(pending.columnId, label ?? undefined);
+    }
+    setPendingKeyPick(null);
   };
 
   const handlePickHistory = async (runId: string) => {
@@ -515,8 +618,12 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
                 }
                 isBest={col.columnDbId != null && col.columnDbId === effectiveBestId()}
                 readOnly={!!viewingHistory() || !hasConnectedProviders()}
+                hasMultipleKeys={
+                  activeRouteKeys(providers() ?? [], col.provider, col.authType).length > 1
+                }
                 onRemove={viewingHistory() ? () => {} : store().removeColumn}
                 onChangeModel={viewingHistory() ? () => {} : setPickerForColumn}
+                onChangeKey={viewingHistory() ? undefined : handleChangeKey}
                 onRetry={handleRetry}
                 onMarkBest={viewingHistory() ? undefined : () => handleMarkBest(col)}
               />
@@ -624,6 +731,18 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
           onSelect={handleAddModel}
           onClose={() => setShowAddPicker(false)}
         />
+      </Show>
+
+      <Show when={pendingKeyPick()}>
+        {(pending) => (
+          <KeyPickerModal
+            providerName={providerDisplayName(pending().provider, customProviders() ?? [])}
+            modelName={pending().displayName}
+            keys={pending().keys}
+            onPick={resolvePendingKey}
+            onClose={() => setPendingKeyPick(null)}
+          />
+        )}
       </Show>
     </div>
   );

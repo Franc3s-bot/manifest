@@ -11,8 +11,10 @@ interface Props {
   isFastest: boolean;
   isBest?: boolean;
   readOnly?: boolean;
+  hasMultipleKeys?: boolean;
   onRemove: (id: string) => void;
   onChangeModel: (id: string) => void;
+  onChangeKey?: (id: string) => void;
   onRetry: (id: string) => void;
   /** Toggle this column as the user's best answer. Absent ⇒ not actionable. */
   onMarkBest?: () => void;
@@ -29,6 +31,18 @@ const StarIcon: Component<{ filled: boolean }> = (props) => (
     viewBox="0 0 24 24"
   >
     <path d="m12 2 3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14l-5-4.87 6.91-1.01z" />
+  </svg>
+);
+
+const KeyIcon: Component<{ size?: number }> = (props) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={props.size ?? 12}
+    height={props.size ?? 12}
+    fill="currentColor"
+    viewBox="0 0 24 24"
+  >
+    <path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" />
   </svg>
 );
 
@@ -82,6 +96,29 @@ const PlaygroundColumn: Component<Props> = (props) => {
                 <path d="M5 21h14c1.1 0 2-.9 2-2v-7h-2v7H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2" />
                 <path d="M7 13v3c0 .55.45 1 1 1h3c.27 0 .52-.11.71-.29l9-9a.996.996 0 0 0 0-1.41l-3-3a.996.996 0 0 0-1.41 0l-9.01 8.99A1 1 0 0 0 7 13m10-7.59L18.59 7 17.5 8.09 15.91 6.5zm-8 8 5.5-5.5 1.59 1.59-5.5 5.5H9z" />
               </svg>
+            </span>
+          </button>
+        </Show>
+        <Show when={props.column.providerKeyLabel || props.hasMultipleKeys}>
+          <button
+            type="button"
+            class="playground-column__key-badge"
+            classList={{
+              'playground-column__key-badge--readonly': props.readOnly || !props.onChangeKey,
+            }}
+            disabled={props.readOnly || !props.onChangeKey}
+            onClick={() => props.onChangeKey?.(props.column.id)}
+            title={
+              props.readOnly || !props.onChangeKey
+                ? `Key: ${props.column.providerKeyLabel ?? 'Default'}`
+                : `Key: ${props.column.providerKeyLabel ?? 'Default'} (Click to change)`
+            }
+          >
+            <span class="playground-column__key-icon">
+              <KeyIcon size={12} />
+            </span>
+            <span class="playground-column__key-label">
+              {props.column.providerKeyLabel ?? 'Default'}
             </span>
           </button>
         </Show>

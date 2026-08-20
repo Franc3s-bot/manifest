@@ -28,6 +28,7 @@ export interface RunPlaygroundRequest {
   model: string;
   provider: string;
   authType?: AuthType;
+  providerKeyLabel?: string;
   /** Standard chat-completions shape. Today this is always set. */
   messages?: { role: 'system' | 'user' | 'assistant'; content: string }[];
   /**

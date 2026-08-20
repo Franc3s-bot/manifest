@@ -415,4 +415,28 @@ describe('RequestDrawer', () => {
     await waitFor(() => expect(container.textContent).toContain('Fell back from deepseek-chat'));
     expect(screen.queryByText('Error')).toBeNull();
   });
+
+  it('renders API key label in attempt details metadata', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        id: 'request-key-label',
+        status: 'success',
+        attempts: [
+          {
+            id: 'attempt-1',
+            status: 'ok',
+            provider: 'google',
+            model: 'gemini-3.7-flash',
+            auth_type: 'api_key',
+            provider_key_label: 'Production-Key',
+          },
+        ],
+      },
+    });
+
+    const { container } = render(() => <RequestDrawer messageId="request-key-label" onClose={vi.fn()} />);
+    await waitFor(() => expect(screen.getByText('Production-Key')).toBeDefined());
+    expect(container.textContent).toContain('API Key');
+    expect(container.textContent).toContain('Production-Key');
+  });
 });

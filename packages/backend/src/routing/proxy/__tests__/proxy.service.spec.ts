@@ -2201,7 +2201,7 @@ describe('ProxyService — orchestration', () => {
         isChatGpt: false,
         wireRequestBody: { messages: [{ role: 'user', content: 'hi' }] },
         retryWireBody: jest.fn(),
-        wireFormat: 'openai',
+        wireFormat: 'openai_chat_completions',
       });
 
       await svc.proxyRequest(baseOpts());

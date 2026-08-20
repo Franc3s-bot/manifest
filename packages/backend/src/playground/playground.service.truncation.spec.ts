@@ -90,6 +90,7 @@ interface Mocks {
     hasActiveProvider: jest.Mock;
     getAuthType: jest.Mock;
     getProviderKeys: jest.Mock;
+    selectProviderKey: jest.Mock;
     getProviderApiKey: jest.Mock;
   };
   providerClient: {
@@ -120,6 +121,7 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
       hasActiveProvider: jest.fn().mockResolvedValue(true),
       getAuthType: jest.fn().mockResolvedValue('api_key'),
       getProviderKeys: jest.fn().mockResolvedValue([{ apiKey: 'sk-test', label: 'Default' }]),
+      selectProviderKey: jest.fn().mockResolvedValue({ apiKey: 'sk-test', label: 'Default' }),
       getProviderApiKey: jest.fn().mockResolvedValue('sk-test'),
     },
     providerClient: {

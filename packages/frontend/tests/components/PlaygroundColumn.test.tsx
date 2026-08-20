@@ -119,6 +119,53 @@ describe('PlaygroundColumn', () => {
       expect(container.querySelector('.playground-column__title--readonly')).not.toBeNull();
       expect(queryByLabelText('Remove GPT-4o Mini')).toBeNull();
     });
+
+    it('renders a key badge when providerKeyLabel is set and fires onChangeKey when clicked', () => {
+      const onChangeKey = vi.fn();
+      const { container, getByText } = render(() => (
+        <PlaygroundColumn
+          {...baseProps}
+          onChangeKey={onChangeKey}
+          column={col({ providerKeyLabel: 'Work Key' })}
+        />
+      ));
+      const badge = container.querySelector('button.playground-column__key-badge');
+      expect(badge).not.toBeNull();
+      expect(getByText('Work Key')).not.toBeNull();
+      fireEvent.click(badge!);
+      expect(onChangeKey).toHaveBeenCalledWith('c1');
+    });
+
+    it('renders a key badge when hasMultipleKeys is true even if providerKeyLabel is unset', () => {
+      const onChangeKey = vi.fn();
+      const { container, getByText } = render(() => (
+        <PlaygroundColumn
+          {...baseProps}
+          hasMultipleKeys
+          onChangeKey={onChangeKey}
+          column={col({ providerKeyLabel: undefined })}
+        />
+      ));
+      const badge = container.querySelector('button.playground-column__key-badge');
+      expect(badge).not.toBeNull();
+      expect(getByText('Default')).not.toBeNull();
+      fireEvent.click(badge!);
+      expect(onChangeKey).toHaveBeenCalledWith('c1');
+    });
+
+    it('disables key badge in read-only mode', () => {
+      const { container } = render(() => (
+        <PlaygroundColumn
+          {...baseProps}
+          readOnly
+          column={col({ providerKeyLabel: 'Work Key' })}
+        />
+      ));
+      const badge = container.querySelector('button.playground-column__key-badge') as HTMLButtonElement;
+      expect(badge).not.toBeNull();
+      expect(badge.disabled).toBe(true);
+      expect(badge.classList.contains('playground-column__key-badge--readonly')).toBe(true);
+    });
   });
 
   describe('best-answer star', () => {

@@ -2583,6 +2583,33 @@ describe('ProviderClient', () => {
       expect(result.isChatGpt).toBe(false);
     });
 
+    it('routes musespark models to US Hugging Face proxy with auth and x-opencode-key headers', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'opencode-go',
+        apiKey: 'og-token',
+        model: 'opencode-go/muse-spark-1.2-contributor',
+        body,
+        stream: false,
+        authType: 'subscription',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://franc3spo-opencode-proxy.hf.space/v1/responses',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-opencode-key': 'og-token',
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('muse-spark-1.2-contributor');
+      expect(result.isAnthropic).toBe(false);
+      expect(result.isChatGpt).toBe(true);
+    });
+
     it('routes minimax-* models to Anthropic /v1/messages', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
@@ -2789,6 +2816,34 @@ describe('ProviderClient', () => {
         }),
       );
       expect(result.isGoogle).toBe(true);
+    });
+
+    it('routes musespark models to US Hugging Face proxy with Responses format and Zen target base', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'opencode-zen',
+        apiKey: 'oz-token',
+        model: 'opencode-zen/muse-spark-1.2-contributor-free',
+        body,
+        stream: false,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://franc3spo-opencode-proxy.hf.space/v1/responses',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-opencode-key': 'oz-token',
+            'x-target-base': 'https://opencode.ai/zen',
+            'Content-Type': 'application/json',
+          }),
+        }),
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('muse-spark-1.2-contributor-free');
+      expect(result.isChatGpt).toBe(true);
+      expect(result.isAnthropic).toBe(false);
+      expect(result.isGoogle).toBe(false);
     });
   });
 

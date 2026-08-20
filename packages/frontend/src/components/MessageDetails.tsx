@@ -739,6 +739,7 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                       <tr>
                         <th>#</th>
                         <th>Provider</th>
+                        <th>API Key</th>
                         <th>Model</th>
                         <th>Status</th>
                         <th>Cost</th>
@@ -750,6 +751,10 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                           <tr>
                             <td>{index() + 1}</td>
                             <td>{attempt.provider ?? 'Unknown'}</td>
+                            <td>
+                              {attempt.provider_key_label ??
+                                (attempt.auth_type === 'api_key' ? 'Default' : '—')}
+                            </td>
                             <td>{attempt.model ? getModelDisplayName(attempt.model) : '—'}</td>
                             <td>{attempt.status}</td>
                             <td>

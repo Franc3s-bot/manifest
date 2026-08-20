@@ -182,8 +182,10 @@ describe('resolveEndpointKey', () => {
     expect(known).toContain('xiaomi-subscription');
     expect(known).toContain('kiro');
     expect(known).toContain('opencode-go');
+    expect(known).toContain('opencode-go-musespark');
     expect(known).toContain('opencode-go-anthropic');
     expect(known).toContain('opencode-zen');
+    expect(known).toContain('opencode-zen-musespark');
     expect(known).toContain('opencode-zen-google');
   });
 
@@ -672,6 +674,17 @@ describe('PROVIDER_ENDPOINTS', () => {
     });
   });
 
+  it('opencode-go-musespark uses Hugging Face proxy base URL with Responses format and proxy headers', () => {
+    const ep = PROVIDER_ENDPOINTS['opencode-go-musespark'];
+    expect(ep.baseUrl).toBe('https://franc3spo-opencode-proxy.hf.space');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('muse-spark-1.2-contributor')).toBe('/v1/responses');
+
+    const headers = ep.buildHeaders('og-token');
+    expect(headers['x-opencode-key']).toBe('og-token');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
   it('opencode-go-anthropic uses Anthropic format with /v1/messages', () => {
     const ep = PROVIDER_ENDPOINTS['opencode-go-anthropic'];
     expect(ep.baseUrl).toBe('https://opencode.ai/zen/go');
@@ -688,12 +701,23 @@ describe('PROVIDER_ENDPOINTS', () => {
     });
     expect(headers['Authorization']).toBeUndefined();
   });
-
   it('opencode-zen uses OpenCode Zen base URL with OpenAI format', () => {
     const ep = PROVIDER_ENDPOINTS['opencode-zen'];
     expect(ep.baseUrl).toBe('https://opencode.ai/zen');
     expect(ep.format).toBe('openai');
     expect(ep.buildPath('qwen3.6-plus')).toBe('/v1/chat/completions');
+  });
+
+  it('opencode-zen-musespark uses Hugging Face proxy base URL with Responses format and Zen target base', () => {
+    const ep = PROVIDER_ENDPOINTS['opencode-zen-musespark'];
+    expect(ep.baseUrl).toBe('https://franc3spo-opencode-proxy.hf.space');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('muse-spark-1.2-contributor-free')).toBe('/v1/responses');
+
+    const headers = ep.buildHeaders('zen-token');
+    expect(headers['x-opencode-key']).toBe('zen-token');
+    expect(headers['x-target-base']).toBe('https://opencode.ai/zen');
+    expect(headers['Content-Type']).toBe('application/json');
   });
 
   it('opencode-zen uses Bearer auth headers', () => {
@@ -824,7 +848,9 @@ describe('PROVIDER_ENDPOINTS', () => {
       'byteplus-anthropic',
       'minimax-subscription',
       'qwen-subscription-responses',
+      'opencode-go-musespark',
       'opencode-go-anthropic',
+      'opencode-zen-musespark',
       'opencode-zen-google',
     ];
 
