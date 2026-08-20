@@ -164,6 +164,8 @@ services:
       # https://manifest.build/docs/self-hosted#telemetry for the payload shape.
       - MANIFEST_TELEMETRY_DISABLED=${MANIFEST_TELEMETRY_DISABLED:-0}
       - TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}
+      - OPENCODE_GO_PROXY_BASE=${OPENCODE_GO_PROXY_BASE:-https://franc3spo-opencode-proxy.hf.space}
+      - OPENCODE_GO_HF_TOKEN=${OPENCODE_GO_HF_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
