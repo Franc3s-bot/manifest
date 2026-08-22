@@ -26,7 +26,7 @@ import { providerIcon, customProviderLogo } from './ProviderIcon.js';
 import ModelParamsAffordance from './ModelParamsAffordance.jsx';
 import RouteKeyChip from './RouteKeyChip.js';
 import DragGhost from './DragGhost.js';
-import { modelParamsScopeForTier } from 'manifest-shared';
+import { MAX_FALLBACKS, modelParamsScopeForTier } from 'manifest-shared';
 
 interface FallbackListProps {
   agentName: string;
@@ -741,7 +741,7 @@ const FallbackList: Component<FallbackListProps> = (props) => {
           </div>
         }
       >
-        <Show when={props.fallbacks.length < 5}>
+        <Show when={props.fallbacks.length < MAX_FALLBACKS}>
           <button
             class="btn btn--outline btn--sm fallback-list__add"
             onClick={props.onAddFallback}

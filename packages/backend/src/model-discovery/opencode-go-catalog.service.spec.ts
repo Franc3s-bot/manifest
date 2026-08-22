@@ -358,7 +358,7 @@ describe('OpencodeGoCatalogService', () => {
       } as Response);
 
       const first = await service.list();
-      expect(first).toHaveLength(8);
+      expect(first).toHaveLength(9);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
 
       const second = await service.list();
@@ -373,7 +373,7 @@ describe('OpencodeGoCatalogService', () => {
         text: async () => SAMPLE_MDX,
       } as Response);
       const good = await service.list();
-      expect(good).toHaveLength(8);
+      expect(good).toHaveLength(9);
 
       // Force the success cache to look expired, but keep lastGood populated.
       (service as unknown as { cache: unknown }).cache = null;

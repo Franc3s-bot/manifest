@@ -150,6 +150,7 @@ describe('ProxyController', () => {
   let observationReporter: { report: jest.Mock };
   let recordingCache: { isRecording: jest.Mock };
   let attemptRecording: { available: boolean; save: jest.Mock };
+  let headerTierService: { list: jest.Mock };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -195,6 +196,7 @@ describe('ProxyController', () => {
       available: true,
       save: jest.fn().mockResolvedValue(undefined),
     };
+    headerTierService = { list: jest.fn().mockResolvedValue([]) };
     const mockCustomProviders = {
       canonicalizeAgentMessageKeys: jest
         .fn()
@@ -230,6 +232,7 @@ describe('ProxyController', () => {
       modelsDevSync as never,
       recordingCache as never,
       attemptRecording as never,
+      headerTierService as never,
     );
   });
 
@@ -469,6 +472,115 @@ describe('ProxyController', () => {
         },
       ],
     });
+  });
+
+  it('should expose auto-tier synthetic models with aggregated context window when ?capabilities=true', async () => {
+    modelDiscovery.getModelsForAgent.mockResolvedValue([
+      makeDiscoveredModel({ id: 'zz-model-a', provider: 'openai', contextWindow: 200_000 }),
+      makeDiscoveredModel({ id: 'zz-model-b', provider: 'anthropic', contextWindow: 200_000 }),
+      makeDiscoveredModel({ id: 'zz-model-c', provider: 'gemini', contextWindow: 1_000_000 }),
+    ]);
+    headerTierService.list.mockResolvedValue([
+      {
+        id: 'tier-standard',
+        agent_id: 'agent-1',
+        tenant_id: 'tenant-1',
+        name: 'Standard',
+        header_key: 'x-manifest-complexity',
+        header_value: 'standard',
+        badge_color: 'blue',
+        sort_order: 0,
+        enabled: true,
+        override_route: { provider: 'openai', authType: 'api_key', model: 'zz-model-a' },
+        fallback_routes: [
+          { provider: 'anthropic', authType: 'api_key', model: 'zz-model-b' },
+          { provider: 'gemini', authType: 'api_key', model: 'zz-model-c' },
+        ],
+        output_modality: 'text',
+        response_mode: 'buffered',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    await expect(controller.models(mockRequest({}) as never, 'true')).resolves.toEqual({
+      object: 'list',
+      data: [
+        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'openai/zz-model-a',
+          object: 'model',
+          created: 0,
+          owned_by: 'openai',
+          capabilities: {
+            features: ['stream'],
+          },
+        },
+        {
+          id: 'anthropic/zz-model-b',
+          object: 'model',
+          created: 0,
+          owned_by: 'anthropic',
+          capabilities: {
+            features: ['stream'],
+          },
+        },
+        {
+          id: 'gemini/zz-model-c',
+          object: 'model',
+          created: 0,
+          owned_by: 'gemini',
+          capabilities: {
+            features: ['stream'],
+          },
+        },
+        {
+          id: 'auto-standard',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
+            context_window: 200_000,
+          },
+        },
+      ],
+    });
+  });
+
+  it('should use the prevalent context window across the auto-tier chain', async () => {
+    modelDiscovery.getModelsForAgent.mockResolvedValue([
+      makeDiscoveredModel({ id: 'big-1', provider: 'openai', contextWindow: 1_000_000 }),
+      makeDiscoveredModel({ id: 'big-2', provider: 'openai', contextWindow: 1_000_000 }),
+      makeDiscoveredModel({ id: 'small-1', provider: 'anthropic', contextWindow: 128_000 }),
+    ]);
+    headerTierService.list.mockResolvedValue([
+      {
+        id: 'tier-standard',
+        agent_id: 'agent-1',
+        tenant_id: 'tenant-1',
+        name: 'Standard',
+        header_key: 'x-manifest-complexity',
+        header_value: 'standard',
+        badge_color: 'blue',
+        sort_order: 0,
+        enabled: true,
+        override_route: { provider: 'openai', authType: 'api_key', model: 'big-1' },
+        fallback_routes: [
+          { provider: 'openai', authType: 'api_key', model: 'big-2' },
+          { provider: 'anthropic', authType: 'api_key', model: 'small-1' },
+        ],
+        output_modality: 'text',
+        response_mode: 'buffered',
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    const result = await controller.models(mockRequest({}) as never, 'true');
+    const autoStandard = result.data.find((m) => m.id === 'auto-standard')!;
+    expect(autoStandard.capabilities?.context_window).toBe(1_000_000);
   });
 
   it('should resolve capabilities from the same sources as the routing model picker', async () => {

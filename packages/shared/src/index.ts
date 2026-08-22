@@ -122,6 +122,7 @@ export { API_KEY_PREFIX } from './api-key';
 export { MAX_KEYS_PER_PROVIDER } from './provider-limits';
 export {
   FALLBACK_KEY_DELIMITER,
+  MAX_FALLBACKS,
   parseFallbackEntry,
   encodeFallbackEntry,
 } from './fallback-encoding';

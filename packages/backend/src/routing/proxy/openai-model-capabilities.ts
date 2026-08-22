@@ -18,6 +18,16 @@ export interface OpenAiModelCapabilities {
   output_modalities?: readonly ModelModality[];
   features?: readonly FeatureCapability[];
   supported_endpoints?: readonly string[];
+  /**
+   * Advertised context window for synthetic auto-tier models (e.g.
+   * `auto-standard`). Aggregate of the tier's route chain, computed at
+   * `GET /v1/models` time — see synthetic-model-profile.ts. Absent for
+   * concrete discovered models (their window is not part of the
+   * positive-assertion capability projection).
+   */
+  context_window?: number;
+  /** Advertised max output tokens for synthetic auto-tier models. */
+  max_output_tokens?: number;
 }
 
 export function openAiModelCapabilities(
