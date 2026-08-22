@@ -712,6 +712,8 @@ export class ModelDiscoveryService {
           outputPricePerToken: mdEntry.outputPricePerToken,
           contextWindow:
             mdEntry.contextWindow ?? capabilityEntry.contextWindow ?? model.contextWindow,
+          maxOutputTokens:
+            mdEntry.maxOutputTokens ?? capabilityEntry.maxOutputTokens ?? model.maxOutputTokens,
           displayName: capabilityEntry.name || mdEntry.name || modelWithMetadataName.displayName,
           capabilityReasoning: capabilityEntry.reasoning ?? model.capabilityReasoning,
           capabilityCode: capabilityEntry.toolCall ?? model.capabilityCode,
