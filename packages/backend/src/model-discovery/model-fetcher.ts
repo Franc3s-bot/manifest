@@ -19,6 +19,11 @@ export interface DiscoveredModel {
   displayName: string;
   provider: string;
   contextWindow: number;
+  /**
+   * Advertised max output tokens (from models.dev or the provider catalog).
+   * Optional: many discovery sources only report the context window.
+   */
+  maxOutputTokens?: number;
   inputPricePerToken: number | null;
   outputPricePerToken: number | null;
   capabilityReasoning: boolean;

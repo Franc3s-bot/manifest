@@ -63,6 +63,7 @@ import { ResponsesSseError } from './chatgpt-adapter';
 import { redactInlineImageDataUrls } from './inline-image-redaction';
 import { openAiModelId } from './openai-model-id';
 import { openAiModelCapabilities, type OpenAiModelCapabilities } from './openai-model-capabilities';
+import { buildSyntheticTierProfile } from './synthetic-model-profile';
 import { PlanService } from '../../billing/plan.service';
 import { StreamFailure } from './stream-writer';
 import { AgentRecordingCacheService } from '../../common/services/agent-recording-cache.service';
@@ -200,7 +201,10 @@ export class ProxyController {
     }
 
     // Synthetic auto-tier models: each enabled header tier with an override
-    // route becomes an auto-{name} model clients can request directly.
+    // route becomes an auto-{name} model clients can request directly. The
+    // advertised context window / max output / capabilities are aggregated
+    // from the tier's route chain (primary + fallbacks) at request time, so
+    // a chain change is reflected on the next fetch.
     if (this.headerTierService) {
       const tiers = await this.headerTierService.list(req.ingestionContext.agentId);
       for (const tier of tiers) {
@@ -208,12 +212,29 @@ export class ProxyController {
         const id = `auto-${tier.name.toLowerCase()}`;
         if (seen.has(id)) continue;
         seen.add(id);
-        data.push({
+        const entry: OpenAiModelObject = {
           id,
           object: 'model',
           created: MODEL_CREATED_UNKNOWN,
           owned_by: 'manifest',
-        });
+        };
+        if (includeCapabilities) {
+          const profile = buildSyntheticTierProfile(tier, models);
+          const syntheticCapabilities: OpenAiModelCapabilities = {
+            context_window: profile.contextWindow,
+            ...(profile.maxOutputTokens !== undefined
+              ? { max_output_tokens: profile.maxOutputTokens }
+              : {}),
+            input_modalities: profile.inputModalities,
+            output_modalities: profile.outputModalities,
+            ...(profile.features.length > 0 ? { features: profile.features } : {}),
+            ...(profile.supportedEndpoints && profile.supportedEndpoints.length > 0
+              ? { supported_endpoints: profile.supportedEndpoints }
+              : {}),
+          };
+          entry.capabilities = syntheticCapabilities;
+        }
+        data.push(entry);
       }
     }
 

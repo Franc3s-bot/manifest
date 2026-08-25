@@ -23,6 +23,7 @@ import { Transform, Type } from 'class-transformer';
 import { TenantCtx, TenantContext } from '../../common/decorators/tenant-context.decorator';
 import { ResolveAgentService } from '../routing-core/resolve-agent.service';
 import {
+  MAX_FALLBACKS,
   MAX_PROVIDER_KEY_LABEL_LENGTH,
   ModelRouteDto,
   SetResponseModeDto,
@@ -80,12 +81,13 @@ export class OverrideBody {
 
 export class FallbacksBody {
   @IsArray()
+  @ArrayMaxSize(MAX_FALLBACKS)
   @IsString({ each: true })
   models!: string[];
 
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(5)
+  @ArrayMaxSize(MAX_FALLBACKS)
   @ValidateNested({ each: true })
   @Type(() => ModelRouteDto)
   routes?: ModelRouteDto[];

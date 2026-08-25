@@ -223,9 +223,9 @@ describe('FallbackList', () => {
     expect(onAddFallback).toHaveBeenCalledTimes(1);
   });
 
-  it('hides add button when 5 fallbacks exist', () => {
-    const fiveFallbacks = ['m1', 'm2', 'm3', 'm4', 'm5'];
-    render(() => <FallbackList {...defaultProps} fallbacks={fiveFallbacks} />);
+  it('hides add button when 15 fallbacks exist', () => {
+    const fifteenFallbacks = Array.from({ length: 15 }, (_, i) => `m${i + 1}`);
+    render(() => <FallbackList {...defaultProps} fallbacks={fifteenFallbacks} />);
 
     expect(screen.queryByText('Add fallback')).toBeNull();
   });
@@ -408,7 +408,7 @@ describe('FallbackList', () => {
     expect(iconSpans.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows add button when fewer than 5 fallbacks', () => {
+  it('shows add button when fewer than 15 fallbacks', () => {
     render(() => <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} />);
 
     expect(screen.getByText('Add fallback')).toBeDefined();

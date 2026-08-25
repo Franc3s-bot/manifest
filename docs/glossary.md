@@ -177,6 +177,39 @@ The Counted Requests and Counted Attempts columns show how many rows the complet
 5. A Request-level Provider lens attributes each Request once to its Last Attempt's Provider. Zero-attempt Requests use the Manifest bucket. It must never count every Attempt as a separate Request.
 6. Connection and model surfaces remain Attempt-level because one Request may use several Connections or models.
 
+## Synthetic model metadata (auto-tier models)
+
+Synthetic models (`auto`, `auto-{name}` for every enabled header tier, e.g.
+`auto-standard`, `auto-complex`, `auto-vision`) are not concrete model rows:
+each one resolves to a header-tier route chain (primary override plus zero or
+more fallback routes). Because a harness caches model metadata for a session
+and drives automatic compaction from the advertised context window, Manifest
+must return ONE stable, honest number per synthetic model.
+
+`GET /v1/models?capabilities=true` aggregates the tier's route chain at
+request time (`packages/backend/src/routing/proxy/synthetic-model-profile.ts`):
+
+- **Context window** (`capabilities.context_window`): the most prevalent
+  value across the chain (the mode). Ties break toward the smaller
+  (conservative) window so compaction never over-trusts a claim a fallback
+  cannot honor.
+- **Max output tokens** (`capabilities.max_output_tokens`, when known): the
+  mode across the chain; ties break toward the larger value.
+- **Modalities / features / supported endpoints**: kept only when supported
+  by the majority (more than half) of models in the chain, so any majority
+  model can honor every advertised capability.
+
+The chain is read fresh on each `GET /v1/models` request (subject to the
+~2 minute routing-cache TTL), so a chain change is reflected on the next
+fetch. Manifest does not push metadata updates to in-flight sessions; clients
+re-fetch when they want current facts. When the chain cannot be resolved to
+any known model metadata, the fallback is the discovery default window
+(128k) with text-only modalities — a stable, conservative claim.
+
+The bare `auto` model never carries metadata: it resolves to a different
+concrete model per request based on scoring, so no single claim would be
+honest.
+
 ## Legacy naming and statuses
 
 - `agent_messages` remains the physical table for Provider Attempts. The legacy name is retained so old and new application versions can write safely during rolling deploys.

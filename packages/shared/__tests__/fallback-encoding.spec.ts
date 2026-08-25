@@ -1,5 +1,6 @@
 import {
   FALLBACK_KEY_DELIMITER,
+  MAX_FALLBACKS,
   encodeFallbackEntry,
   parseFallbackEntry,
 } from '../src/fallback-encoding';
@@ -76,5 +77,9 @@ describe('fallback-encoding', () => {
 
   it('exposes the delimiter as a public constant', () => {
     expect(FALLBACK_KEY_DELIMITER).toBe('||');
+  });
+
+  it('exposes MAX_FALLBACKS as a public constant', () => {
+    expect(MAX_FALLBACKS).toBe(15);
   });
 });

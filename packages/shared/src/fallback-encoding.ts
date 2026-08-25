@@ -14,6 +14,11 @@
  */
 export const FALLBACK_KEY_DELIMITER = '||';
 
+/**
+ * Maximum number of models allowed in a fallback chain.
+ */
+export const MAX_FALLBACKS = 15;
+
 export interface FallbackEntry {
   model: string;
   providerKeyLabel?: string;
