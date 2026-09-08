@@ -2131,6 +2131,40 @@ describe('ProxyController', () => {
       }),
     );
   });
+  it('should use x-opencode-session header when present', async () => {
+    const responseBody = { choices: [] };
+    proxyService.proxyRequest.mockResolvedValue({
+      forward: {
+        response: new Response(JSON.stringify(responseBody), { status: 200 }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      },
+      meta: {
+        tier: 'simple',
+        model: 'opencode-go/glm-5.1',
+        provider: 'OpenCode Go',
+        confidence: 0.9,
+        reason: 'scored',
+      },
+    });
+
+    const req = mockRequest({ messages: [{ role: 'user', content: 'hi' }] });
+    req.headers = { 'x-opencode-session': 'my-opencode-session' };
+    const { res } = mockResponse();
+
+    await controller.chatCompletions(req as never, res as never);
+
+    const scope = buildProxySessionScope('tenant-1', 'agent-1', 'my-opencode-session');
+    expect(proxyService.proxyRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: 'my-opencode-session',
+        sessionCacheKey: scope.cacheKey,
+        providerCacheKey: scope.providerCacheKey,
+        sessionMomentumKey: scope.momentumKey,
+      }),
+    );
+  });
 
   it('should default session key to "default" when header is absent', async () => {
     proxyService.proxyRequest.mockResolvedValue({

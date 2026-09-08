@@ -220,6 +220,84 @@ describe('ProviderClient — strict header contract on auth-critical paths', () 
     expect(sentHeaders).not.toHaveProperty('x-api-key');
     expect(sentHeaders).not.toHaveProperty('anthropic-version');
   });
+
+  it('OpenCode Go OpenAI-compatible path sends Authorization Bearer and x-opencode-session', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-go',
+      apiKey: 'og-token',
+      model: 'opencode-go/glm-5.1',
+      body,
+      stream: false,
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders).toEqual({
+      Authorization: 'Bearer og-token',
+      'Content-Type': 'application/json',
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+    expect(sentHeaders).not.toHaveProperty('x-api-key');
+  });
+
+  it('OpenCode Go Anthropic-compatible path sends x-api-key and x-opencode-session', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-go',
+      apiKey: 'og-token',
+      model: 'opencode-go/minimax-m2.7',
+      body,
+      stream: false,
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders).toEqual({
+      'x-api-key': 'og-token',
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+    expect(sentHeaders).not.toHaveProperty('Authorization');
+  });
+
+  it('OpenCode Zen sends Authorization Bearer and x-opencode-session', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-zen',
+      apiKey: 'zen-token',
+      model: 'opencode-zen/big-pickle',
+      body,
+      stream: false,
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders).toEqual({
+      Authorization: 'Bearer zen-token',
+      'Content-Type': 'application/json',
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+  });
+
+  it('OpenCode preserves caller-supplied x-opencode-session in extraHeaders', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-go',
+      apiKey: 'og-token',
+      model: 'opencode-go/glm-5.1',
+      body,
+      stream: false,
+      extraHeaders: {
+        'x-opencode-session': 'custom-session-id-456',
+      },
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders['x-opencode-session']).toBe('custom-session-id-456');
+  });
 });
 
 describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)', () => {
