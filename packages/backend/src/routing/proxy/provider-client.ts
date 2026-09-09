@@ -178,6 +178,13 @@ function buildPromptCacheKey(sessionKey: string): string {
   return `manifest-${digest}`;
 }
 
+function isOpenCode(endpointKey: string, provider: string): boolean {
+  return (
+    endpointKey.startsWith('opencode-') ||
+    provider.toLowerCase().startsWith('opencode')
+  );
+}
+
 function applyHashedPromptCacheKey(
   body: Record<string, unknown>,
   providerCacheKey: string | undefined,
@@ -398,8 +405,16 @@ export class ProviderClient {
         : undefined;
     // Affinity headers are routing-critical and must win over caller-supplied
     // extraHeaders (provider-side observability hints), so they spread last.
-    const finalHeaders =
-      affinity || extraHeaders ? { ...headers, ...extraHeaders, ...affinity?.headers } : headers;
+    const finalHeaders: Record<string, string> =
+      affinity || extraHeaders ? { ...headers, ...extraHeaders, ...affinity?.headers } : { ...headers };
+
+    // OpenCode Go and OpenCode Zen require an x-opencode-session header on all requests
+    // to route to the appropriate backend provider and maintain prompt-cache affinity.
+    if (isOpenCode(endpointKey, provider) && !finalHeaders['x-opencode-session']) {
+      finalHeaders['x-opencode-session'] = buildPromptCacheKey(
+        opts.providerCacheKey ?? opts.sessionKey ?? 'default',
+      );
+    }
 
     const retryWireBody = async (
       wireRequestBody: Record<string, unknown>,

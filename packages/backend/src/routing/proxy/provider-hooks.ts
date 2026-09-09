@@ -43,6 +43,11 @@ const PROVIDER_EXTRA_HEADER_BUILDERS: Record<
   xai: (sessionKey) => ({ 'x-grok-conv-id': sessionKey }),
   openrouter: (sessionKey) =>
     sessionKey === 'default' ? undefined : { 'x-session-id': sessionKey },
+  'opencode-go': (sessionKey) => ({ 'x-opencode-session': sessionKey }),
+  'opencode-zen': (sessionKey) => ({ 'x-opencode-session': sessionKey }),
+  opencode: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
+  opencodego: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
+  opencodezen: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
 };
 
 export function buildProviderExtraHeaders(

@@ -275,7 +275,11 @@ export class ProxyController {
   ): Promise<void> {
     const { agentId, tenantId } = req.ingestionContext;
     const body = req.body as Record<string, unknown>;
-    const sessionScope = buildProxySessionScope(tenantId, agentId, req.headers['x-session-key']);
+    const sessionHeader =
+      req.headers['x-session-key'] ??
+      req.headers['x-opencode-session'] ??
+      req.headers['x-session-id'];
+    const sessionScope = buildProxySessionScope(tenantId, agentId, sessionHeader);
     const { sessionKey } = sessionScope;
     const traceId = this.extractTraceId(req);
     const requestId = uuid();
@@ -888,10 +892,14 @@ export class ProxyController {
   }
 
   private extractSessionKey(req: Request & { ingestionContext: IngestionContext }): string {
+    const sessionHeader =
+      req.headers['x-session-key'] ??
+      req.headers['x-opencode-session'] ??
+      req.headers['x-session-id'];
     return buildProxySessionScope(
       req.ingestionContext.tenantId,
       req.ingestionContext.agentId,
-      req.headers['x-session-key'],
+      sessionHeader,
     ).sessionKey;
   }
 

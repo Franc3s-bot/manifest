@@ -958,14 +958,30 @@ describe('buildProviderExtraHeaders', () => {
     );
   });
 
+  it('returns x-opencode-session for opencode-go and opencode-zen', () => {
+    expect(buildProviderExtraHeaders('opencode-go', 'sess-abc')).toEqual({
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+    expect(buildProviderExtraHeaders('opencode-zen', 'sess-abc')).toEqual({
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+    expect(buildProviderExtraHeaders('opencode', 'sess-abc')).toEqual({
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+  });
+
   it('does not create provider headers without an explicit cache key', () => {
     expect(buildProviderExtraHeaders('xai')).toBeUndefined();
     expect(buildProviderExtraHeaders('openrouter')).toBeUndefined();
+    expect(buildProviderExtraHeaders('opencode-go')).toBeUndefined();
   });
 
   it('is case-insensitive for provider name', () => {
     expect(buildProviderExtraHeaders('OpenRouter', 'sess-xyz')).toEqual({
       'x-session-id': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
+    });
+    expect(buildProviderExtraHeaders('OpenCode-Go', 'sess-xyz')).toEqual({
+      'x-opencode-session': expect.stringMatching(/^manifest-[a-f0-9]{32}$/),
     });
   });
 
