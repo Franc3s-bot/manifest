@@ -181,6 +181,7 @@ export const routingCustom = {
       [model, ...fallbackModels],
       Boolean(args.booleans['force']),
       provider,
+      args.strings['auth-type'] ?? 'api_key',
     );
     const routeModel = normalized[0];
     const normalizedFallbacks = normalized.slice(1);

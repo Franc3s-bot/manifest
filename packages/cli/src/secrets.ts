@@ -38,7 +38,21 @@ export function validateKeyFileDestination(keyFile: string): string {
 export function writeKeyFile(absolutePath: string, secret: string): void {
   // `wx` fails instead of following/overwriting a path that appeared (or was
   // swapped) after validation, so the fresh key can never clobber a file.
-  fs.writeFileSync(absolutePath, secret, { mode: 0o600, flag: 'wx' });
+  try {
+    fs.writeFileSync(absolutePath, secret, { mode: 0o600, flag: 'wx' });
+  } catch (error) {
+    // The file appeared between validation and now — the expected `wx` collision
+    // is a normal user error, not an internal CLI bug. Check `code` directly:
+    // the fs error can come from another realm, where `instanceof Error` is false.
+    if ((error as NodeJS.ErrnoException | undefined)?.code === 'EEXIST') {
+      throw new CliError(
+        'key_file_exists',
+        `Refusing to overwrite existing file: ${absolutePath}`,
+        'Pass a different --key-file path',
+      );
+    }
+    throw error;
+  }
 }
 
 export function keyPrefixOf(secret: string): string {

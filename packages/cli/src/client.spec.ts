@@ -44,6 +44,22 @@ describe('ApiClient', () => {
     expect(await client.request('GET', '/x')).toBeNull();
   });
 
+  it('refuses a redirect with one request instead of following it', async () => {
+    const stub = fetchStub([{ status: 302, body: {} }]);
+    const client = new ApiClient({
+      origin: 'https://app.manifest.build',
+      apiKey: 'secret-key',
+      fetchImpl: stub.impl,
+    });
+    await expect(client.request('GET', '/me')).rejects.toMatchObject({
+      code: 'redirect_not_allowed',
+      status: 302,
+    });
+    // Exactly one request, to the configured origin: the key never follows.
+    expect(stub.calls).toHaveLength(1);
+    expect(stub.calls[0].headers['X-API-Key']).toBe('secret-key');
+  });
+
   it('maps Nest error bodies onto the stable CliError shape', async () => {
     const { client } = makeClient([
       {

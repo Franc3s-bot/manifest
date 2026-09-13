@@ -48,9 +48,9 @@ export function loadConfig(filePath: string): CliConfig {
   } catch {
     return {};
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as CliConfig;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    parsed = JSON.parse(raw);
   } catch {
     throw new CliError(
       'config_corrupt',
@@ -58,6 +58,16 @@ export function loadConfig(filePath: string): CliConfig {
       'Fix or delete the file, then run mnfst login again',
     );
   }
+  // An array parses as an object but cannot hold hosts/apiKey, so returning it
+  // (or {}) would silently drop the stored credential.
+  if (Array.isArray(parsed)) {
+    throw new CliError(
+      'config_corrupt',
+      `Invalid config shape (expected an object) in ${filePath}`,
+      'Fix or delete the file, then run mnfst login again',
+    );
+  }
+  return typeof parsed === 'object' && parsed !== null ? (parsed as CliConfig) : {};
 }
 
 export function saveConfig(filePath: string, config: CliConfig): void {

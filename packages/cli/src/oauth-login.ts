@@ -156,7 +156,9 @@ export async function browserLogin(
   }
   let parsed: Record<string, unknown> = {};
   try {
-    parsed = JSON.parse(text) as Record<string, unknown>;
+    const value: unknown = JSON.parse(text);
+    // A JSON `null` or primitive would make the property reads below throw.
+    if (typeof value === 'object' && value !== null) parsed = value as Record<string, unknown>;
   } catch {
     /* non-JSON body → fall through to generic error */
   }

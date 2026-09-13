@@ -47,6 +47,7 @@ export async function assertModelsDiscovered(
   models: readonly string[],
   force: boolean,
   provider?: string,
+  authType?: string,
 ): Promise<string[]> {
   if (force || models.length === 0) return [...models];
   const rows = await discoveredModels(client, agent);
@@ -60,6 +61,7 @@ export async function assertModelsDiscovered(
     }
   }
   const rowsCarryProvider = rows.some((r) => r.provider !== undefined);
+  const rowsCarryAuthType = rows.some((r) => r.authType !== undefined);
   const enforceProvider = providerId !== null && rowsCarryProvider;
   const names = new Set(rows.map((r) => r.model));
 
@@ -74,6 +76,7 @@ export async function assertModelsDiscovered(
 
   const missing: string[] = [];
   const ambiguous: string[] = [];
+  const authTypeMismatch: Array<{ model: string; discovered: string[] }> = [];
   // The discovered spelling to write for each model (bare id normally, or the
   // provider-qualified form when that is what discovery actually exposes), so
   // the backend's exact-id fallback matching accepts it.
@@ -83,9 +86,31 @@ export async function assertModelsDiscovered(
     if (enforceProvider && providerId !== null && index === 0) {
       const pid = providerId;
       const qualified = m.startsWith(`${pid}/`) ? m.slice(pid.length + 1) : m;
-      const hit = rows.find((r) => r.provider === pid && (r.model === m || r.model === qualified));
+      // The requested auth type must be the one that discovered the primary, or
+      // the written (provider, authType, model) route is unroutable.
+      const hit = rows.find(
+        (r) =>
+          r.provider === pid &&
+          (r.model === m || r.model === qualified) &&
+          (authType === undefined ||
+            !rowsCarryAuthType ||
+            (r.authType ?? 'api_key') === authType),
+      );
       if (!hit) {
-        missing.push(m);
+        // The model may exist under a different auth type; name that instead of
+        // reporting it as undiscovered and pointing at --force.
+        const discovered = [
+          ...new Set(
+            rows
+              .filter((r) => r.provider === pid && (r.model === m || r.model === qualified))
+              .map((r) => r.authType ?? 'api_key'),
+          ),
+        ];
+        if (discovered.length > 0 && authType !== undefined && rowsCarryAuthType) {
+          authTypeMismatch.push({ model: m, discovered });
+        } else {
+          missing.push(m);
+        }
       } else {
         normalized[index] = hit.model;
       }
@@ -93,6 +118,28 @@ export async function assertModelsDiscovered(
     }
     // Without provider identity there is nothing to disambiguate: name-only.
     if (!enforceProvider) {
+      if (index === 0 && authType !== undefined && rowsCarryAuthType) {
+        // A custom provider resolves no catalog id, but the requested auth type
+        // must still match what discovered the primary. Scope to the requested
+        // provider so a same-named model under another provider cannot raise a
+        // false mismatch or supply the wrong --auth-type hint.
+        const providerFilter = providerId ?? provider;
+        const scoped = rows.filter(
+          (r) =>
+            (r.model === m || r.model === bareOf(m)) &&
+            // Treat a row with no provider as matching: some discovery payloads
+            // carry auth_type but omit provider, and excluding them would let
+            // the mismatch through unchecked.
+            (providerFilter === undefined ||
+              r.provider === undefined ||
+              r.provider === providerFilter),
+        );
+        const discovered = [...new Set(scoped.map((r) => r.authType ?? 'api_key'))];
+        if (discovered.length > 0 && !discovered.includes(authType)) {
+          authTypeMismatch.push({ model: m, discovered });
+          return;
+        }
+      }
       if (!names.has(m)) missing.push(m);
       return;
     }
@@ -119,6 +166,14 @@ export async function assertModelsDiscovered(
     missing.push(m);
   });
 
+  if (authTypeMismatch.length > 0) {
+    const [{ model, discovered }] = authTypeMismatch;
+    throw new CliError(
+      'auth_type_mismatch',
+      `Model "${model}" is discovered under auth type ${discovered.join(', ')}, not "${authType}"`,
+      `Pass --auth-type ${discovered[0]}`,
+    );
+  }
   if (ambiguous.length > 0) {
     throw new CliError(
       'ambiguous_model',

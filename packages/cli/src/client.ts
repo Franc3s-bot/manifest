@@ -35,6 +35,11 @@ export class ApiClient {
     try {
       const response = await this.opts.fetchImpl(url.toString(), {
         method,
+        // `manual` makes a redirect a response, not a follow: the Fetch spec
+        // strips Authorization/Cookie on cross-origin hops but leaves custom
+        // headers, so X-API-Key would follow to another origin. The 3xx is
+        // rejected below with a message that names the redirect.
+        redirect: 'manual',
         headers: {
           'X-API-Key': this.opts.apiKey,
           'User-Agent': `mnfst-cli/${VERSION}`,
@@ -43,6 +48,14 @@ export class ApiClient {
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
         signal: controller.signal,
       });
+      if (response.status >= 300 && response.status < 400) {
+        throw new CliError(
+          'redirect_not_allowed',
+          `The server redirected ${method} ${url.pathname} (HTTP ${response.status})`,
+          'Manifest does not follow API redirects; point --url at the final origin',
+          response.status,
+        );
+      }
       // Read the body inside the abort scope too: a server that sends headers
       // then stalls would otherwise hang forever after the timer was cleared.
       const text = await response.text();

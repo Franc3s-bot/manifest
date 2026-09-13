@@ -133,6 +133,24 @@ describe('browserLogin', () => {
     );
   });
 
+  it('reports login_failed when the exchange returns a JSON null body', async () => {
+    const exchange = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => 'null',
+    });
+    const io = makeIo(
+      exchange as unknown as typeof fetch,
+      fakeBrowser(
+        (u) =>
+          `http://127.0.0.1:${u.searchParams.get('port')}/callback?code=code-abcdefghijklmnop&state=${u.searchParams.get('state')}`,
+      ),
+    );
+    await expect(browserLogin(io, 'http://localhost:3001')).rejects.toMatchObject({
+      code: 'login_failed',
+    });
+  });
+
   it('returns a null expiresAt when the server omits it', async () => {
     const exchange = jest.fn().mockResolvedValue({
       ok: true,

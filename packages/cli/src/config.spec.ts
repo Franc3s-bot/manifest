@@ -75,6 +75,15 @@ describe('loadConfig / saveConfig', () => {
     expect(() => loadConfig(file)).toThrow('Could not parse');
     fs.writeFileSync(file, 'null');
     expect(loadConfig(file)).toEqual({});
+    // A JSON array cannot hold config keys: it is reported, not silently dropped.
+    fs.writeFileSync(file, '[]');
+    let error: unknown;
+    try {
+      loadConfig(file);
+    } catch (e) {
+      error = e;
+    }
+    expect((error as CliError).code).toBe('config_corrupt');
   });
 });
 

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { keyPrefixOf, readCredential, validateKeyFileDestination, writeKeyFile } from './secrets';
+import { CliError } from './errors';
 import { makeIo } from '../test/helpers';
 
 describe('key files', () => {
@@ -37,7 +38,14 @@ describe('key files', () => {
     validateKeyFileDestination(target);
     // Another process creates the file between validation and write.
     fs.writeFileSync(target, 'someone-else');
-    expect(() => writeKeyFile(target, 'mnfst_super_secret')).toThrow();
+    let error: unknown;
+    try {
+      writeKeyFile(target, 'mnfst_super_secret');
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe('key_file_exists');
     expect(fs.readFileSync(target, 'utf8')).toBe('someone-else');
   });
 

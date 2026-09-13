@@ -83,12 +83,37 @@ describe('runCmd', () => {
     await expect(runCmd(io, ['--agent', 'my-bot', '--', 'failing-tool'])).resolves.toBe(42);
   });
 
+  it('strips inherited MANIFEST_AGENT_KEY and variant-case credentials', async () => {
+    let env: Record<string, string | undefined> = {};
+    const { io } = authedIo([], async (_c, _a, e) => {
+      env = e;
+      return 0;
+    });
+    io.env['MANIFEST_AGENT_KEY'] = 'stale-parent-key';
+    io.env['manifest_api_key'] = 'lower-case-patched';
+    saveAgentKey(io.env, HOST, 'my-bot', 'fresh');
+    await runCmd(io, ['--agent', 'my-bot', '--env', 'ROLE_KEY', '--', 'tool']);
+    expect(env['ROLE_KEY']).toBe('fresh');
+    expect(env['MANIFEST_AGENT_KEY']).toBeUndefined();
+    expect(env['manifest_api_key']).toBeUndefined();
+  });
+
   it('requires the -- separator and a command', async () => {
     const { io } = authedIo([]);
     await expect(runCmd(io, ['--agent', 'my-bot', 'tool'])).rejects.toThrow(CliError);
     await expect(runCmd(io, ['--agent', 'my-bot', '--'])).rejects.toThrow(
       expect.objectContaining({ code: 'missing_command' }),
     );
+  });
+
+  it('rejects a reserved --env name', async () => {
+    const { io } = authedIo([]);
+    saveAgentKey(io.env, HOST, 'my-bot', 'k');
+    for (const name of ['MANIFEST_API_KEY', 'manifest_agent_key', 'MANIFEST_AGENT_URL']) {
+      await expect(
+        runCmd(io, ['--agent', 'my-bot', '--env', name, '--', 'tool']),
+      ).rejects.toThrow(expect.objectContaining({ code: 'invalid_env_name' }));
+    }
   });
 
   it('rejects an invalid --env variable name', async () => {

@@ -75,17 +75,19 @@ export async function agentConfigure(io: CliIo, argv: string[]): Promise<void> {
       throw new CliError('missing_flag', '--models must be a comma-separated list of model ids');
     }
     const provider = requireString(args, 'provider');
+    const authType = args.strings['auth-type'] ?? 'api_key';
     const normalized = await assertModelsDiscovered(
       client,
       agent,
       models,
       Boolean(args.booleans['force']),
       provider,
+      authType,
     );
     const route = {
       model: normalized[0],
       provider,
-      authType: args.strings['auth-type'] ?? 'api_key',
+      authType,
       ...(args.strings['key-label'] ? { providerKeyLabel: args.strings['key-label'] } : {}),
     };
     const fallbacks = normalized.slice(1);
