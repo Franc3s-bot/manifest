@@ -5,6 +5,8 @@ import type { AuthType, ModelRoute } from 'manifest-shared';
 import { applyRequestParamDefaults } from 'manifest-shared';
 import { AgentModelParamsService } from '../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../routing-core/provider-param-spec.service';
+import { AutofixService, type AutofixAttempt } from '../autofix/autofix.service';
+import { getAutofixRetry, type AutofixRecord } from '../autofix/autofix.types';
 
 /**
  * Context for the per-attempt param-defaults merge. Carries the agentId so
@@ -128,6 +130,13 @@ export interface FailedFallback {
   attempt?: ProviderAttemptRef;
   /** False when the route was rejected locally (for example by a cooldown). */
   providerCallStarted?: boolean;
+  /**
+   * Autofix audit for this hop when Phoenix was consulted. Stamped onto the
+   * failed hop's row so a recovered fallback keeps its Phoenix decision.
+   */
+  autofix?: AutofixRecord;
+  /** Which side of the Autofix retry pair this row is. Defaults to `original`. */
+  autofixRole?: 'original' | 'retry';
 }
 
 @Injectable()
@@ -151,6 +160,7 @@ export class ProxyFallbackService {
     private readonly modelParamsService: AgentModelParamsService,
     private readonly providerParamSpecs: ProviderParamSpecService,
     private readonly reasoningCache: ReasoningContentCache,
+    private readonly autofixService: AutofixService,
   ) {}
 
   /**
@@ -213,6 +223,8 @@ export class ProxyFallbackService {
       authType?: AuthType;
       keyLabel?: string;
       tenantProviderId: string | null;
+      /** Phoenix audit when this hop was recovered by Autofix. */
+      autofix?: AutofixRecord;
     } | null;
     failures: FailedFallback[];
   }> {
@@ -337,10 +349,70 @@ export class ProxyFallbackService {
         startProviderAttempt,
       });
 
-      if (forward.response.ok) {
+      // Autofix runs on a failed fallback hop too, not just the primary: a
+      // fallback that rejects a request-side param (e.g. an unsupported
+      // response_format) can carry its own Phoenix patch, and retrying it on
+      // this same transport recovers the request instead of recording a dead
+      // hop. Consent is enforced inside maybeHeal, exactly like the primary.
+      let autofixAttempt: AutofixAttempt | null = null;
+      let preHealErrorBody: string | null = null;
+      const fallbackApiMode = forward.wireApiMode ?? apiMode;
+      if (
+        !forward.response.ok &&
+        this.autofixService.isRepairable(forward.response.status) &&
+        forward.wireRequestBody &&
+        forward.retryWireBody &&
+        fallbackApiMode
+      ) {
+        // Keep the failed body readable for the audit row if the patch heals —
+        // maybeHeal consumes the live response.
+        preHealErrorBody = await forward.response.clone().text();
+        autofixAttempt = await this.maybeHealFallback({
+          forward,
+          requestBody: forward.wireRequestBody,
+          apiMode: fallbackApiMode,
+          agentId,
+          tenantId,
+          provider,
+          model,
+          authType,
+          tenantProviderId,
+          providerKeyLabel,
+          signal,
+          startProviderAttempt,
+        });
+      }
+      const finalForward = autofixAttempt?.forward ?? forward;
+      // A retry is sent only when Phoenix handed back a patch. When one was
+      // sent, the original hop is a distinct provider attempt that needs its own
+      // terminal row; otherwise finalForward IS the original.
+      const retrySent = autofixAttempt
+        ? getAutofixRetry(autofixAttempt.record) !== undefined
+        : false;
+      const originalFailure = (): FailedFallback => ({
+        model,
+        provider,
+        fallbackIndex: i,
+        status: forward.response.status,
+        errorBody: preHealErrorBody!,
+        authType,
+        tenantProviderId,
+        // Selected-row label (credentials.keyLabel already folded in above),
+        // so this row's label and tenant_provider_id name the same connection.
+        keyLabel: providerKeyLabel,
+        attempt: forward.attempt,
+        providerCallStarted: forward.providerCallStarted,
+        autofix: autofixAttempt?.record,
+        autofixRole: 'original',
+      });
+
+      if (finalForward.response.ok) {
+        // The hop that failed first is still recorded when Autofix recovers it,
+        // so a healed fallback keeps the same audit trail as a healed primary.
+        if (retrySent) failures.push(originalFailure());
         return {
           success: {
-            forward,
+            forward: finalForward,
             model,
             provider,
             fallbackIndex: i,
@@ -349,26 +421,35 @@ export class ProxyFallbackService {
             // alongside its tenant_provider_id so the pair always matches.
             keyLabel: providerKeyLabel,
             tenantProviderId,
+            // Fallback's own Phoenix audit, threaded to the recorder so a healed
+            // fallback hop carries the same metadata as a healed primary.
+            autofix: retrySent ? autofixAttempt?.record : undefined,
           },
           failures,
         };
       }
 
-      const errorBody = await forward.response.text();
-      await forward.attempt?.finishRecording?.(recordingResponseFromText(errorBody));
+      const errorBody = await finalForward.response.text();
+      await finalForward.attempt?.finishRecording?.(recordingResponseFromText(errorBody));
+      // A failed patched retry is a second provider attempt: record the original
+      // hop too, so Autofix never leaves it dangling `pending`.
+      if (retrySent) failures.push(originalFailure());
       failures.push({
         model,
         provider,
         fallbackIndex: i,
-        status: forward.response.status,
+        status: finalForward.response.status,
         errorBody,
         authType,
         tenantProviderId,
         // Selected-row label (credentials.keyLabel already folded in above),
         // so this row's label and tenant_provider_id name the same connection.
         keyLabel: providerKeyLabel,
-        attempt: forward.attempt,
-        providerCallStarted: forward.providerCallStarted,
+        attempt: finalForward.attempt,
+        providerCallStarted: finalForward.providerCallStarted,
+        ...(autofixAttempt
+          ? { autofix: autofixAttempt.record, autofixRole: retrySent ? 'retry' : 'original' }
+          : {}),
       });
 
       const existing = failedAuthByProvider.get(provider.toLowerCase());
@@ -379,6 +460,56 @@ export class ProxyFallbackService {
       if (!shouldTriggerFallback(forward.response.status)) break;
     }
     return { success: null, failures };
+  }
+
+  /**
+   * Heal a failed fallback hop before giving up on it. Phoenix patches are
+   * scoped per provider/model, so a fallback model with its own known issue can
+   * be recovered even when the primary could not. The patched body is resent
+   * through the SAME fallback transport (`retryWireBody`) rather than
+   * re-resolved against the full routing chain: the fallback is already the
+   * deliberate alternative route, and hopping back to the primary here would
+   * undo that.
+   *
+   * Returns null when Autofix declines (off for the agent, non-repairable status,
+   * no patch) — callers then keep the original failure. The caller has already
+   * established that the forward carries a wire body and a retry hook.
+   */
+  private async maybeHealFallback(input: {
+    forward: ForwardResult;
+    requestBody: Record<string, unknown>;
+    apiMode: ProxyApiMode;
+    agentId: string;
+    tenantId: string;
+    provider: string;
+    model: string;
+    authType: AuthType;
+    tenantProviderId: string | null;
+    providerKeyLabel?: string;
+    signal?: AbortSignal;
+    startProviderAttempt?: StartProviderAttempt;
+  }): Promise<AutofixAttempt | null> {
+    return this.autofixService.maybeHeal({
+      forward: input.forward,
+      agentId: input.agentId,
+      tenantId: input.tenantId,
+      provider: input.provider,
+      model: input.model,
+      authType: input.authType,
+      apiMode: input.apiMode,
+      requestBody: input.requestBody,
+      reforward: (healedBody) =>
+        this.retryWireBody(input.forward, healedBody, {
+          provider: input.provider,
+          model: input.model,
+          authType: input.authType,
+          agentId: input.agentId,
+          tenantProviderId: input.tenantProviderId,
+          providerKeyLabel: input.providerKeyLabel,
+          startProviderAttempt: input.startProviderAttempt,
+          signal: input.signal,
+        }),
+    });
   }
 
   private routeCredentialDeps(): RouteCredentialDeps {
@@ -436,6 +567,7 @@ export class ProxyFallbackService {
       | 'provider'
       | 'model'
       | 'authType'
+      | 'agentId'
       | 'tenantProviderId'
       | 'providerKeyLabel'
       | 'startProviderAttempt'
@@ -456,6 +588,19 @@ export class ProxyFallbackService {
     try {
       const retried = await forward.retryWireBody(healedBody, attempt);
       if (attempt) attempt.completedAtMs = Date.now();
+      // A healed retry can itself be rate-limited. Record the cooldown so the
+      // next attempt on this route skips it, exactly as tryForwardToProvider
+      // does for a first attempt.
+      this.recordRateLimitCooldownForKey(
+        this.rateLimitCooldownKey({
+          agentId: opts.agentId,
+          authType: opts.authType,
+          provider: opts.provider,
+          providerKeyLabel: opts.providerKeyLabel,
+          model: opts.model,
+        }),
+        retried.response,
+      );
       return { ...retried, attempt, providerCallStarted: true };
     } catch (error) {
       if (attempt) attempt.completedAtMs = Date.now();
@@ -526,9 +671,11 @@ export class ProxyFallbackService {
   }
 
   private recordRateLimitCooldown(opts: ForwardProviderOptions, response: Response): void {
-    if (response.status !== 429) return;
-    const key = this.rateLimitCooldownKey(opts);
-    if (!key) return;
+    this.recordRateLimitCooldownForKey(this.rateLimitCooldownKey(opts), response);
+  }
+
+  private recordRateLimitCooldownForKey(key: string | null, response: Response): void {
+    if (response.status !== 429 || !key) return;
     if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
       this.evictExpiredRateLimitCooldowns();
       if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
@@ -573,7 +720,13 @@ export class ProxyFallbackService {
     return Math.min(deltaMs, RATE_LIMIT_COOLDOWN_MAX_MS);
   }
 
-  private rateLimitCooldownKey(opts: ForwardProviderOptions): string | null {
+  private rateLimitCooldownKey(opts: {
+    agentId?: string;
+    authType?: string;
+    provider: string;
+    providerKeyLabel?: string;
+    model: string;
+  }): string | null {
     if (!opts.agentId || !opts.authType) return null;
     return [
       opts.agentId,

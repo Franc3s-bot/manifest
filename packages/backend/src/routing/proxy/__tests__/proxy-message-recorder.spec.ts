@@ -321,6 +321,63 @@ describe('ProxyMessageRecorder', () => {
       });
     });
 
+    it('stamps the Autofix retry columns when the fallback hop was healed', async () => {
+      await recorder.recordFallbackSuccess(ctx, 'deepseek-flash', 'standard', {
+        fallbackFromModel: 'gpt-4o',
+        fallbackIndex: 0,
+        timestamp: new Date().toISOString(),
+        authType: 'api_key',
+        fallbackAutofix: {
+          groupId: 'group-1',
+          outcome: 'healed',
+          original_http_status: 400,
+          chain: [
+            {
+              attempt: 0,
+              origin: 'original',
+              request: {},
+              http_status: 400,
+              issue_id: 'issue-1',
+              patch_id: 'patch-1',
+              operations: [{ type: 'drop_param' }],
+            },
+            { attempt: 1, origin: 'autofix', request: {}, http_status: 200 },
+          ],
+        },
+      });
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        autofix_applied: true,
+        autofix_group_id: 'group-1',
+        autofix_role: 'retry',
+      });
+    });
+
+    it('does not stamp the primary Autofix record on an ordinary fallback success', async () => {
+      // Regression: a failed primary Autofix that later fell back must not leak
+      // its retry metadata onto the winning fallback's row.
+      await recorder.recordFallbackSuccess(ctx, 'gpt-4o', 'standard', {
+        fallbackFromModel: 'claude-opus',
+        fallbackIndex: 0,
+        timestamp: new Date().toISOString(),
+        authType: 'api_key',
+        autofix: {
+          groupId: 'primary-group',
+          outcome: 'exhausted',
+          original_http_status: 400,
+          chain: [
+            { attempt: 0, origin: 'original', request: {}, http_status: 400 },
+            { attempt: 1, origin: 'autofix', request: {}, http_status: 400 },
+          ],
+        },
+      });
+
+      const row = insertMock.mock.calls[0][0] as Record<string, unknown>;
+      expect(row.autofix_applied).toBeUndefined();
+      expect(row.autofix_group_id).toBeUndefined();
+      expect(row.autofix_role).toBeUndefined();
+    });
+
     it('inserts when only prompt_tokens is non-zero', async () => {
       await recorder.recordFallbackSuccess(ctx, 'gpt-4o', 'standard', {
         traceId: 'trace-1',

@@ -900,6 +900,12 @@ export function recordSuccess(
   requestId: string = uuid(),
   attemptNumber: number = currentPrimaryAttemptNumber(autofix),
   apiMode?: ProxyApiMode,
+  /**
+   * Autofix audit of the winning fallback hop. When set, the fallback-success
+   * row is stamped with the fallback's Phoenix metadata (role `retry`) instead
+   * of the primary's record.
+   */
+  fallbackAutofix?: AutofixRecord,
 ): void {
   if (meta.fallbackFromModel && fallbackSuccessTs) {
     const requestDurationMs = startTime == null ? undefined : Date.now() - startTime;
@@ -925,7 +931,11 @@ export function recordSuccess(
         headerTierId: meta.header_tier_id,
         headerTierName: meta.header_tier_name,
         headerTierColor: meta.header_tier_color,
+        // `autofix` is the primary's record (request-level status); the winning
+        // fallback's own record is passed separately so only it can stamp the
+        // fallback-success row.
         autofix,
+        fallbackAutofix,
         apiMode,
       }),
       'fallback success',

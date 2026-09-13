@@ -178,6 +178,12 @@ export interface ProxyResult {
   failedFallbacks?: FailedFallback[];
   /** Autofix audit when a repairable failure was sent to the healing service. */
   autofix?: AutofixRecord;
+  /**
+   * Autofix audit for the winning fallback hop. Separate from {@link autofix}
+   * (which is the primary's) so a recovered fallback's Phoenix metadata is
+   * recorded without overwriting the primary's attribution.
+   */
+  fallbackAutofix?: AutofixRecord;
 }
 
 /** Everything Autofix's reforward needs to re-send a healed body to a provider. */
@@ -741,6 +747,7 @@ export class ProxyService {
       model: ctx.model,
       signal: ctx.signal,
       authType: ctx.authType,
+      agentId: ctx.agentId,
       tenantProviderId: ctx.tenantProviderId,
       providerKeyLabel: ctx.keyLabel,
       startProviderAttempt: ctx.startProviderAttempt,
@@ -1288,6 +1295,7 @@ export class ProxyService {
           request_params: fallbackRequestParams,
         }),
         failedFallbacks: failures,
+        fallbackAutofix: success.autofix,
       };
     }
 

@@ -128,10 +128,12 @@ just receives an `autofix_chain` alongside `forward`/`meta` and threads it into
 recording. Because `proxyRequest()` returns before the controller streams, we're
 always in the "pre-first-byte" zone — the streaming-safety constraint is automatic.
 
-**Re-send mechanism:** each heal attempt re-resolves the route for the patched body
-(so an unknown-model → known-model fix actually changes provider/model) and forwards
-to the **primary** only. The fallback chain is deliberately _not_ run per-attempt —
-it's the single safety net after Autofix gives up.
+**Re-send mechanism:** a primary heal attempt re-resolves the route for the patched
+body (so an unknown-model → known-model fix actually changes provider/model) and
+forwards to the **primary** only. Autofix also runs on each failed **fallback** hop
+inside the fallback chain, retrying the patched body on that hop's own transport
+(no re-resolve — the fallback is already the deliberate alternative route). The
+fallback chain remains the safety net once every hop's Autofix has given up.
 
 ---
 

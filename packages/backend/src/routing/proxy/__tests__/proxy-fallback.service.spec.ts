@@ -15,6 +15,7 @@ import { ReasoningContentCache } from '../reasoning-content-cache';
 import { ModelPricingCacheService } from '../../../model-prices/model-pricing-cache.service';
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
+import { AutofixService } from '../../autofix/autofix.service';
 import { getProviderParamSpecs, type ProviderParamSpecCatalog } from 'manifest-shared';
 
 const specCatalog: ProviderParamSpecCatalog = [
@@ -52,6 +53,7 @@ describe('ProxyFallbackService', () => {
   let modelParamsService: jest.Mocked<AgentModelParamsService>;
   let providerParamSpecs: jest.Mocked<ProviderParamSpecService>;
   let reasoningCache: jest.Mocked<Pick<ReasoningContentCache, 'prepareRequest'>>;
+  let autofixService: jest.Mocked<AutofixService>;
 
   beforeEach(() => {
     providerKeyService = {
@@ -171,6 +173,11 @@ describe('ProxyFallbackService', () => {
       ),
     };
 
+    autofixService = {
+      isRepairable: jest.fn().mockReturnValue(false),
+      maybeHeal: jest.fn().mockResolvedValue(null),
+    } as unknown as jest.Mocked<AutofixService>;
+
     service = new ProxyFallbackService(
       providerKeyService,
       customProviderRepo,
@@ -186,6 +193,7 @@ describe('ProxyFallbackService', () => {
       modelParamsService,
       providerParamSpecs,
       reasoningCache as unknown as ReasoningContentCache,
+      autofixService,
     );
   });
 
@@ -1471,6 +1479,55 @@ describe('ProxyFallbackService', () => {
       expect(attempt).toEqual(expect.objectContaining({ completedAtMs: expect.any(Number) }));
       expect(providerClient.forward).not.toHaveBeenCalled();
     });
+
+    it('records a route cooldown when the healed retry is rate-limited', async () => {
+      const retryWireBody = jest.fn().mockResolvedValue({
+        response: new Response('rate limited', {
+          status: 429,
+          headers: { 'retry-after': '30' },
+        }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      });
+      const original = {
+        response: new Response('{}', { status: 400 }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+        retryWireBody,
+      };
+
+      await service.retryWireBody(
+        original,
+        { model: 'gpt-4o' },
+        {
+          provider: 'openai',
+          model: 'gpt-4o',
+          authType: 'api_key',
+          agentId: 'agent-1',
+          providerKeyLabel: 'Work',
+        },
+      );
+
+      // The next attempt on the same route must honor the cooldown instead of
+      // hammering a provider that just rate-limited the healed retry.
+      const next = await service.tryForwardToProvider({
+        provider: 'openai',
+        apiKey: 'sk-test',
+        model: 'gpt-4o',
+        body,
+        stream: false,
+        sessionKey: 'sess-1',
+        authType: 'api_key',
+        agentId: 'agent-1',
+        providerKeyLabel: 'Work',
+      });
+
+      expect(next.response.status).toBe(429);
+      expect(next.providerCallStarted).toBe(false);
+      expect(providerClient.forward).not.toHaveBeenCalled();
+    });
   });
 
   describe('tryFallbacks', () => {
@@ -2028,6 +2085,254 @@ describe('ProxyFallbackService', () => {
         'anthropic',
         'agent-1',
       );
+    });
+
+    describe('Autofix on fallback hops', () => {
+      const failedForwardWithWire = (status: number, withRetry = true): Record<string, unknown> => {
+        const retryWireBody = jest.fn().mockResolvedValue({
+          response: new Response('{}', { status: 200 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        });
+        return {
+          response: new Response(
+            JSON.stringify({ error: { message: 'This response_format type is unavailable now' } }),
+            { status, headers: { 'content-type': 'application/json' } },
+          ),
+          wireRequestBody: { model: 'deepseek-flash', messages: [] },
+          wireApiMode: 'chat_completions',
+          ...(withRetry ? { retryWireBody } : {}),
+          providerCallStarted: true,
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        };
+      };
+
+      const runFallback = (): Promise<{
+        success: { forward: unknown; provider: string; autofix?: unknown } | null;
+        failures: Array<{
+          status: number;
+          errorBody: string;
+          provider: string;
+          autofixRole?: string;
+          autofix?: unknown;
+        }>;
+      }> =>
+        service.tryFallbacks(
+          'agent-1',
+          'tenant-1',
+          ['deepseek-flash'],
+          body,
+          false,
+          'sess-1',
+          'gpt-4o',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          'chat_completions',
+          undefined,
+          [{ provider: 'opencode-go', authType: 'api_key', model: 'deepseek-flash' }],
+        ) as never;
+
+      it('heals a repairable failed fallback hop and returns the healed retry', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        const failedForward = failedForwardWithWire(400);
+        providerClient.forward.mockResolvedValue(failedForward as never);
+
+        const healedForward = {
+          response: new Response('{}', { status: 200 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        };
+        autofixService.isRepairable.mockReturnValue(true);
+        const record = {
+          groupId: 'g',
+          outcome: 'healed' as const,
+          original_http_status: 400,
+          chain: [
+            { attempt: 0, origin: 'original' as const, request: {}, http_status: 400 },
+            { attempt: 1, origin: 'autofix' as const, request: {}, http_status: 200 },
+          ],
+        };
+        autofixService.maybeHeal.mockResolvedValue({
+          forward: healedForward as never,
+          record,
+        });
+
+        const result = await runFallback();
+
+        expect(result.success).not.toBeNull();
+        expect(result.success!.forward).toBe(healedForward);
+        expect(result.success!.provider).toBe('opencode-go');
+        // The fallback's own Phoenix audit travels with the winning retry.
+        expect(result.success!.autofix).toBe(record);
+        // The hop that failed first is still recorded for the audit trail.
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0]).toMatchObject({ status: 400, provider: 'opencode-go' });
+        expect(result.failures[0].errorBody).toContain('response_format');
+        expect(result.failures[0].autofixRole).toBe('original');
+
+        const healArgs = autofixService.maybeHeal.mock.calls[0][0];
+        expect(healArgs).toMatchObject({
+          provider: 'opencode-go',
+          model: 'deepseek-flash',
+          authType: 'api_key',
+          apiMode: 'chat_completions',
+        });
+        // The reforward must reuse the SAME fallback transport, not re-resolve
+        // routing back to the primary.
+        await healArgs.reforward({ model: 'deepseek-flash', messages: [] });
+        expect(failedForward.retryWireBody as jest.Mock).toHaveBeenCalled();
+      });
+
+      it('records a normal fallback failure when Autofix has no patch', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        providerClient.forward.mockResolvedValue(failedForwardWithWire(400) as never);
+        autofixService.isRepairable.mockReturnValue(true);
+        autofixService.maybeHeal.mockResolvedValue(null);
+
+        const result = await runFallback();
+
+        expect(result.success).toBeNull();
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0].status).toBe(400);
+        expect(autofixService.maybeHeal).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not consult Autofix for a non-repairable fallback status', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        providerClient.forward.mockResolvedValue(failedForwardWithWire(500) as never);
+
+        const result = await runFallback();
+
+        expect(result.success).toBeNull();
+        expect(result.failures).toHaveLength(1);
+        expect(autofixService.maybeHeal).not.toHaveBeenCalled();
+      });
+
+      it('does not consult Autofix when the fallback forward cannot be retried', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        providerClient.forward.mockResolvedValue(failedForwardWithWire(400, false) as never);
+        autofixService.isRepairable.mockReturnValue(true);
+
+        const result = await runFallback();
+
+        expect(result.success).toBeNull();
+        expect(result.failures).toHaveLength(1);
+        expect(autofixService.maybeHeal).not.toHaveBeenCalled();
+      });
+
+      it('records both the original hop and the failed retry when a patch does not clear the error', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        providerClient.forward.mockResolvedValue(failedForwardWithWire(400) as never);
+        autofixService.isRepairable.mockReturnValue(true);
+        const record = {
+          groupId: 'g',
+          outcome: 'exhausted' as const,
+          original_http_status: 400,
+          chain: [
+            { attempt: 0, origin: 'original' as const, request: {}, http_status: 400 },
+            { attempt: 1, origin: 'autofix' as const, request: {}, http_status: 400 },
+          ],
+        };
+        autofixService.maybeHeal.mockResolvedValue({
+          forward: {
+            response: new Response('still broken', { status: 400 }),
+            attempt: { id: 'retry-attempt' },
+            providerCallStarted: true,
+            isGoogle: false,
+            isAnthropic: false,
+            isChatGpt: false,
+          } as never,
+          record,
+        });
+
+        const result = await runFallback();
+
+        expect(result.success).toBeNull();
+        // Both provider attempts get a terminal row. The original must not be
+        // left dangling pending after Autofix consumed its response.
+        expect(result.failures).toHaveLength(2);
+        expect(result.failures[0]).toMatchObject({ status: 400, autofixRole: 'original' });
+        expect(result.failures[1]).toMatchObject({ status: 400, autofixRole: 'retry' });
+        expect(result.failures[0].errorBody).toContain('response_format');
+        expect(result.failures[1].errorBody).toBe('still broken');
+      });
+
+      it('skips Autofix when the fallback has no resolvable api mode', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        const failedForward = failedForwardWithWire(400);
+        delete failedForward.wireApiMode;
+        providerClient.forward.mockResolvedValue(failedForward as never);
+        autofixService.isRepairable.mockReturnValue(true);
+
+        const result = await service.tryFallbacks(
+          'agent-1',
+          'tenant-1',
+          ['deepseek-flash'],
+          body,
+          false,
+          'sess-1',
+          'gpt-4o',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined, // apiMode
+          undefined,
+          [{ provider: 'opencode-go', authType: 'api_key', model: 'deepseek-flash' }],
+        );
+
+        expect(result.success).toBeNull();
+        expect(result.failures).toHaveLength(1);
+        expect(autofixService.maybeHeal).not.toHaveBeenCalled();
+      });
+
+      it('stamps the Phoenix decision on an unfixable fallback hop', async () => {
+        providerKeyService.getProviderApiKey.mockResolvedValue('sk-ant');
+        providerClient.forward.mockResolvedValue(failedForwardWithWire(400) as never);
+        autofixService.isRepairable.mockReturnValue(true);
+        const record = {
+          groupId: 'g',
+          outcome: 'unfixable' as const,
+          original_http_status: 400,
+          chain: [
+            {
+              attempt: 0,
+              origin: 'original' as const,
+              request: {},
+              http_status: 400,
+              issue_id: 'issue-1',
+              operations: [{ type: 'drop_param' }],
+            },
+          ],
+        };
+        autofixService.maybeHeal.mockResolvedValue({
+          forward: {
+            response: new Response('still broken', { status: 400 }),
+            isGoogle: false,
+            isAnthropic: false,
+            isChatGpt: false,
+            providerCallStarted: true,
+          } as never,
+          record,
+        });
+
+        const result = await runFallback();
+
+        expect(result.success).toBeNull();
+        // No retry was sent, so this is the original hop and it still carries
+        // Phoenix's decision for the audit trail.
+        expect(result.failures).toHaveLength(1);
+        expect(result.failures[0]).toMatchObject({ status: 400, autofixRole: 'original' });
+        expect(result.failures[0].autofix).toBe(record);
+      });
     });
   });
 

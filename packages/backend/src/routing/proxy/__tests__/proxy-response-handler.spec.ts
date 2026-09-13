@@ -2815,6 +2815,45 @@ describe('proxy-response-handler', () => {
       );
     });
 
+    it('forwards the winning fallback Autofix record to the fallback-success row', () => {
+      const recorder = mockRecorder();
+      const meta = makeMeta({ fallbackFromModel: 'gpt-4o', fallbackIndex: 1 });
+      const fallbackAutofix: AutofixRecord = {
+        groupId: 'fallback-group',
+        outcome: 'healed',
+        original_http_status: 400,
+        chain: [
+          { attempt: 0, origin: 'original', request: {}, http_status: 400 },
+          { attempt: 1, origin: 'autofix', request: {}, http_status: 200 },
+        ],
+      };
+
+      recordSuccess(
+        testCtx,
+        meta,
+        null,
+        '2025-01-01T00:00:00Z',
+        recorder as any,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        fallbackAutofix,
+      );
+
+      expect(recorder.recordFallbackSuccess).toHaveBeenCalledWith(
+        testCtx,
+        'gpt-4o',
+        'standard',
+        expect.objectContaining({ fallbackAutofix }),
+      );
+    });
+
     it('should pass specificityCategory when set on meta', () => {
       const recorder = mockRecorder();
       const meta = makeMeta({ specificity_category: 'coding' });

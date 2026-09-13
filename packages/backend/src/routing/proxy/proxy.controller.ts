@@ -392,24 +392,25 @@ export class ProxyController {
       slotAcquired = true;
       routingBody = redactInlineImageDataUrls(this.routingBody(body, req));
       const specificityOverride = req.headers['x-manifest-specificity'] as string | undefined;
-      const { forward, meta, failedFallbacks, autofix } = await this.proxyService.proxyRequest({
-        agentId: req.ingestionContext.agentId,
-        tenantId,
-        // Attribution only — the recorder writes it to agent_messages.user_id.
-        userId: req.ingestionContext.userId,
-        body,
-        routingBody,
-        sessionKey,
-        sessionCacheKey: sessionScope.cacheKey,
-        providerCacheKey: sessionScope.providerCacheKey,
-        sessionMomentumKey: sessionScope.momentumKey,
-        agentName: req.ingestionContext.agentName,
-        signal: clientAbort.signal,
-        specificityOverride,
-        headers: req.headers,
-        apiMode,
-        startProviderAttempt,
-      });
+      const { forward, meta, failedFallbacks, autofix, fallbackAutofix } =
+        await this.proxyService.proxyRequest({
+          agentId: req.ingestionContext.agentId,
+          tenantId,
+          // Attribution only — the recorder writes it to agent_messages.user_id.
+          userId: req.ingestionContext.userId,
+          body,
+          routingBody,
+          sessionKey,
+          sessionCacheKey: sessionScope.cacheKey,
+          providerCacheKey: sessionScope.providerCacheKey,
+          sessionMomentumKey: sessionScope.momentumKey,
+          agentName: req.ingestionContext.agentName,
+          signal: clientAbort.signal,
+          specificityOverride,
+          headers: req.headers,
+          apiMode,
+          startProviderAttempt,
+        });
       currentMeta = meta;
 
       this.trackFirstProxyRequest(tenantId);
@@ -562,6 +563,7 @@ export class ProxyController {
           currentPrimaryAttemptNumber(autofix) +
             (meta.fallbackFromModel ? (failedFallbacks?.length ?? 0) + 1 : 0),
           apiMode,
+          fallbackAutofix,
         );
       }
     } catch (err: unknown) {
