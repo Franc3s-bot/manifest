@@ -36,6 +36,7 @@ import { WaitlistModule } from './waitlist/waitlist.module';
 import { BillingModule } from './billing/billing.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { CrmMetricsModule } from './crm-metrics/crm-metrics.module';
+import { McpModule } from './mcp/mcp.module';
 import { isSelfHosted } from './common/utils/detect-self-hosted';
 import { DebugSentryController } from './sentry/debug-sentry.controller';
 
@@ -114,6 +115,7 @@ const crmMetricsImports = isSelfHosted() ? [] : [CrmMetricsModule];
     WaitlistModule,
     BillingModule,
     DiscoveryModule,
+    McpModule,
     ...crmMetricsImports,
   ],
   providers: [

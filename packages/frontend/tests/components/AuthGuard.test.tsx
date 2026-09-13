@@ -64,6 +64,18 @@ describe('AuthGuard', () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
+  it('lets the MCP consent page through even while onboarding is pending', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    mockLocation = { pathname: '/consent', search: '?client_id=c' };
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+    expect(await screen.findByText('Protected content')).toBeDefined();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   it('renders children when session exists', async () => {
     render(() => (
       <AuthGuard>

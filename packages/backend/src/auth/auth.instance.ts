@@ -1,5 +1,8 @@
 import { betterAuth } from 'better-auth';
 import type { Auth } from 'better-auth';
+import { jwt } from 'better-auth/plugins';
+import { cimd } from '@better-auth/cimd';
+import { mcp } from '@better-auth/mcp';
 import { stripe as stripePlugin } from '@better-auth/stripe';
 import { render } from '@react-email/render';
 import { VerifyEmailEmail } from '../notifications/emails/verify-email';
@@ -13,6 +16,8 @@ import {
   sendSubscriptionCanceledEmail,
   sendSubscriptionConfirmedEmail,
 } from '../billing/subscription-webhook-emails';
+import { fetchClientMetadataResource } from './cimd-client-metadata-fetch';
+import { MCP_READ_SCOPE, MCP_WRITE_SCOPE, MCP_SCOPES } from './mcp-scopes';
 
 const port = process.env['PORT'] ?? '3001';
 const isDev = (process.env['NODE_ENV'] ?? '') !== 'production';
@@ -20,6 +25,22 @@ const hasEmailProvider = !!(
   (process.env['EMAIL_PROVIDER'] && process.env['EMAIL_API_KEY']) ||
   (process.env['MAILGUN_API_KEY'] && process.env['MAILGUN_DOMAIN'])
 );
+
+/**
+ * OAuth 2.1 identity for the remote MCP server.
+ *
+ * The MCP resource and the authorization-server issuer must derive from the
+ * same normalized origin (trailing slashes stripped) or a later change to one
+ * silently splits them — MCP clients validate the advertised `resource`
+ * against the URL they connected to, so a divergence breaks connection.
+ */
+export const authOrigin = (process.env['BETTER_AUTH_URL'] ?? `http://localhost:${port}`).replace(
+  /\/+$/,
+  '',
+);
+export const authIssuer = `${authOrigin}/api/auth`;
+export const mcpResource = `${authOrigin}/api/v1/mcp`;
+export { MCP_READ_SCOPE, MCP_WRITE_SCOPE, MCP_SCOPES } from './mcp-scopes';
 
 function createDatabaseConnection() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -69,10 +90,49 @@ function buildTrustedOrigins(): string[] {
 }
 
 function buildPlugins() {
-  if (!isBillingEnabled()) return [];
+  // JWT access tokens are what the MCP resource route verifies: signature,
+  // issuer, audience, and expiry, all against the plugin's JWKS. The MCP plugin
+  // is the OAuth 2.1 authorization server behind the remote MCP endpoint, and
+  // CIMD gives modern MCP clients a verified identity document instead of
+  // anonymous dynamic registration. These are always on — unlike billing.
+  const base = [
+    jwt(),
+    mcp({
+      loginPage: '/login',
+      consentPage: '/consent',
+      resource: mcpResource,
+      scopes: [...MCP_SCOPES, 'offline_access'],
+      resources: [
+        {
+          identifier: mcpResource,
+          name: 'Manifest MCP',
+          // Short-lived bearer tokens; the refresh token (offline_access) is
+          // how an editor stays connected across a session.
+          accessTokenTtl: 15 * 60,
+          allowedScopes: [...MCP_SCOPES, 'offline_access'],
+        },
+      ],
+      resourceSeedMode: 'overwrite',
+      clientRegistrationDefaultScopes: [MCP_READ_SCOPE],
+      clientRegistrationAllowedScopes: [MCP_WRITE_SCOPE, 'offline_access'],
+      // DCR stays available to signed-in users, but anonymous registration is
+      // off: a client that can point a URL at a verified metadata document
+      // (CIMD) identifies itself, and everyone else must be added by an
+      // operator. This is the MCP 2026-07-28 posture.
+      allowDynamicClientRegistration: true,
+      allowUnauthenticatedClientRegistration: false,
+      clientRegistrationRequirePKCE: true,
+    }),
+    cimd({
+      fetchClientMetadataResource,
+      metadataProfile: 'mcp-2026-07-28',
+    }),
+  ];
+  if (!isBillingEnabled()) return base;
   const plans = [{ name: 'pro', priceId: process.env['STRIPE_PRO_PRICE_ID']! }];
   const priceToPlan = new Map(plans.map((plan) => [plan.priceId, plan.name]));
   return [
+    ...base,
     stripePlugin({
       stripeClient: getStripeClient(),
       stripeWebhookSecret: process.env['STRIPE_WEBHOOK_SECRET']!,
@@ -100,9 +160,9 @@ function buildPlugins() {
   ];
 }
 
-export const auth = betterAuth({
+const pluginAuth = betterAuth({
   database,
-  baseURL: process.env['BETTER_AUTH_URL'] ?? `http://localhost:${port}`,
+  baseURL: authOrigin,
   basePath: '/api/auth',
   secret: betterAuthSecret,
   logger: { level: 'debug' },
@@ -171,7 +231,15 @@ export const auth = betterAuth({
     },
   },
   trustedOrigins: buildTrustedOrigins(),
-}) as unknown as Auth;
+});
+
+// `auth` stays typed as the generic `Auth` for the many existing consumers that
+// only need the common surface (session, api). The concrete instance is exported
+// separately because plugin-aware helpers (OAuth discovery, MCP auth) need the
+// plugin-augmented API types that the generic widens away.
+export type AuthInstance = typeof pluginAuth;
+export const authInstance = pluginAuth;
+export const auth = pluginAuth as unknown as Auth;
 
 export type AuthSession = typeof auth.$Infer.Session;
 export type AuthUser = typeof auth.$Infer.Session.user;

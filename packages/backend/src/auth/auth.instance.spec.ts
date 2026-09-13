@@ -9,6 +9,20 @@ jest.mock('better-auth', () => ({ betterAuth: mockBetterAuth }));
 jest.mock('pg', () => ({ Pool: jest.fn() }));
 const mockStripePlugin = jest.fn().mockReturnValue({ id: 'stripe' });
 jest.mock('@better-auth/stripe', () => ({ stripe: mockStripePlugin }));
+// The MCP/OAuth plugins are ESM-only. Jest (Node 22) cannot require them, so
+// this spec mocks them exactly as it already mocks `better-auth` itself.
+jest.mock('better-auth/plugins', () => ({
+  jwt: jest.fn().mockReturnValue({ id: 'jwt' }),
+}));
+jest.mock('@better-auth/mcp', () => ({
+  mcp: jest.fn().mockReturnValue({ id: 'mcp' }),
+}));
+jest.mock('@better-auth/cimd', () => ({
+  cimd: jest.fn().mockReturnValue({ id: 'cimd' }),
+}));
+jest.mock('@better-auth/core/utils/host', () => ({
+  isPublicRoutableHost: jest.fn().mockReturnValue(true),
+}));
 jest.mock('@react-email/render', () => ({
   render: jest
     .fn()
@@ -467,9 +481,35 @@ describe('auth.instance', () => {
   describe('plugins', () => {
     beforeEach(() => {
       mockStripePlugin.mockClear();
+      (jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock }).mcp.mockClear();
     });
 
-    it('registers no plugins when billing is disabled', () => {
+    it('configures the MCP plugin for the /api/v1/mcp resource with login and consent pages', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://manifest.example.com';
+      loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      const config = mcp.mock.calls[0][0];
+      expect(config.resource).toBe('https://manifest.example.com/api/v1/mcp');
+      expect(config.loginPage).toBe('/login');
+      expect(config.consentPage).toBe('/consent');
+      expect(config.scopes).toEqual(
+        expect.arrayContaining(['mcp:read', 'mcp:write', 'offline_access']),
+      );
+      expect(config.resources[0].identifier).toBe('https://manifest.example.com/api/v1/mcp');
+      expect(config.allowUnauthenticatedClientRegistration).toBe(false);
+      expect(config.allowDynamicClientRegistration).toBe(true);
+      expect(config.clientRegistrationRequirePKCE).toBe(true);
+      expect(config.clientRegistrationDefaultScopes).toEqual(['mcp:read']);
+      expect(config.clientRegistrationAllowedScopes).toEqual(['mcp:write', 'offline_access']);
+      expect(config.resourceSeedMode).toBe('overwrite');
+      expect(config.resources[0].accessTokenTtl).toBe(15 * 60);
+      expect(config.resources[0].allowedScopes).toEqual(
+        expect.arrayContaining(['mcp:read', 'mcp:write', 'offline_access']),
+      );
+    });
+
+    it('registers the MCP/OAuth plugins but not stripe when billing is disabled', () => {
       process.env['MANIFEST_MODE'] = 'cloud';
       delete process.env['STRIPE_SECRET_KEY'];
       delete process.env['STRIPE_WEBHOOK_SECRET'];
@@ -477,11 +517,11 @@ describe('auth.instance', () => {
       loadModule();
 
       const config = mockBetterAuth.mock.calls[0][0];
-      expect(config.plugins).toEqual([]);
+      expect(config.plugins).toEqual([{ id: 'jwt' }, { id: 'mcp' }, { id: 'cimd' }]);
       expect(mockStripePlugin).not.toHaveBeenCalled();
     });
 
-    it('registers the stripe plugin when billing is enabled', () => {
+    it('registers the stripe plugin after the MCP/OAuth plugins when billing is enabled', () => {
       process.env['MANIFEST_MODE'] = 'cloud';
       process.env['STRIPE_SECRET_KEY'] = 'sk_test_x';
       process.env['STRIPE_WEBHOOK_SECRET'] = 'whsec_x';
@@ -489,7 +529,12 @@ describe('auth.instance', () => {
       loadModule();
 
       const config = mockBetterAuth.mock.calls[0][0];
-      expect(config.plugins).toEqual([{ id: 'stripe' }]);
+      expect(config.plugins).toEqual([
+        { id: 'jwt' },
+        { id: 'mcp' },
+        { id: 'cimd' },
+        { id: 'stripe' },
+      ]);
       expect(mockStripePlugin).toHaveBeenCalledTimes(1);
       const pluginConfig = mockStripePlugin.mock.calls[0][0];
       expect(pluginConfig.stripeClient).toBeDefined();

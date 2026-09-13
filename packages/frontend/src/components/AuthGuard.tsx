@@ -20,10 +20,11 @@ const AuthGuard: ParentComponent = (props) => {
       navigate(buildLoginRedirect(location.pathname, location.search), { replace: true });
       return;
     }
-    // The CLI consent page is not part of onboarding. Gate it on an
-    // authenticated session only, so a user who is mid-discovery/plan selection
-    // can still authorize the CLI (otherwise mnfst login never gets its code).
-    if (location.pathname === '/cli/auth') {
+    // The CLI consent page and the MCP OAuth consent page are not part of
+    // onboarding. Gate them on an authenticated session only, so a user who is
+    // mid-discovery/plan selection can still authorize a client (otherwise the
+    // login flow never gets its code).
+    if (location.pathname === '/cli/auth' || location.pathname === '/consent') {
       setPlanChecked(true);
       return;
     }
