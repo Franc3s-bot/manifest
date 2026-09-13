@@ -1,15 +1,38 @@
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
+import { Logger } from '@nestjs/common';
 import type { DiscoveredModel } from '../../model-discovery/model-fetcher';
 
 export const KIRO_BASE_URL = 'https://q.us-east-1.amazonaws.com';
 export const KIRO_MODELS_TARGET = 'AmazonCodeWhispererService.ListAvailableModels';
 export const KIRO_CHAT_TARGET = 'AmazonCodeWhispererStreamingService.GenerateAssistantResponse';
 
+const logger = new Logger('KiroAdapter');
+
 const KIRO_ORIGIN = 'KIRO_CLI';
 const KIRO_AGENT_MODE = 'SUPERVISED';
 const DEFAULT_KIRO_CONTEXT_WINDOW = 200000;
 const AUTO_KIRO_CONTEXT_WINDOW = 1000000;
+/**
+ * Rough fallback when a Kiro stream reports context usage but no per-token
+ * breakdown: Claude/GPT tokenizers average around four characters per token.
+ */
+const KIRO_ESTIMATED_CHARS_PER_TOKEN = 4;
+
+/**
+ * Kiro event types that carry no usage or content. `meteringEvent` reports
+ * spend in credits, not tokens, so it cannot fill the token columns; the rest
+ * are stream lifecycle/footnote events. Anything outside this set (and outside
+ * the handled event types) is logged so wire-format changes surface early.
+ */
+const IGNORED_KIRO_EVENT_TYPES = new Set([
+  'initial-response',
+  'meteringevent',
+  'messagestopevent',
+  'metricsevent',
+  'codereferenceevent',
+  'supplementaryweblinksevent',
+]);
 
 /**
  * Kiro's tool schema bounds. Names must match `[A-Za-z0-9_-]+`, tool-use ids are
@@ -765,6 +788,11 @@ interface OpenAiUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+  prompt_tokens_details?: { cached_tokens: number; cache_write_tokens: number };
+  /** True when token counts were derived locally because Kiro reported none. */
+  estimated?: boolean;
 }
 
 interface KiroToolCallState {
@@ -806,19 +834,116 @@ function numberField(record: Record<string, unknown>, ...keys: string[]): number
 function normalizeUsage(value: unknown): OpenAiUsage | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const usage = value as Record<string, unknown>;
+  const uncachedInput = numberField(usage, 'uncachedInputTokens', 'uncached_input_tokens');
+  const cacheRead = numberField(
+    usage,
+    'cacheReadInputTokens',
+    'cache_read_input_tokens',
+    'cached_tokens',
+  );
+  const cacheWrite = numberField(
+    usage,
+    'cacheWriteInputTokens',
+    'cache_write_input_tokens',
+    'cache_creation_input_tokens',
+  );
   const prompt =
     numberField(usage, 'prompt_tokens', 'inputTokens', 'input_tokens') ||
-    numberField(usage, 'uncachedInputTokens', 'uncached_input_tokens') +
-      numberField(usage, 'cacheReadInputTokens', 'cache_read_input_tokens') +
-      numberField(usage, 'cacheWriteInputTokens', 'cache_write_input_tokens');
+    uncachedInput + cacheRead + cacheWrite;
   const completion = numberField(usage, 'completion_tokens', 'outputTokens', 'output_tokens');
-  const total =
-    numberField(usage, 'total_tokens', 'totalTokens', 'total_tokens') || prompt + completion;
+  const total = numberField(usage, 'total_tokens', 'totalTokens') || prompt + completion;
 
   return {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: total,
+    // Kiro reports cache reads/writes separately from the prompt total. Keep the
+    // breakdown so `cache_read_tokens` / `cache_creation_tokens` populate the
+    // request log instead of being discarded with the raw event.
+    ...(cacheRead > 0 ? { cache_read_tokens: cacheRead } : {}),
+    ...(cacheWrite > 0 ? { cache_creation_tokens: cacheWrite } : {}),
+    ...(cacheRead > 0 || cacheWrite > 0
+      ? {
+          prompt_tokens_details: {
+            cached_tokens: cacheRead,
+            cache_write_tokens: cacheWrite,
+          },
+        }
+      : {}),
+  };
+}
+
+function estimateTokensFromText(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / KIRO_ESTIMATED_CHARS_PER_TOKEN);
+}
+
+/** Text the model emitted this turn: visible content, reasoning, and tool input. */
+function kiroCompletionText(state: KiroCollectState): string {
+  const parts = [state.content, state.reasoning];
+  for (const id of state.toolOrder) {
+    // toolOrder only ever holds ids registered in toolCalls alongside a tool.
+    const tool = state.toolCalls.get(id) as KiroToolCallState;
+    parts.push(tool.name, tool.input);
+  }
+  return parts.filter(Boolean).join('\n');
+}
+
+/** Envelope fields that are not prompt content and would inflate the estimate. */
+const KIRO_NON_PROMPT_KEYS = new Set([
+  'conversationid',
+  'modelid',
+  'chattriggertype',
+  'agentmode',
+  'origin',
+  'status',
+  'tooluseid',
+]);
+
+/** Every prompt-bearing string in the built Kiro conversation, i.e. text + tools. */
+function collectKiroStrings(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectKiroStrings(item, out);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (!KIRO_NON_PROMPT_KEYS.has(key.toLowerCase())) collectKiroStrings(item, out);
+    }
+  }
+}
+
+/**
+ * Kiro does not return prompt tokens, so estimate them from the request the
+ * adapter actually sends (system prompt, history, tool specs, tool results).
+ */
+export function estimateKiroPromptTokens(conversation: Record<string, unknown>): number {
+  const parts: string[] = [];
+  collectKiroStrings(conversation, parts);
+  return estimateTokensFromText(parts.join('\n'));
+}
+
+/**
+ * Kiro's GenerateAssistantResponse does not report per-token counts on the
+ * wire captures we have (only `assistantResponseEvent` and `meteringEvent`,
+ * which is credits, not tokens). When Kiro does send an explicit `tokenUsage`
+ * block it wins; otherwise estimate prompt tokens from the outgoing
+ * conversation and completion tokens from the emitted text, and mark the
+ * result as estimated.
+ */
+function resolveKiroUsage(state: KiroCollectState, promptTokens: number): OpenAiUsage | undefined {
+  if (state.usage) return state.usage;
+  const completionText = estimateTokensFromText(kiroCompletionText(state));
+  if (promptTokens <= 0 && completionText <= 0) return undefined;
+  return {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionText,
+    total_tokens: promptTokens + completionText,
+    estimated: true,
   };
 }
 
@@ -879,8 +1004,17 @@ function applyKiroEvent(state: KiroCollectState, event: KiroEvent): Record<strin
     }
     return null;
   }
-  if (eventType.includes('metadata')) {
-    state.usage = normalizeUsage(payload.tokenUsage ?? payload.token_usage);
+  // `metadataEvent` carries a `tokenUsage` block on some Kiro responses; use it
+  // when present. It also sometimes carries `contextUsagePercentage`, but that
+  // is a fraction of an unknown context window, so it cannot yield absolute
+  // token counts — the text estimate in `resolveKiroUsage` is preferred.
+  if (eventType.includes('metadata') || eventType.includes('contextusage')) {
+    const tokenUsage = payload.tokenUsage ?? payload.token_usage;
+    if (tokenUsage) state.usage = normalizeUsage(tokenUsage);
+    return null;
+  }
+  if (event.eventType && !IGNORED_KIRO_EVENT_TYPES.has(eventType)) {
+    logger.debug(`Unhandled Kiro event type: ${event.eventType}`);
   }
   return null;
 }
@@ -922,6 +1056,7 @@ export function createKiroOpenAiStream(
   source: ReadableStream<Uint8Array>,
   model: string,
   toolNameMap?: Map<string, string>,
+  promptTokens = 0,
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const parser = new KiroEventStreamParser();
@@ -960,7 +1095,11 @@ export function createKiroOpenAiStream(
         });
 
         const finishReason = toolCalls.length > 0 ? 'tool_calls' : 'stop';
-        controller.enqueue(encoder.encode(openAiChunk(model, {}, finishReason, state.usage)));
+        controller.enqueue(
+          encoder.encode(
+            openAiChunk(model, {}, finishReason, resolveKiroUsage(state, promptTokens)),
+          ),
+        );
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
       } catch (err) {
@@ -973,6 +1112,7 @@ export function createKiroOpenAiStream(
 async function collectKiroCompletion(
   source: ReadableStream<Uint8Array>,
   model: string,
+  promptTokens: number,
   toolNameMap?: Map<string, string>,
 ): Promise<Record<string, unknown>> {
   const parser = new KiroEventStreamParser();
@@ -1003,6 +1143,7 @@ async function collectKiroCompletion(
     }));
   }
 
+  const usage = resolveKiroUsage(state, promptTokens);
   return {
     id: `chatcmpl-${randomUUID()}`,
     object: 'chat.completion',
@@ -1015,7 +1156,7 @@ async function collectKiroCompletion(
         finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
       },
     ],
-    ...(state.usage ? { usage: state.usage } : {}),
+    usage,
   };
 }
 
@@ -1036,6 +1177,9 @@ export async function forwardKiroChat(opts: {
     ...opts.extraHeaders,
   };
   const { body, toolNameMap } = buildKiroConversation(opts.body, opts.model);
+  // Kiro reports no token counts, so seed the estimated usage with the prompt
+  // size of the conversation we are about to send.
+  const promptTokens = estimateKiroPromptTokens(body);
   const upstream = await fetch(KIRO_BASE_URL, {
     method: 'POST',
     headers,
@@ -1046,13 +1190,21 @@ export async function forwardKiroChat(opts: {
 
   if (!upstream.ok || !upstream.body) return upstream;
   if (opts.stream) {
-    return new Response(createKiroOpenAiStream(upstream.body, opts.model, toolNameMap), {
-      status: 200,
-      headers: { 'Content-Type': 'text/event-stream' },
-    });
+    return new Response(
+      createKiroOpenAiStream(upstream.body, opts.model, toolNameMap, promptTokens),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      },
+    );
   }
 
-  const completion = await collectKiroCompletion(upstream.body, opts.model, toolNameMap);
+  const completion = await collectKiroCompletion(
+    upstream.body,
+    opts.model,
+    promptTokens,
+    toolNameMap,
+  );
   return new Response(JSON.stringify(completion), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },

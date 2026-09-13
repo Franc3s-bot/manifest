@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { Logger } from '@nestjs/common';
 import {
   buildKiroChatRequest,
   buildKiroHeaders,
@@ -189,6 +190,16 @@ function sseToolCalls(text: string): Array<Record<string, unknown>> {
       };
       return chunk.choices[0].delta.tool_calls ?? [];
     });
+}
+
+function finalSseUsage(text: string): Record<string, number> | undefined {
+  let usage: Record<string, number> | undefined;
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data: ') || line.includes('[DONE]')) continue;
+    const chunk = JSON.parse(line.slice(6)) as { usage?: Record<string, number> };
+    if (chunk.usage) usage = chunk.usage;
+  }
+  return usage;
 }
 
 describe('kiro-adapter', () => {
@@ -566,6 +577,161 @@ describe('kiro-adapter', () => {
     expect(text).toContain('"finish_reason":"stop"');
     expect(text).toContain('"prompt_tokens":7');
     expect(text).toContain('data: [DONE]');
+  });
+
+  it('keeps the cache breakdown in the normalized usage', async () => {
+    const source = streamFrom([
+      eventFrame('assistantResponseEvent', { content: 'hello' }),
+      eventFrame('metadataEvent', {
+        tokenUsage: {
+          uncachedInputTokens: 4,
+          cacheReadInputTokens: 100,
+          cacheWriteInputTokens: 20,
+          outputTokens: 3,
+          totalTokens: 127,
+        },
+      }),
+    ]);
+
+    const response = new Response(createKiroOpenAiStream(source, 'auto'));
+    const text = await response.text();
+
+    expect(text).toContain('"prompt_tokens":124');
+    expect(text).toContain('"cache_read_tokens":100');
+    expect(text).toContain('"cache_creation_tokens":20');
+    expect(text).toContain('"cached_tokens":100');
+    expect(text).toContain('"cache_write_tokens":20');
+  });
+
+  it('derives the total from prompt and completion when tokenUsage omits it', async () => {
+    const source = streamFrom([
+      eventFrame('assistantResponseEvent', { content: 'hello' }),
+      eventFrame('metadataEvent', {
+        tokenUsage: {
+          uncachedInputTokens: 10,
+          outputTokens: 5,
+        },
+      }),
+    ]);
+
+    const response = new Response(createKiroOpenAiStream(source, 'auto'));
+
+    expect(finalSseUsage(await response.text())).toMatchObject({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+    });
+  });
+
+  it('ignores contextUsagePercentage and estimates from the text instead', async () => {
+    const source = streamFrom([
+      eventFrame('assistantResponseEvent', { content: 'hello' }),
+      eventFrame('contextUsageEvent', { contextUsagePercentage: 50 }),
+    ]);
+
+    const response = new Response(createKiroOpenAiStream(source, 'auto', undefined, 17));
+
+    expect(finalSseUsage(await response.text())).toEqual({
+      prompt_tokens: 17,
+      completion_tokens: 2,
+      total_tokens: 19,
+      estimated: true,
+    });
+  });
+
+  it('estimates usage from the prompt and response for the real Kiro event shape', async () => {
+    const source = streamFrom([
+      eventFrame('initial-response', { conversationId: 'c1' }),
+      eventFrame('assistantResponseEvent', { content: 'x'.repeat(40) }),
+      eventFrame('meteringEvent', { unit: 'credit', unitPlural: 'credits', usage: 0.01 }),
+    ]);
+
+    const response = new Response(
+      createKiroOpenAiStream(source, 'claude-sonnet-4.5', undefined, 100),
+    );
+
+    expect(finalSseUsage(await response.text())).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      total_tokens: 110,
+      estimated: true,
+    });
+  });
+
+  it('emits no usage when there is neither a prompt estimate nor output text', async () => {
+    const source = streamFrom([eventFrame('messageStopEvent', { stopReason: 'end_turn' })]);
+
+    const response = new Response(createKiroOpenAiStream(source, 'auto'));
+
+    expect(finalSseUsage(await response.text())).toBeUndefined();
+  });
+
+  it('estimates usage for a real Kiro stream with no usage event (non-streaming)', async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        streamFrom([
+          eventFrame('initial-response', { conversationId: 'c1' }),
+          eventFrame('assistantResponseEvent', { content: 'Pong' }),
+          eventFrame('meteringEvent', { unit: 'credit', unitPlural: 'credits', usage: 0.0099 }),
+        ]),
+        { status: 200 },
+      ),
+    );
+
+    const response = await forwardKiroChat({
+      apiKey: 'ksk_test',
+      model: 'claude-sonnet-4.5',
+      body: { messages: [{ role: 'user', content: 'Say pong in one word.' }] },
+      stream: false,
+      timeoutMs: 1000,
+    });
+    const json = (await response.json()) as {
+      usage: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+        estimated?: boolean;
+      };
+    };
+
+    expect(json.usage.estimated).toBe(true);
+    expect(json.usage.prompt_tokens).toBeGreaterThan(0);
+    expect(json.usage.completion_tokens).toBeGreaterThan(0);
+    expect(json.usage.total_tokens).toBe(json.usage.prompt_tokens + json.usage.completion_tokens);
+  });
+
+  it('includes emitted tool input in the estimated completion tokens', async () => {
+    const source = streamFrom([
+      eventFrame('assistantResponseEvent', { content: 'x'.repeat(40) }),
+      eventFrame('toolUseEvent', { toolUseId: 'call_1', name: 'fn', input: 'abcd', stop: true }),
+    ]);
+
+    const response = new Response(
+      createKiroOpenAiStream(source, 'claude-sonnet-4.5', undefined, 100),
+    );
+
+    expect(finalSseUsage(await response.text())).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 12,
+      total_tokens: 112,
+      estimated: true,
+    });
+  });
+
+  it('logs an unhandled Kiro event type at debug', async () => {
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    try {
+      const source = streamFrom([
+        eventFrame('assistantResponseEvent', { content: 'hello' }),
+        eventFrame('someFutureEvent', { detail: 'x' }),
+      ]);
+
+      await new Response(createKiroOpenAiStream(source, 'auto')).text();
+
+      expect(debug).toHaveBeenCalledWith('Unhandled Kiro event type: someFutureEvent');
+    } finally {
+      debug.mockRestore();
+    }
   });
 
   it('converts Kiro toolUseEvent frames into OpenAI tool_calls', async () => {
