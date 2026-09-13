@@ -6,6 +6,7 @@ import { AgentMessage } from '../../../entities/agent-message.entity';
 import { ManifestRequest } from '../../../entities/request.entity';
 import { InstallMetadata } from '../../../entities/install-metadata.entity';
 import { InstallIdService } from '../../../telemetry/install-id.service';
+import { ApiKey } from '../../../entities/api-key.entity';
 import { AutofixModule } from '../autofix.module';
 import { HEALING_CLIENT } from '../healing-client';
 import { HttpHealingClient } from '../http-healing-client';
@@ -39,6 +40,10 @@ async function resolveHealingClient(configValues: Record<string, string>) {
       // Autofix pulls the install id from TelemetryModule; stub its repo so the
       // module graph resolves without a database.
       .overrideProvider(getRepositoryToken(InstallMetadata))
+      .useValue({})
+      // The telemetry payload builder also reads api_keys (and the raw OAuth
+      // tables through that repo's manager); stub it too.
+      .overrideProvider(getRepositoryToken(ApiKey))
       .useValue({})
       .compile();
 
@@ -183,6 +188,8 @@ describe('AutofixModule HEALING_CLIENT factory', () => {
         .overrideProvider(getRepositoryToken(ManifestRequest))
         .useValue({})
         .overrideProvider(getRepositoryToken(InstallMetadata))
+        .useValue({})
+        .overrideProvider(getRepositoryToken(ApiKey))
         .useValue({})
         .overrideProvider(InstallIdService)
         .useValue({ getOrCreate })

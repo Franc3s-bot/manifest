@@ -67,6 +67,35 @@ export interface TelemetryPayloadV1 {
   agents_total: number;
   agents_by_platform: Record<string, number>;
 
+  // Management surfaces (CLI + remote MCP). All derived from existing tables at
+  // send time; nothing is counted per call. Optional because older installs
+  // predate the fields.
+
+  /** PATs minted by `mnfst login` (rows of `api_keys` named `cli`). */
+  cli_keys_total?: number;
+  /** Of those, keys that authenticated at least once in the last 7 days. */
+  cli_keys_active_7d?: number;
+
+  /** OAuth clients registered against the remote MCP server (not disabled). */
+  mcp_clients_total?: number;
+  /** Consent grants users gave to those clients. */
+  mcp_consents_total?: number;
+  /**
+   * Access tokens minted in the 24h window. Tokens live 15 minutes, so an
+   * actively used MCP session mints ~4/hour — this is the activity proxy
+   * that stands in for a per-tool-call counter.
+   */
+  mcp_tokens_issued_24h?: number;
+  /** Distinct clients that minted at least one access token in the window. */
+  mcp_clients_active_24h?: number;
+  /**
+   * Registered clients keyed by their declared name, whitelisted to known MCP
+   * hosts (`claude-code`, `cursor`, …). Anything else collapses to `"other"`
+   * and a missing name to `"unknown"`, so a free-form client name never
+   * leaves the install.
+   */
+  mcp_clients_by_name?: Record<string, number>;
+
   // Runtime
   platform: string;
   arch: string;

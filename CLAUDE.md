@@ -558,6 +558,18 @@ send one aggregate usage report per 24h to `TELEMETRY_ENDPOINT` (default
   `tokens_output_total`, `cost_usd_total`, `cost_usd_by_provider` (rounded to
   cents)
 - Configuration: `agents_total`, `agents_by_platform`
+- Management surfaces (all read from existing tables at send time — there is
+  deliberately no per-call counter and no new table): `cli_keys_total` /
+  `cli_keys_active_7d` (rows of `api_keys` named `cli`, i.e. `mnfst login`
+  PATs, active = `last_used_at` within 7 days); `mcp_clients_total`,
+  `mcp_consents_total`, `mcp_tokens_issued_24h`, `mcp_clients_active_24h`
+  (from the Better Auth OAuth tables `oauthClient` / `oauthConsent` /
+  `oauthAccessToken`; access tokens live 15 min, so tokens-per-24h is the MCP
+  activity proxy), `mcp_clients_by_name` (declared client name whitelisted to
+  known MCP hosts, else `"other"`, NULL → `"unknown"`). Missing OAuth tables
+  degrade to zeros, never a failed report. The CLI itself also posts one
+  anonymous event per command to `/v1/cli-event` on the telemetry host from
+  the user's machine (`packages/cli/src/telemetry.ts`).
 - Runtime: `platform` (`process.platform`), `arch` (`process.arch`)
 
 User-facing spec: https://manifest.build/docs/self-hosted#telemetry
