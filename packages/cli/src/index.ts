@@ -10,7 +10,7 @@ import * as provider from './commands/provider';
 import * as customProvider from './commands/custom-provider';
 import * as routing from './commands/routing';
 import * as runCommand from './commands/run';
-import { reportUsage } from './telemetry';
+import { reportUsage, urlFlagOf } from './telemetry';
 import * as models from './commands/models';
 import * as configure from './commands/configure';
 import * as requests from './commands/requests';
@@ -157,7 +157,8 @@ Run (key injection, 1Password-style)
 Environment: MANIFEST_URL, MANIFEST_API_KEY (overrides stored login)
 Telemetry: anonymous, batched — commands are spooled locally and sent once a day
 in one request: a persistent anonymous install id (a random UUID stored at
-~/.config/manifest/telemetry-id), command names, CLI version, ok, duration, and os.
+~/.config/manifest/telemetry-id), command names, CLI version, ok, duration, os, and
+whether the install targets Cloud or a self-hosted server (never the URL).
 Never arguments, agent names, URLs, or keys.
 Disable with MANIFEST_TELEMETRY_DISABLED=1. Details: packages/cli/README.md.
 Credentials are stored per-host in ~/.config/manifest/config.json (mode 0600).`;
@@ -200,15 +201,17 @@ export async function run(io: CliIo, argv: string[]): Promise<number> {
     return 1;
   }
   const started = Date.now();
+  // Only the host class is derived from the flag, never the URL (see telemetry.ts).
+  const flagUrl = urlFlagOf(resolved.rest);
   try {
     const code = await resolved.handler(io, resolved.rest);
     const ok = (code ?? 0) === 0;
-    await reportUsage(io, resolved.key, ok, Date.now() - started);
+    await reportUsage(io, resolved.key, ok, Date.now() - started, flagUrl);
     // Only after a success: a failing command's stderr belongs to the failure.
     if (ok) skill.maybeNudgeSkill(io, resolved.key);
     return code ?? 0;
   } catch (error) {
-    await reportUsage(io, resolved.key, false, Date.now() - started);
+    await reportUsage(io, resolved.key, false, Date.now() - started, flagUrl);
     if (error instanceof CliError) {
       io.stdout(JSON.stringify(error.toJSON(), null, 2));
       return 1;

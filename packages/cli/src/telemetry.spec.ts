@@ -10,6 +10,8 @@ import {
   reportUsage,
   spoolPath,
   telemetryAnonId,
+  telemetryTarget,
+  urlFlagOf,
 } from './telemetry';
 import { makeIo, type TestIo } from '../test/helpers';
 
@@ -47,6 +49,87 @@ function readState(io: TestIo): Record<string, string> {
 }
 
 describe('telemetry', () => {
+  it('classifies the target as cloud or self-hosted, never as a URL', () => {
+    // Fresh install, nothing configured: the CLI defaults to Cloud.
+    expect(telemetryTarget(makeIo())).toBe('cloud');
+    expect(telemetryTarget(makeIo({ env: { MANIFEST_URL: 'https://APP.manifest.build/' } }))).toBe(
+      'cloud',
+    );
+    expect(telemetryTarget(makeIo({ env: { MANIFEST_URL: 'http://localhost:3001' } }))).toBe(
+      'self-hosted',
+    );
+    // The active config host counts when no env override is set.
+    const configured = makeIo();
+    fs.mkdirSync(path.join(configured.configDir, 'manifest'), { recursive: true });
+    fs.writeFileSync(
+      path.join(configured.configDir, 'manifest', 'config.json'),
+      JSON.stringify({ activeHost: 'https://manifest.acme.internal', hosts: {} }),
+    );
+    expect(telemetryTarget(configured)).toBe('self-hosted');
+    // A corrupt config falls through to the default; a bad URL is not Cloud.
+    const corrupt = makeIo();
+    fs.mkdirSync(path.join(corrupt.configDir, 'manifest'), { recursive: true });
+    fs.writeFileSync(path.join(corrupt.configDir, 'manifest', 'config.json'), '{not json');
+    expect(telemetryTarget(corrupt)).toBe('cloud');
+    expect(telemetryTarget(makeIo({ env: { MANIFEST_URL: 'not a url' } }))).toBe('self-hosted');
+    // A per-command --url outranks everything, as it does for the command itself.
+    expect(
+      telemetryTarget(
+        makeIo({ env: { MANIFEST_URL: 'https://app.manifest.build' } }),
+        'http://10.0.0.5:3001',
+      ),
+    ).toBe('self-hosted');
+  });
+
+  it('reads the --url flag out of a command line, stopping at the -- separator', () => {
+    expect(urlFlagOf(['agent', 'list', '--url', 'http://localhost:3001'])).toBe(
+      'http://localhost:3001',
+    );
+    expect(urlFlagOf(['--url=https://x.internal', 'whoami'])).toBe('https://x.internal');
+    expect(
+      urlFlagOf(['--agent', 'a', '--', 'node', 'tool.js', '--url', 'http://child']),
+    ).toBeUndefined();
+    expect(urlFlagOf(['whoami'])).toBeUndefined();
+    // Mirrors parseArgs: the last occurrence wins; a missing or flag-like value does not count.
+    expect(urlFlagOf(['--url', 'http://a', '--url', 'http://b'])).toBe('http://b');
+    expect(urlFlagOf(['--url', '--yes'])).toBeUndefined();
+    expect(urlFlagOf(['--url'])).toBeUndefined();
+    expect(urlFlagOf(['--url='])).toBe('');
+    expect(telemetryTarget(makeIo(), '')).toBe('self-hosted');
+    expect(urlFlagOf(['--url', 'http://a', '--url'])).toBe('http://a');
+  });
+
+  it('tags the batch with the last command’s target and keeps the class off the wire events', async () => {
+    const calls: Call[] = [];
+    const io = on({}, capturing(calls));
+    writeState(io, { last_flush_at: new Date(Date.now() - FLUSH_INTERVAL_MS - 1).toISOString() });
+    await reportUsage(io, 'whoami', true, 1, 'http://localhost:3001');
+
+    expect(calls[0].body.target).toBe('self-hosted');
+    const events = calls[0].body.events as Array<Record<string, unknown>>;
+    expect(events[0]).not.toHaveProperty('target');
+  });
+
+  it('tags a mixed spool (legacy + new events) by its latest event', async () => {
+    const calls: Call[] = [];
+    const io = on({}, capturing(calls));
+    writeState(io, { last_flush_at: '2020-01-01T00:00:00.000Z' });
+    fs.mkdirSync(path.dirname(spoolPath(io)), { recursive: true });
+    fs.writeFileSync(
+      spoolPath(io),
+      JSON.stringify({
+        command: 'login',
+        ok: true,
+        duration_ms: 5,
+        at: '2026-09-12T10:00:00.000Z',
+      }) + '\n',
+    );
+    // Mixed spool: the legacy line has no class, the new event does — the latest wins.
+    await reportUsage(io, 'whoami', true, 1);
+    expect(calls[0].body.target).toBe('cloud');
+    expect((calls[0].body.events as unknown[]).length).toBe(2);
+  });
+
   it('mints a persistent anon id (0600) and reuses it', () => {
     const io = makeIo();
     const first = telemetryAnonId(io);
@@ -68,6 +151,7 @@ describe('telemetry', () => {
       anon_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
       cli_version: expect.any(String),
       os: expect.any(String),
+      target: 'cloud',
       events: [
         {
           command: 'agent create',

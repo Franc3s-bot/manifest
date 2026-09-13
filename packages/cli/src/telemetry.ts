@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { CliIo } from './context';
-import { configFilePath } from './config';
+import { DEFAULT_URL, configFilePath, loadConfig, normalizeOrigin } from './config';
 import { VERSION } from './version';
 import { detectAgentRuntime } from './agent-runtime';
 
@@ -26,6 +26,60 @@ export interface CliUsageEvent {
   /** ISO-8601 UTC, minute precision — enough for "commands per day". */
   at: string;
   agent_runtime?: string;
+  /**
+   * Spool-only: the Manifest class this command targeted, resolved at record
+   * time so a `--url` flag counts. Hoisted to the envelope at flush and
+   * stripped from the wire events.
+   */
+  target?: TelemetryTarget;
+}
+
+export type TelemetryTarget = 'cloud' | 'self-hosted';
+
+/**
+ * Which class of Manifest a command targets — Cloud or a self-hosted server —
+ * never the URL itself. Same precedence as command resolution (`--url`, then
+ * MANIFEST_URL, then the active config host, then Cloud). A corrupt config
+ * falls through to that default; an unparsable URL is not Cloud.
+ */
+export function telemetryTarget(io: CliIo, flagUrl?: string): TelemetryTarget {
+  let activeHost: string | undefined;
+  try {
+    activeHost = loadConfig(configFilePath(io.env)).activeHost;
+  } catch {
+    /* corrupt config: the login command reports it; here it just means "default" */
+  }
+  try {
+    const origin = normalizeOrigin(flagUrl ?? io.env['MANIFEST_URL'] ?? activeHost ?? DEFAULT_URL);
+    return origin === normalizeOrigin(DEFAULT_URL) ? 'cloud' : 'self-hosted';
+  } catch {
+    return 'self-hosted';
+  }
+}
+
+/**
+ * The value of a `--url <x>` / `--url=<x>` flag in a command's argv, resolved
+ * the way parseArgs does: the last occurrence wins, and an occurrence with no
+ * value (or a flag where the value should be) does not count.
+ */
+export function urlFlagOf(argv: readonly string[]): string | undefined {
+  let value: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--') break; // everything after is the child command (mnfst run)
+    if (arg === '--url') {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith('--')) {
+        value = next;
+        i++;
+      }
+    } else if (arg.startsWith('--url=')) {
+      // A bare `--url=` is an empty value, as parseArgs records it; the command
+      // then fails resolution, and here an unparsable URL classifies as not Cloud.
+      value = arg.slice('--url='.length);
+    }
+  }
+  return value;
 }
 
 interface FlushState {
@@ -208,6 +262,7 @@ export async function reportUsage(
   command: string,
   ok: boolean,
   durationMs: number,
+  flagUrl?: string,
 ): Promise<void> {
   if (telemetryDisabled(io)) return;
   const now = Date.now();
@@ -221,6 +276,7 @@ export async function reportUsage(
     duration_ms: Math.max(0, Math.min(600_000, Math.round(durationMs))),
     at: new Date(now).toISOString().slice(0, 16) + ':00.000Z',
     ...(runtime ? { agent_runtime: runtime.id } : {}),
+    target: telemetryTarget(io, flagUrl),
   };
   const token = acquireLock(io, now);
   if (token === null) {
@@ -267,7 +323,11 @@ async function flush(io: CliIo, events: CliUsageEvent[], state: FlushState, now:
         anon_id: telemetryAnonId(io),
         cli_version: VERSION,
         os: ['darwin', 'linux', 'win32'].includes(process.platform) ? process.platform : 'other',
-        events,
+        // One class per batch (the ingest contract): the most recent command's.
+        // A spool written before the field shipped falls back to the current
+        // resolution.
+        target: events[events.length - 1]?.target ?? telemetryTarget(io),
+        events: events.map(({ target: _target, ...wire }) => wire),
       }),
       signal: controller.signal,
     });
