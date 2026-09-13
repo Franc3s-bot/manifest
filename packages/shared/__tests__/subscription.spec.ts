@@ -257,15 +257,17 @@ describe('getSubscriptionProviderConfig', () => {
     });
     expect(config?.knownModels).toEqual(
       expect.arrayContaining([
+        'gemini-3.5-flash',
         'gemini-3.1-flash-lite',
-        'gemini-3.1-flash-lite-preview',
         'gemini-2.5-pro',
         'gemini-2.5-flash',
         'gemini-2.5-flash-lite',
       ]),
     );
+    expect(config?.knownModels).not.toContain('gemini-3.1-flash-lite-preview');
     expect(config?.knownModels).not.toContain('gemini-3.1-pro-preview');
     expect(config?.knownModels).not.toContain('gemini-3-flash-preview');
+    expect(config?.knownModels).not.toContain('gemini-3.6-flash');
     expect(config?.subscriptionCapabilities).toMatchObject({
       maxContextWindow: 1000000,
       supportsPromptCaching: true,
@@ -422,13 +424,15 @@ describe('getSubscriptionKnownModels', () => {
 
   it('returns known models for gemini', () => {
     const models = getSubscriptionKnownModels('gemini');
+    expect(models).toContain('gemini-3.5-flash');
     expect(models).toContain('gemini-3.1-flash-lite');
-    expect(models).toContain('gemini-3.1-flash-lite-preview');
     expect(models).toContain('gemini-2.5-pro');
     expect(models).toContain('gemini-2.5-flash');
     expect(models).toContain('gemini-2.5-flash-lite');
+    expect(models).not.toContain('gemini-3.1-flash-lite-preview');
     expect(models).not.toContain('gemini-3.1-pro-preview');
     expect(models).not.toContain('gemini-3-flash-preview');
+    expect(models).not.toContain('gemini-3.6-flash');
   });
 
   it('returns known models for xai', () => {

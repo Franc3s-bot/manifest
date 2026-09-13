@@ -268,7 +268,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   gemini: {
     initial: 'G',
-    subtitle: 'Gemini 3.6 Flash, 3.1 Pro, Gemini 2.5',
+    subtitle: 'Gemini 3.5 Flash, 3.1 Flash-Lite, Gemini 2.5',
     supportsSubscription: true,
     subscriptionLabel: 'Sign in with Google',
     subscriptionAuthMode: 'popup_oauth',

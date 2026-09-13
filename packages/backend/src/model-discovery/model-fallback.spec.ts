@@ -418,7 +418,7 @@ describe('supplementWithKnownModels', () => {
     expect(opusEntries).toHaveLength(1);
   });
 
-  it('keeps explicit gemini preview known models separate in exact mode', () => {
+  it('adds current gemini known models without reintroducing retired previews in exact mode', () => {
     const raw = [
       {
         id: 'gemini-3.1-flash-lite',
@@ -437,7 +437,8 @@ describe('supplementWithKnownModels', () => {
     const ids = result.map((m) => m.id);
 
     expect(ids).toContain('gemini-3.1-flash-lite');
-    expect(ids).toContain('gemini-3.1-flash-lite-preview');
+    expect(ids).toContain('gemini-3.5-flash');
+    expect(ids).not.toContain('gemini-3.1-flash-lite-preview');
     expect(ids).not.toContain('gemini-3.1-pro-preview');
     expect(ids).not.toContain('gemini-3-flash-preview');
   });

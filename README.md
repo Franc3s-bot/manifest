@@ -99,7 +99,7 @@ Provider catalogs are discovered dynamically when credentials are connected. The
 | ---------------------------------------------------------------------------------------- | :-------------: | :--------------------------- | --------------------------------------------------------------- |
 | [**OpenAI**](https://platform.openai.com/)                                               |       ✅        | ✅ ChatGPT Plus / Pro / Team | GPT-5.6 (Sol / Terra / Luna), GPT-5.5, GPT-5.4, Codex, o-series |
 | [**Anthropic**](https://www.anthropic.com/)                                              |       ✅        | ✅ Claude Max / Pro          | Claude Opus 5, Sonnet 5, Fable 5, Haiku 4.5                     |
-| [**Google**](https://ai.google.dev/)                                                     |       ✅        | ✅ Sign in with Google       | Gemini 3.6 Flash, 3.5 Flash, 3.1 Pro, Gemini 2.5                |
+| [**Google**](https://ai.google.dev/)                                                     |       ✅        | ✅ Sign in with Google       | Gemini 3.5 Flash, 3.1 Flash-Lite, Gemini 2.5                    |
 | [**Google Vertex AI**](https://cloud.google.com/vertex-ai)                               |       ✅        | —                            | Gemini models via Vertex AI                                     |
 | **Gemini Free**                                                                          | ✅ Managed key  | —                            | Free Gemini models through Manifest's managed gateway           |
 | [**Meta**](https://www.meta.ai/)                                                         |       ✅        | —                            | Muse Spark 1.2 / 1.1 + Contributor route (Meta Model API)       |

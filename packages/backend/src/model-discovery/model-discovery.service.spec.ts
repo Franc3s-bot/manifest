@@ -2548,6 +2548,7 @@ describe('ModelDiscoveryService', () => {
       expect(ids).toContain('gemini-2.5-pro');
       expect(ids).toContain('gemini-2.5-flash');
       expect(ids).toContain('gemini-3.1-flash-lite');
+      expect(ids).toContain('gemini-3.5-flash');
       // Suffixed preview NOT included (exact match mode)
       expect(ids).not.toContain('gemini-2.5-pro-preview-06-05');
       // Non-gemini models excluded
@@ -2611,7 +2612,8 @@ describe('ModelDiscoveryService', () => {
       expect(ids).toContain('gemini-2.5-pro');
       expect(ids).toContain('gemini-2.5-flash-lite');
       expect(ids).toContain('gemini-3.1-flash-lite');
-      expect(ids).toContain('gemini-3.1-flash-lite-preview');
+      expect(ids).toContain('gemini-3.5-flash');
+      expect(ids).not.toContain('gemini-3.1-flash-lite-preview');
       expect(ids).not.toContain('gemini-3.1-pro-preview');
       expect(ids).not.toContain('gemini-3-flash-preview');
       expect(fetcher.fetch).not.toHaveBeenCalled();
