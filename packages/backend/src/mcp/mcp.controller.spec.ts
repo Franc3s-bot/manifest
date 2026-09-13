@@ -112,4 +112,28 @@ describe('McpController', () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.send.mock.calls[0][0]).toContain('Internal error');
   });
+  it.each(['rejectGet', 'rejectDelete'] as const)(
+    '%s answers 405 with Allow: POST (stateless JSON transport, no SSE stream)',
+    async (method) => {
+      const controller = makeController('tenant-1');
+      const res = makeRes();
+
+      await controller[method](res);
+
+      expect(res.status).toHaveBeenCalledWith(405);
+      expect(res.set).toHaveBeenCalledWith('allow', 'POST');
+      expect(res.set).toHaveBeenCalledWith('content-type', 'application/json');
+      const body = JSON.parse(res.send.mock.calls[0][0] as string) as {
+        jsonrpc: string;
+        id: null;
+        error: { code: number; message: string };
+      };
+      expect(body).toEqual({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32000, message: 'Method not allowed' },
+      });
+      expect(requireMcpAuth).not.toHaveBeenCalled();
+    },
+  );
 });

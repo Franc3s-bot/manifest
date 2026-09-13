@@ -1854,6 +1854,7 @@ describe('routing test', () => {
     expect(calls[0].url).toBe(`${HOST}/api/v1/agents/john`);
     expect(calls[1].url).toBe(`${HOST}/v1/messages`);
     expect(calls[1].headers['anthropic-version']).toBe('2023-06-01');
+    expect(calls[1].headers['User-Agent']).toMatch(/^mnfst-cli\/\d+\.\d+\.\d+/);
     const body = JSON.parse(calls[1].body!);
     expect(body.max_tokens).toBe(64);
     // "auto" routes on /v1/messages exactly like the completions surface —
@@ -2392,7 +2393,10 @@ describe('routing commands', () => {
     // A custom provider resolves no catalog id, but the auth-type gate still
     // applies to the primary.
     const custom = authedIo([
-      { status: 200, body: [{ model_name: 'm', provider: 'custom:abc', auth_type: 'subscription' }] },
+      {
+        status: 200,
+        body: [{ model_name: 'm', provider: 'custom:abc', auth_type: 'subscription' }],
+      },
     ]);
     expect(
       await run(custom.io, [

@@ -1,5 +1,5 @@
 import { CliError } from './errors';
-import { VERSION } from './version';
+import { CLI_USER_AGENT } from './version';
 
 export interface ClientOptions {
   origin: string;
@@ -42,7 +42,7 @@ export class ApiClient {
         redirect: 'manual',
         headers: {
           'X-API-Key': this.opts.apiKey,
-          'User-Agent': `mnfst-cli/${VERSION}`,
+          'User-Agent': CLI_USER_AGENT,
           ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),

@@ -1,4 +1,4 @@
-import { Controller, Post, Req, Res, Inject, Logger } from '@nestjs/common';
+import { Controller, Delete, Get, Post, Req, Res, Inject, Logger } from '@nestjs/common';
 import { requireMcpAuth } from '@better-auth/mcp';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { fromNodeHeaders } from 'better-auth/node';
@@ -112,6 +112,25 @@ export class McpController {
     };
   }
 
+  /**
+   * Streamable HTTP clients open a GET for the optional server-push stream
+   * right after `initialize`, and send DELETE to end a session. This transport
+   * is stateless JSON-only and offers neither, and the spec says such a server
+   * MUST answer 405 — the JSON 404 the `/api/` prefix otherwise produces reads
+   * to clients as a broken endpoint and is logged on every connect.
+   */
+  @Get()
+  @Public()
+  async rejectGet(@Res() res: Response): Promise<void> {
+    await sendWebResponse(methodNotAllowedResponse(), res);
+  }
+
+  @Delete()
+  @Public()
+  async rejectDelete(@Res() res: Response): Promise<void> {
+    await sendWebResponse(methodNotAllowedResponse(), res);
+  }
+
   @Post()
   @Public()
   async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
@@ -157,6 +176,17 @@ function internalErrorResponse(): globalThis.Response {
       id: null,
     }),
     { status: 500, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+function methodNotAllowedResponse(): globalThis.Response {
+  return new globalThis.Response(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: { code: -32000, message: 'Method not allowed' },
+      id: null,
+    }),
+    { status: 405, headers: { 'Content-Type': 'application/json', Allow: 'POST' } },
   );
 }
 
