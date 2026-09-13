@@ -489,7 +489,13 @@ export class ProviderClient {
               }),
             }
           : { ...result, response };
-      if (affinity) this.codexAffinity.capture(affinity.storeKey, qualifiedResult.response);
+      if (affinity) {
+        this.codexAffinity.capture(
+          affinity.storeKey,
+          qualifiedResult.response,
+          affinity.incarnation,
+        );
+      }
       return {
         ...qualifiedResult,
         wireRequestBody,
