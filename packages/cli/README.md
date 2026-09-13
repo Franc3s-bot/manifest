@@ -54,26 +54,34 @@ and fail rather than prompt. Run `mnfst --help` for the full command list.
 
 ## Telemetry
 
-The CLI sends one anonymous event per command, on by default. The **entire** payload is:
+The CLI records one anonymous event per command in a local spool
+(`~/.config/manifest/telemetry-spool.jsonl`, mode `0600`) and ships the spool in **one request
+per install per day** — the first command that runs 24 h after the last send (or the very
+first command, so a new install is counted the day it appears). Nothing is sent per command.
+The spool is capped at 500 events; a failed send is retried at most hourly. The **entire**
+payload is:
 
-| Field         | Value                                                                                                                                                                                                                             |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `anon_id`     | A persistent anonymous **install id** — a random UUID minted on first run and stored at `~/.config/manifest/telemetry-id` (mode `0600`). It identifies an install, not a person, tenant, or machine. Delete the file to reset it. |
-| `cli_version` | The `mnfst` version.                                                                                                                                                                                                              |
-| `command`     | The command **name** only, as registered (`agent create`, `provider connect`) — never arguments.                                                                                                                                  |
-| `ok`          | Whether the command exited `0`.                                                                                                                                                                                                   |
-| `duration_ms` | Wall-clock duration, clamped to 0–600000.                                                                                                                                                                                         |
-| `os`          | `darwin`, `linux`, `win32`, or `other`.                                                                                                                                                                                           |
-| `schema_version` | Payload schema version (currently `1`).                                                                                                                                                                                        |
-| `agent_runtime`  | Coarse coding-agent id (for example `claude-code` or `codex`) when a supported agent drives the CLI; omitted otherwise.                                                                                                        |
+| Field                    | Value                                                                                                                                                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `anon_id`                | A persistent anonymous **install id** — a random UUID minted on first run and stored at `~/.config/manifest/telemetry-id` (mode `0600`). It identifies an install, not a person, tenant, or machine. Delete the file to reset it. |
+| `cli_version`            | The `mnfst` version.                                                                                                                                                                                                              |
+| `os`                     | `darwin`, `linux`, `win32`, or `other`.                                                                                                                                                                                           |
+| `schema_version`         | Payload schema version (currently `1`).                                                                                                                                                                                           |
+| `events[]`               | One entry per command run since the last send, each with only the fields below.                                                                                                                                                   |
+| `events[].command`       | The command **name** only, as registered (`agent create`, `provider connect`) — never arguments.                                                                                                                                  |
+| `events[].ok`            | Whether the command exited `0`.                                                                                                                                                                                                   |
+| `events[].duration_ms`   | Wall-clock duration, clamped to 0–600000.                                                                                                                                                                                         |
+| `events[].at`            | When it ran, UTC, minute precision.                                                                                                                                                                                               |
+| `events[].agent_runtime` | Coarse coding-agent id (for example `claude-code` or `codex`) when a supported agent drives the CLI; omitted otherwise.                                                                                                           |
 
 Nothing else is collected: no arguments, agent or provider names, URLs, hostnames, prompts,
-API keys, tokens, file paths, or IP-derived data. The last two fields are fixed enums, never
-free text. The request is fire-and-forget with a 500 ms timeout, and every failure is swallowed.
+API keys, tokens, file paths, or IP-derived data. `os` and `agent_runtime` are fixed enums, never
+free text. The daily request is fire-and-forget with a 1.5 s timeout, and every failure is
+swallowed — the spool is simply kept for the next attempt.
 
 - **Opt out:** `MANIFEST_TELEMETRY_DISABLED=1` (also accepts `true`).
 - **Redirect:** `MANIFEST_CLI_TELEMETRY_ENDPOINT=<url>` overrides the default endpoint
-  (`https://telemetry.manifest.build/v1/cli-event`) — useful for self-hosted collection or
+  (`https://telemetry.manifest.build/v1/cli-report`) — useful for self-hosted collection or
   for inspecting exactly what is sent.
 
 Design spec: `docs/superpowers/specs/2026-07-31-manifest-cli-design.md` (local-only).

@@ -155,9 +155,10 @@ Run (key injection, 1Password-style)
     The key never crosses stdout or your transcript.
 
 Environment: MANIFEST_URL, MANIFEST_API_KEY (overrides stored login)
-Telemetry: one anonymous event per command — a persistent anonymous install id
-(a random UUID stored at ~/.config/manifest/telemetry-id), the command name,
-CLI version, ok, duration, and os. Never arguments, agent names, URLs, or keys.
+Telemetry: anonymous, batched — commands are spooled locally and sent once a day
+in one request: a persistent anonymous install id (a random UUID stored at
+~/.config/manifest/telemetry-id), command names, CLI version, ok, duration, and os.
+Never arguments, agent names, URLs, or keys.
 Disable with MANIFEST_TELEMETRY_DISABLED=1. Details: packages/cli/README.md.
 Credentials are stored per-host in ~/.config/manifest/config.json (mode 0600).`;
 
