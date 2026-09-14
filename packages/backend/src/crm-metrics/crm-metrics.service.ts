@@ -106,6 +106,12 @@ const COHORT_SQL = `
  * production. That worst case still fits the 1.5s budget, but the margin is
  * the reason this stays one probe per row and never an aggregate.
  *
+ * Anyone on the pivot waiting list is excluded. They raised their hand for
+ * exactly this product and are worked by hand, one at a time — a templated
+ * signup email landing on top of that conversation would be a worse
+ * experience than no email. `waitlist_claims` is ~60 rows with a unique
+ * index on email, so the anti-join is free.
+ *
  * The join to `tenants` must stay LEFT. Tenants are created lazily on first
  * agent creation, so a user who signed up and never built anything has no
  * tenant row at all — 1,274 verified users in production, 144 of them on
@@ -123,6 +129,9 @@ const SIGNUPS_SQL = `
     LEFT JOIN tenants t ON t.owner_user_id = u.id
     WHERE u."emailVerified" = true
       AND u."createdAt" > $1
+      AND NOT EXISTS (
+        SELECT 1 FROM waitlist_claims w WHERE lower(w.email) = lower(u.email)
+      )
   )
   SELECT s.email, s.user_name, s.signed_up_at, a.last_request_at
   FROM signups s

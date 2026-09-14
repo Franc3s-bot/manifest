@@ -533,6 +533,16 @@ describe('CrmMetricsService', () => {
       expect(sqlFor('WITH signups AS MATERIALIZED')).toBe('');
     });
 
+    it('excludes anyone on the pivot waiting list, in the query itself', async () => {
+      // Those people are worked by hand; the exclusion lives in SQL so no
+      // consumer can forget to apply it.
+      await service.getCorporateSignups(365, NOW);
+
+      const sql = sqlFor('WITH signups AS MATERIALIZED');
+      expect(sql).toContain('NOT EXISTS');
+      expect(sql).toContain('FROM waitlist_claims w WHERE lower(w.email) = lower(u.email)');
+    });
+
     it('checks for the index the lateral probe depends on', async () => {
       await service.getCorporateSignups(365, NOW);
 

@@ -35,6 +35,9 @@ export interface CohortRow {
 /**
  * One corporate signup: a verified user on an organisation domain.
  *
+ * Never someone on the pivot waiting list: those people are worked by hand
+ * and must not also receive the templated signup email.
+ *
  * Deliberately thinner than `CrmHealedUser`. Per-tenant request aggregates
  * (error counts, 30-day volume) cost a heap fetch per row and took 22s across
  * this cohort in production; a single index probe for the latest request is

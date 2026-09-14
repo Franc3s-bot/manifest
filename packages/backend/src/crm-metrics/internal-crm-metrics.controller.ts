@@ -103,6 +103,9 @@ export class InternalCrmMetricsController {
    * A corporate address implies a team, and a team calling third-party APIs is
    * the product's audience whether or not they ever routed an LLM request
    * through the gateway. `has_traffic` is what the copy branches on.
+   *
+   * Excludes anyone who claimed the pivot waiting list: that cohort is worked
+   * by hand and lives on the `conversions` route.
    */
   @Public()
   @Get('signups')

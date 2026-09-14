@@ -333,6 +333,20 @@ describe('Internal CRM metrics (e2e)', () => {
       expect(signupFor(res.body, 'support@acmecorp.io')).toBeUndefined();
     });
 
+    it('omits anyone who claimed the pivot waiting list', async () => {
+      // Waitlist people are contacted by hand. Match is case-insensitive,
+      // because the claim form and the auth record need not agree on case.
+      await addUser('signup-wl', 'ada@waitlisted.io');
+      await ds.query(
+        `INSERT INTO waitlist_claims (id, email, source, claimed_at) VALUES ($1, $2, 'self-hosted', now())`,
+        [uuid(), 'Ada@Waitlisted.io'],
+      );
+
+      const res = await get(nextSignupWindow()).set('x-internal-secret', SECRET).expect(200);
+
+      expect(signupFor(res.body, 'ada@waitlisted.io')).toBeUndefined();
+    });
+
     it('omits unverified signups', async () => {
       await ds.query(
         `INSERT INTO "user" (id, name, email, "emailVerified", "createdAt")
