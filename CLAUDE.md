@@ -1,12 +1,12 @@
 # Manifest Development Guidelines
 
-Last updated: 2026-09-03
+Last updated: 2026-09-14
 
 ## What Manifest Is
 
 Manifest is a smart model router for **AI agents**. It sits between an agent and its LLM providers, scores each request, and routes it to the cheapest model that can handle it. The dashboard tracks logical requests and their provider attempts, costs, and tokens across any agent that speaks OpenAI-compatible HTTP.
 
-**"Harness" is the dashboard word for an agent.** The UI now labels agents **Harnesses** (nav item "Harnesses", routes under `/harnesses`, categories `AI agent` / `App AI SDK` / `Coding Assistant` from `CATEGORY_LABELS` in `packages/shared/src/agent-type.ts`). This is a **copy-level rename only**: backend code, database tables (`agents`, `agent_messages`, …), API routes (`/api/v1/agents/*`), and entity/service names all still say *agent*. Legacy `/agents/*` dashboard URLs redirect to `/harnesses/*`. When writing UI copy say "harness"; when writing code or API docs keep "agent".
+**"Harness" is the dashboard word for an agent.** The UI now labels agents **Harnesses** (nav item "Harnesses", routes under `/harnesses`, categories `AI agent` / `Automation` / `App AI SDK` / `Coding Assistant` from `CATEGORY_LABELS` in `packages/shared/src/agent-type.ts`). This is a **copy-level rename only**: backend code, database tables (`agents`, `agent_messages`, …), API routes (`/api/v1/agents/*`), and entity/service names all still say *agent*. Legacy `/agents/*` dashboard URLs redirect to `/harnesses/*`. When writing UI copy say "harness"; when writing code or API docs keep "agent".
 
 **Pivot note:** Manifest is pivoting toward "the self-healing layer for APIs" (see the README banner). The dashboard shows a sidebar `PivotAnnouncement` card with a waiting-list modal in every deployment mode (per-session dismiss); waiting-list claims land on `POST /api/v1/waitlist/pivot/claim` and record their origin (cloud vs self-hosted). The open-source gateway remains available and maintained.
 
@@ -15,6 +15,8 @@ Manifest is a smart model router for **AI agents**. It sits between an agent and
 Wingman — the gateway tester for sending requests against a Manifest backend while impersonating any of the supported agents (useful for routing/header-classifier reproductions) — lives in its own repo at [`mnfst/wingman`](https://github.com/mnfst/wingman) and is hosted at [`wingman.manifest.build`](https://wingman.manifest.build). The dashboard embeds it as an iframe drawer **in dev mode only** — it is dead-code-eliminated from production / self-hosted bundles via `__DEV_MODE__`. The backend allows the hosted Wingman origin through CORS in both dev and production (production also honors `WINGMAN_CORS_ORIGINS`), while the CSP `frame-src` that permits the drawer iframe stays dev-only; both are wired in `packages/backend/src/cors-csp-config.ts`.
 
 **Whenever working in dev mode (`/serve`, `npm run dev`, etc.), the Wingman drawer is expected to be available** — open the FAB at the bottom-right of the dashboard (or hit ⌘/Ctrl+Shift+W) and confirm the iframe loads `https://wingman.manifest.build` cleanly. The drawer is part of the dev surface area, so a broken iframe means the dev environment is broken. `/serve` is **dev-only** — never use it to validate production behavior.
+
+**Three management surfaces share one REST API.** The dashboard, the `mnfst` CLI (`packages/cli/`), and the remote MCP server (`packages/backend/src/mcp/`) all drive the same `/api/v1/*` services with the same tenant scoping. Add a capability to the service layer once, then expose it on whichever surfaces need it; never fork logic per surface. See [CLI login](#cli-login-mnfst-login) and [Remote MCP server](#remote-mcp-server) below.
 
 ## IMPORTANT: Cloud Mode Always
 
@@ -76,10 +78,13 @@ packages/
 │   │   ├── app.module.ts                    # Root module (guards: ApiKey, Session, Throttler)
 │   │   ├── config/app.config.ts             # Environment variable config
 │   │   ├── auth/
-│   │   │   ├── auth.instance.ts             # Better Auth singleton (email/pass + 3 OAuth)
+│   │   │   ├── auth.instance.ts             # Better Auth singleton (email/pass + 3 OAuth + jwt/mcp plugins)
 │   │   │   ├── auth.module.ts               # Registers SessionGuard as APP_GUARD
 │   │   │   ├── session.guard.ts             # Cookie session auth via Better Auth
-│   │   │   └── current-user.decorator.ts    # @CurrentUser() param decorator
+│   │   │   ├── current-user.decorator.ts    # @CurrentUser() param decorator
+│   │   │   ├── cli-auth.controller.ts, cli-auth.service.ts # Browser login for the mnfst CLI (PKCE code → `cli` PAT)
+│   │   │   ├── me.controller.ts             # GET /api/v1/me identity probe (tenant, user, auth method, expiry)
+│   │   │   └── mcp-scopes.ts                # mcp:read / mcp:write scope constants (leaf module, no Better Auth import)
 │   │   ├── database/
 │   │   │   ├── database.module.ts           # TypeORM PostgreSQL config
 │   │   │   ├── database-seeder.service.ts   # Seeds demo data (users, agents, security events)
@@ -88,10 +93,11 @@ packages/
 │   │   │   ├── ollama-sync.service.ts       # Ollama model sync
 │   │   │   ├── quality-score.util.ts        # Model quality scoring
 │   │   │   └── seed-messages.ts             # Demo request/provider-attempt seed data
-│   │   ├── entities/                        # TypeORM entities (24 entities)
+│   │   ├── entities/                        # TypeORM entities (25 entities)
 │   │   │   ├── tenant.entity.ts             # Multi-tenant root
 │   │   │   ├── agent.entity.ts              # Agent (belongs to tenant)
 │   │   │   ├── agent-api-key.entity.ts      # OTLP ingest keys (mnfst_*)
+│   │   │   ├── cli-auth-code.entity.ts      # Short-lived PKCE codes for `mnfst login`
 │   │   │   └── ...                          # request, agent-message (provider attempt), tenant-provider, tier-assignment, header-tier, etc.
 │   │   ├── common/
 │   │   │   ├── guards/api-key.guard.ts      # X-API-Key header auth (timing-safe)
@@ -110,11 +116,11 @@ packages/
 │   │   │   ├── guards/agent-key-auth.guard.ts # Bearer token auth (agent API keys)
 │   │   │   └── services/api-key.service.ts  # Agent onboarding (creates tenant+agent+key)
 │   │   ├── routing/                         # LLM routing (providers, tiers, proxy, scorer)
-│   │   │   ├── proxy/                       # OpenAI-compatible proxy (anthropic/google adapters, attempt recording)
+│   │   │   ├── proxy/                       # OpenAI-compatible proxy (anthropic/google adapters, fallback chain, attempt recording, caller-classifier)
 │   │   │   ├── autofix/                     # Autofix self-healing (Phoenix client + heal-once flow)
 │   │   │   ├── routing-core/               # Tier, provider, specificity services + cache
 │   │   │   ├── resolve/                     # Scoring-based tier + specificity resolution
-│   │   │   ├── custom-provider/             # Custom provider CRUD
+│   │   │   ├── custom-provider/             # Custom provider CRUD (+ `alias`, the public model-id prefix in /v1/models)
 │   │   │   ├── header-tiers/               # Header-based tier overrides
 │   │   │   ├── oauth/                       # OAuth flows (Gemini, OpenAI, Kiro, MiniMax)
 │   │   │   └── specificity.controller.ts   # Specificity routing CRUD endpoints
@@ -138,7 +144,9 @@ packages/
 │   │   ├── crm-metrics/                     # Cloud-only internal feed: Autofix-healed cohort + waitlist claims (secret-gated)
 │   │   ├── cors-csp-config.ts               # Wingman CORS/CSP origin allowlists
 │   │   ├── sentry/                          # Sentry init-options builder (SENTRY_DSN-gated)
-│   │   └── telemetry/                       # Anonymous self-hosted telemetry
+│   │   ├── telemetry/                       # Anonymous self-hosted telemetry
+│   │   ├── version/                         # GET /api/v1/version — self-hosted "new version available" check
+│   │   └── mcp/                             # Remote MCP server (OAuth 2.1 bearer, stateless per-POST, tools/ per domain)
 │   └── test/                                # E2E tests (supertest)
 ├── frontend/
 │   ├── src/
@@ -173,6 +181,8 @@ packages/
 │   │   │   ├── Upgrade.tsx                  # Billing/plan upgrade page
 │   │   │   ├── Help.tsx                     # Help page
 │   │   │   ├── AgentLimitsRedirect.tsx, AgentMessagesRedirect.tsx # Legacy per-harness URL redirects
+│   │   │   ├── CliAuth.tsx                  # /cli/auth — approve a `mnfst login` browser request
+│   │   │   ├── Consent.tsx                  # /consent — OAuth consent screen for MCP clients
 │   │   │   └── NotFound.tsx                 # 404 page
 │   │   ├── services/
 │   │   │   ├── auth-client.ts               # Better Auth SolidJS client
@@ -188,7 +198,9 @@ packages/
 │   │   ├── layouts/                         # Layout components
 │   │   └── styles/
 │   └── tests/
-└── shared/                           # Shared TypeScript types + helpers (consumed by backend and frontend)
+├── shared/                           # Shared TypeScript types + helpers (consumed by backend and frontend)
+├── cli/                              # `mnfst` management CLI (private; bin/mnfst.js, commands/, generated provider catalog + skill content)
+└── manifest/                         # Code-free shell package holding the canonical Manifest version (see Releases)
 ```
 
 Beyond `packages/`, the repo root also carries:
@@ -279,6 +291,8 @@ npm run build && npm start
 npm test --workspace=packages/backend          # Jest unit tests
 npm run test:e2e --workspace=packages/backend  # Jest e2e tests
 npm test --workspace=packages/frontend         # Vitest tests
+npm test --workspace=packages/shared           # Jest unit tests
+npm test --workspace=packages/cli              # Jest unit tests (mnfst CLI)
 ```
 
 ### Database Migrations
@@ -313,9 +327,11 @@ Three global guards run on every request (order matters):
 2. **ApiKeyGuard** (`common/guards/api-key.guard.ts`) — Falls through if session already set. Otherwise reads the `X-API-Key` header and first looks it up against the tenant-scoped `ApiKey` entity (`api_keys` table, hashed with scrypt) — this is the primary multi-tenant credential path. Only if no DB match is found does it fall back to a timing-safe compare against the single `API_KEY` env var. Use `@Public()` to skip both guards.
 3. **ThrottlerGuard** — Rate limiting.
 
+`mnfst` CLI tokens are ordinary `api_keys` rows named `cli` (`CLI_KEY_NAME` in `auth/cli-auth.service.ts`), so they ride the `ApiKeyGuard` path with no special casing; the guard also enforces their sliding and absolute TTLs. The remote MCP route is `@Public()` because it carries its own credential (an OAuth 2.1 bearer) — see [Remote MCP server](#remote-mcp-server).
+
 ### Better Auth Setup
 
-- **Instance**: `auth/auth.instance.ts` — `betterAuth()` with `emailAndPassword` + 3 social providers (Google, GitHub, Discord). Each provider only activates when both `CLIENT_ID` and `CLIENT_SECRET` env vars are set.
+- **Instance**: `auth/auth.instance.ts` — `betterAuth()` with `emailAndPassword` + 3 social providers (Google, GitHub, Discord). Each provider only activates when both `CLIENT_ID` and `CLIENT_SECRET` env vars are set. Plugins: `jwt()` and `@better-auth/mcp`'s `mcp()` (the OAuth 2.1 authorization server for the remote MCP endpoint, resource-bound to `${BETTER_AUTH_URL}/api/v1/mcp`, scopes from `auth/mcp-scopes.ts`).
 - **Mounting**: In `main.ts`, Better Auth is mounted as Express middleware at `/api/auth/*splat` **before** `express.json()` (it needs raw body control). NestJS body parsing is re-added after for all other routes.
 - **Frontend client**: `services/auth-client.ts` — `createAuthClient()` from `better-auth/solid`.
 - **Social login in dev**: OAuth callback URLs point to `:3001` (`BETTER_AUTH_URL`). Social login only works when accessing the app on port **3001** (production build), not on Vite's `:3000` dev server.
@@ -334,6 +350,32 @@ async handler(@CurrentUser() user: AuthUser) {
 }
 ```
 
+### CLI login (`mnfst login`)
+
+`packages/cli/` is the `mnfst` management CLI: a thin wrapper over the `/api/v1` REST API (JSON on stdout, exit `0`/`1`, never interactive mid-task). One global tenant credential unlocks every command; per-agent `mnfst_*` keys are outputs only (written to `--key-file` paths with mode `0600`), never inputs. The package is `private: true` and not yet on npm — build with `npm run build --workspace=packages/cli` and run `node packages/cli/bin/mnfst.js`. `packages/cli/README.md` is the user-facing reference; the repo also ships a `mnfst-cli` skill under `.claude/skills/`.
+
+The default login is a browser flow, PKCE-protected so an intercepted code is useless without the verifier:
+
+1. The CLI opens the dashboard at `/cli/auth` (`pages/CliAuth.tsx`) with a `state` and an S256 `code_challenge`.
+2. The signed-in user approves; the page calls `POST /api/v1/cli/authorize` (session-only — an API key caller gets 403) and receives a short-lived code stored in `cli_auth_codes`.
+3. The CLI exchanges it at `POST /api/v1/cli/token` (public — the code is the credential, with `state` + `code_verifier`) for a `cli` PAT in `api_keys`; `expiresAt` is ISO-8601 UTC.
+4. `DELETE /api/v1/cli/token` revokes the calling PAT on `mnfst logout` (best-effort).
+
+Non-interactive alternatives: `--token-stdin` or `--token-env`. The secret is never a CLI argument. `GET /api/v1/me` is the identity probe (`{ tenantId, userId, authMethod, expiresAt }`); it fails closed with 401 for the env `API_KEY` operator fallback because that credential attaches no tenant. Token lifetime: `CLI_TOKEN_TTL_DAYS` (sliding, default 30) capped by `CLI_TOKEN_ABSOLUTE_TTL_DAYS` (hard ceiling from issuance, default 90).
+
+The CLI refuses HTTP redirects (so the key cannot leak cross-origin) and strips inherited `MANIFEST_AGENT_KEY` / `MANIFEST_API_KEY` from `mnfst run` children. `mnfst routing test` sends `User-Agent: mnfst-cli/<version>` so gateway caller attribution (`routing/proxy/caller-classifier.ts`, which also recognises the n8n node's `n8n-nodes-manifest/<version>` UA) can tell CLI test traffic apart from real agent traffic in request details.
+
+### Remote MCP server
+
+`POST /api/v1/mcp` (`mcp/mcp.controller.ts`) is a remote MCP server over stateless Streamable HTTP: a fresh `McpServer` per POST (`mcp-server.factory.ts`), closed when the request ends, so no session affinity is needed. GET and DELETE answer **405 + `Allow: POST`** as the spec requires for a stateless JSON transport (a 404 made clients log an error on every connect).
+
+- **Auth**: the route is `@Public()` to skip the session/API-key guards, and `requireMcpAuth` from `@better-auth/mcp` is the real gate. Better Auth's MCP plugin is the authorization server (PKCE, resource-bound JWT access tokens, CIMD client identity, RFC 8414/9728 discovery). A missing or dead token answers 401 with `WWW-Authenticate: … resource_metadata=…`, which is how a client learns it must run OAuth. `mcp-auth.ts` maps the verified token's `sub` to a tenant through `TenantCacheService`, so tools are scoped exactly like the dashboard and CLI; a tenant-less user gets 401.
+- **Discovery**: `mcp-discovery.ts` (mounted in `main.ts`) serves the OAuth documents at the well-known **root** paths (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/api/v1/mcp]`) in addition to Better Auth's `/api/auth/.well-known/…`, because clients start from the MCP origin's root.
+- **Consent**: `pages/Consent.tsx` at `/consent` is the OAuth consent screen.
+- **Scopes**: `mcp:read` is required for every token; each `register*Tools()` returns before registering its write tools unless `operator.scopes` has `mcp:write`, so a read-only client never sees them (the server `instructions` string tells it to reconnect with the write scope). Revealing an ingest key also requires `mcp:write` because it is a live secret.
+- **Tools** (`mcp/tools/*.tools.ts`): identity, agents, environment (+ a `doctor` that walks dependencies in order), providers (including custom providers), routing (status, fallbacks, Autofix, recording, custom/header tiers), models/pricing, and the request ledger. They call the same services as the REST controllers through `McpToolDeps` (`tool-deps.ts`); `tool-result.ts` is the shared result envelope.
+- **Testing**: `auth.instance.ts` is ESM-only and cannot load under Jest on Node 22, which is why the scope constants live in the leaf module `auth/mcp-scopes.ts` — import from there in guards, tools, and specs.
+
 ## Multi-Tenancy Model
 
 ```
@@ -345,7 +387,7 @@ User (Better Auth) ──→ Tenant ──→ Agent ──→ AgentApiKey (mnfst
 - **Tenant** (`tenants` table): Created automatically on first agent creation. `tenant.owner_user_id` = `user.id` is the ONLY user→tenant link (resolved through `TenantCacheService`); `tenant.name` mirrors it for display until repurposed as a slug.
 - **Agent** (`agents` table): Belongs to a tenant. Unique constraint on `[tenant_id, name]`.
 - **AgentApiKey** (`agent_api_keys` table): One-to-one with agent. `mnfst_*` format key for OTLP ingestion.
-- **ApiKey** (`api_keys` table): A separate, tenant-scoped credential (not per-agent) used for dashboard/API access — the primary key `ApiKeyGuard` checks. Distinct from `AgentApiKey`.
+- **ApiKey** (`api_keys` table): A separate, tenant-scoped credential (not per-agent) used for dashboard/API access — the primary key `ApiKeyGuard` checks. Distinct from `AgentApiKey`. `mnfst login` PATs are rows of this table named `cli`.
 - **Onboarding flow**: `ApiKeyGeneratorService.onboardAgent()` creates tenant (if new) + agent + API key via three sequential inserts.
 
 ### Data Isolation
@@ -410,6 +452,11 @@ Every resource belongs to a tenant; users only authenticate and (optionally) app
 | GET                       | `/api/v1/events`                                | Session                             | SSE real-time events                                                                                        |
 | GET                       | `/api/v1/github/stars`                          | Public                              | GitHub star count                                                                                           |
 | GET                       | `/api/v1/version`                               | Session/API Key                     | Running version + latest GitHub release for the self-hosted update badge (24h cache; off in cloud)          |
+| GET                       | `/api/v1/me`                                    | Session/API Key (tenant required)   | Identity probe for CLI/API clients: `{ tenantId, userId, authMethod, expiresAt }`; env `API_KEY` gets 401    |
+| POST                      | `/api/v1/cli/authorize`                         | Session only                        | Browser side of `mnfst login`: mints a PKCE-bound short-lived code                                          |
+| POST/DELETE               | `/api/v1/cli/token`                             | Public (code + verifier) / API Key  | Exchange the code for a `cli` PAT; DELETE revokes the calling PAT on logout                                 |
+| POST                      | `/api/v1/mcp`                                   | OAuth 2.1 bearer (`mcp:read`/`mcp:write`) | Remote MCP server (stateless Streamable HTTP); GET/DELETE answer 405 + `Allow: POST`                  |
+| GET                       | `/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/api/v1/mcp]` | Public | OAuth discovery for MCP clients (root aliases of Better Auth's `/api/auth/.well-known/…`)   |
 
 ## Environment Variables
 
@@ -428,10 +475,16 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - `FRONTEND_PORT` — Extra trusted origin port for Better Auth.
 - `API_KEY` — Secret for programmatic API access (X-API-Key header).
 - `CLI_TOKEN_TTL_DAYS` — Sliding TTL in days for CLI-minted tokens (`mnfst login`); every authenticated request pushes the expiry out again. Default: `30`
+- `CLI_TOKEN_ABSOLUTE_TTL_DAYS` — Hard ceiling in days from issuance for CLI-minted tokens; the sliding TTL never outlives it. Default: `90`
 - `THROTTLE_TTL` — Rate limit window in ms. Default: `60000`
 - `THROTTLE_LIMIT` — Max requests per window. Default: `100`
 - `DB_POOL_MAX` — PostgreSQL connection pool size. Default: `10`
 - `RUN_MIGRATIONS_ON_BOOT` — Whether the app runs pending migrations at startup. Default: `true`; set `false` for multi-replica deploys where only one instance should migrate.
+- `MANIFEST_MIGRATION_FORCE` — Set `1` to let the tenant-scoping migrations (`1792500000000`, `1792600000000`) delete pre-tenant rows with a NULL `tenant_id` instead of aborting boot with instructions. One-off upgrade escape hatch; never set it permanently.
+- `MODELPARAMS_API_URL` / `MODELPARAMS_API_DISABLED` — Live refresh of the modelparams provider-parameter catalog (`routing-core/provider-param-spec.service.ts`) from `https://modelparams.dev/api/v1/models.json`, fire-and-forget on boot. Override the URL, or set `DISABLED=true` to stay on the vendored `modelparams` package data (air-gapped installs).
+- `MANIFEST_FRONTEND_DIR` / `MANIFEST_EMBEDDED` — Internal. Custom path to the built frontend (`common/utils/frontend-path.ts`), and a flag that skips the auto `bootstrap()` in `main.ts` when the backend is embedded by another process.
+- `ANNOUNCE_APP_URL` / `DOCTOR_TUTORIAL_URL` — Inputs to the release-announcement React Email template only; the sending tool lives outside this repo. Not read by the server.
+- `PLUGIN_OTLP_ENDPOINT` — Dead. Still listed in `.env.example` but no code reads it since OTLP ingest was removed; safe to delete.
 - `MIGRATION_DATABASE_URL` / `BACKFILL_DATABASE_URL` — Cloud-only direct (non-PgBouncer) database URLs used for migrations and backfills; unset on self-hosted (falls back to `DATABASE_URL`).
 - `PROVIDER_TIMEOUT_MS` — Per-attempt timeout (ms) for upstream provider requests. Default: `180000`
 - `STREAM_WARMUP_MS` — Timeout (ms) to wait for the first chunk of a streaming response before trying a fallback. Default: `15000`
@@ -461,7 +514,7 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - The Phoenix healer URL is **not** configurable. It is the `AUTOFIX_URL` constant in `routing/autofix/autofix-healing-config.ts`; production (cloud and self-hosted alike) always heals against it, dev/test always uses the in-process mock. To switch Autofix off, use `AUTOFIX_GLOBAL_ENABLED=false`. See [Autofix](#autofix-self-healing-via-phoenix).
 - `AUTOFIX_HEALING_API_KEY` — Sent as `x-api-key` on every call to Phoenix. Required for a cloud/production Phoenix that enforces a static key; omit it for a keyless dev/test Phoenix. **Self-hosted installs need no key**: with no key set, Manifest announces its anonymous install id instead (see [Autofix](#autofix-self-healing-via-phoenix)).
 - `AUTOFIX_GLOBAL_ENABLED` — Set `false` to disable Autofix for all agents (default on). Companions: `AUTOFIX_TIMEOUT_MS` (per heal call, default `10000`), `AUTOFIX_REPAIRABLE_STATUSES` (default `400,404,422`).
-- `AUTOFIX_REPORT_ALL_4XX` — Set `true` to stream an agent's request-side 4xx (4xx except 401/402/403/429) to Phoenix's `POST /api/heal/observe` as evidence, carrying the full request body. Serves no fix and creates no heal attempt; it only lets Phoenix see the body that failed. Wider than the heal path in scope (not limited to `AUTOFIX_REPAIRABLE_STATUSES`, and it catches fallback-model failures the heal path never reports) but **gated to agents with Autofix on** — `AutofixService.isActiveFor()`, the same per-agent flag that healing checks. Turning Autofix on is what consents to sending failing requests to the healing service; the check fails closed. Off by default: a second, deployment-level switch on top. Manifest persists nothing; the body is secret-scrubbed, capped at 256 KB, batched, and dropped under backpressure. Skipped when Autofix already reported the same failure via `/api/heal`. See `routing/autofix/observation-reporter.ts`.
+- `AUTOFIX_REPORT_ALL_4XX` — Set `true` to stream an agent's request-side 4xx (4xx except 401/402/403/429) to Phoenix's `POST /api/heal/observe` as evidence, carrying the full request body. Serves no fix and creates no heal attempt; it only lets Phoenix see the body that failed. Wider than the heal path in scope (not limited to `AUTOFIX_REPAIRABLE_STATUSES`) but **gated to agents with Autofix on** — `AutofixService.isActiveFor()`, the same per-agent flag that healing checks. Turning Autofix on is what consents to sending failing requests to the healing service; the check fails closed. Off by default: a second, deployment-level switch on top. Manifest persists nothing; the body is secret-scrubbed, capped at 256 KB, batched, and dropped under backpressure. Skipped when Autofix already reported the same failure via `/api/heal`. See `routing/autofix/observation-reporter.ts`.
 - `REQUEST_RECORDING_STORAGE` / `REQUEST_RECORDING_FILESYSTEM_PATH` / `REQUEST_RECORDING_S3_*` / `REQUEST_RECORDING_RETENTION_DAYS` — Provider Attempt body recording storage + retention. See [Request Recording](#request-recording-provider-attempt-bodies).
 - `CREDITS_BASE_URL` / `CREDITS_MASTER_KEY` / `CREDITS_AUTO_PROVISION_ALLOWLIST` / `CREDITS_GEMINI_FREE_MAX_BUDGET` — Managed free providers (e.g. Gemini Free) via the credits gateway (default base URL `https://credits.manifest.build`; free-provider budget default `10`).
 - `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRO_PRICE_ID` — Billing (cloud only). See `packages/backend/src/billing/`.
@@ -508,6 +561,10 @@ Every failure Manifest itself produces — as opposed to one a provider returned
 `ERROR_ORIGINS` (in `packages/shared/src/error-taxonomy.ts`) has six values. `request` means the caller sent a body Manifest could not route — not the operator's setup (`config`), not a limit they set (`policy`), and not a Manifest bug (`internal`).
 
 `request` is a member of `MANIFEST_ERROR_ORIGINS`. Do not confuse the error-origin value with the `requests` table: it classifies who caused an error. That membership is load-bearing because it keeps caller-caused failures out of provider reliability metrics and inside the `origin=manifest` filter shorthand. Any new origin that is not a provider round-trip belongs there too.
+
+### Fallback exhaustion is a provider error, not a Manifest code
+
+When the primary and every fallback fail, the response **says what the provider said**: the message leads with the primary provider's own sentence followed by a one-line summary of every attempt, `source` is always `provider`, and `code` holds only the provider's own code. Exhaustion is a routing outcome, carried by `fallback_exhausted: true` in the body and the `X-Manifest-Fallback-Exhausted` header — it is **not** an error class and gets no `M###` code. Each `attempted_fallbacks[]` entry carries its sanitized `message`, `code`, and `auth_type`, plus a request-scoped `autofix` summary (`{ applied, original_status, retry_status }`) on the primary and on any hop where Phoenix was consulted. The provider-error parsers also understand FastAPI-style `{detail}` bodies (how ChatGPT Codex rejects an unsupported model) and bare `{"error": "…"}` strings, so those no longer collapse to a generic "Bad request to upstream provider".
 
 ## Request Recording (Provider Attempt bodies)
 
@@ -567,9 +624,17 @@ send one aggregate usage report per 24h to `TELEMETRY_ENDPOINT` (default
   `oauthAccessToken`; access tokens live 15 min, so tokens-per-24h is the MCP
   activity proxy), `mcp_clients_by_name` (declared client name whitelisted to
   known MCP hosts, else `"other"`, NULL → `"unknown"`). Missing OAuth tables
-  degrade to zeros, never a failed report. The CLI itself also posts one
-  anonymous event per command to `/v1/cli-event` on the telemetry host from
-  the user's machine (`packages/cli/src/telemetry.ts`).
+  degrade to zeros, never a failed report. The CLI itself reports from the
+  user's machine (`packages/cli/src/telemetry.ts`), **not per command**: each
+  command appends one anonymous event to a local spool
+  (`~/.config/manifest/telemetry-spool.jsonl`, mode 0600, capped at 500) and the
+  spool ships as one envelope per install per day to `/v1/cli-report` on the
+  telemetry host (the very first command flushes immediately; a failed send is
+  retried at most hourly). The envelope carries `schema_version`, `anon_id`,
+  `cli_version`, `os`, `target` (`cloud` | `self-hosted` — the class of Manifest
+  the install points at, never the URL) and an `events[]` array of
+  `{command, ok, duration_ms, agent_runtime?, at}`. Same
+  `MANIFEST_TELEMETRY_DISABLED=1` opt-out.
 - Runtime: `platform` (`process.platform`), `arch` (`process.arch`)
 
 User-facing spec: https://manifest.build/docs/self-hosted#telemetry
@@ -669,11 +734,11 @@ Still to come (not in this phase): a migration assistant (task-specific → head
 
 ## Autofix (self-healing via Phoenix)
 
-**Autofix** repairs a failing request before the fallback chain runs. When an agent request fails with a **repairable request-side 4xx** (default allow-list `400,404,422` — never 401/403/429/5xx), Manifest hands the failed request + normalized provider error to an external healing service (**Phoenix**), gets back a patched request, and resends it **once**. It runs **before** `shouldTriggerFallback`, so the fallback chain is the safety net if healing doesn't clear the error. It is available to every tenant and toggled **per agent** (`agents.autofix_enabled`).
+**Autofix** repairs a failing request before the next hop of the fallback chain runs. When an agent request fails with a **repairable request-side 4xx** (default allow-list `400,404,422` — never 401/403/429/5xx), Manifest hands the failed request + normalized provider error to an external healing service (**Phoenix**), gets back a patched request, and resends it **once** on the same transport. It runs **before** `shouldTriggerFallback` on the primary **and on every failed fallback hop** (`proxy-fallback.service.ts` `maybeHealFallback()`): a fallback model that rejects a request-side param can carry its own Phoenix patch, and retrying it in place recovers the request instead of recording a dead hop and burning the rest of the chain. The fallback chain remains the safety net when healing doesn't clear the error. It is available to every tenant and toggled **per agent** (`agents.autofix_enabled`); consent is enforced inside `maybeHeal()` for primary and fallback alike.
 
 **Per-agent default is deployment-mode-dependent.** `agents.autofix_enabled` is **nullable**: `NULL` means "no explicit choice — inherit the mode default", which is **ON in cloud, OFF in self-hosted** (resolved by `AutofixService.resolveEnabled()` via `isSelfHosted()`, computed once at boot). An explicit `true`/`false` (the user flipping the Settings toggle) always wins. The `GET/PATCH …/autofix` endpoints return the _resolved_ effective value, so the UI shows the right default state without persisting one. Migration `1799000300000` drops the old blanket `false` default and resets pre-feature `false` rows to `NULL` so they inherit the mode default.
 
-**Scope:** non-streaming responses + streaming that fails before the first byte (a repairable 4xx makes `providerResponse.ok=false` before any client bytes are sent). **One attempt only — there is no retry budget.** If the single patched retry still fails, Manifest reports the outcome to Phoenix and hands off to fallback.
+**Scope:** non-streaming responses + streaming that fails before the first byte (a repairable 4xx makes `providerResponse.ok=false` before any client bytes are sent). **One attempt per hop — there is no retry budget.** If the single patched retry still fails, Manifest reports the outcome to Phoenix and hands off to the next fallback.
 
 **Explicit models use provider passthrough.** A concrete model that is missing from Manifest's discovered catalog still routes when its provider can be identified and the matching credential is enabled on the harness. The provider—not the cached catalog—is authoritative on whether the model exists. A real provider `model_not_found` response follows the standard `maybeHeal` path, so Phoenix receives the actual provider/auth/protocol/error and any renamed model is re-resolved through the same passthrough logic. M302 remains for requests with no unambiguous connected provider route (for example, an unknown bare ID or a bare ID spanning multiple auth connections); those requests never contacted a provider and are not synthesized into Autofix failures.
 
@@ -684,7 +749,7 @@ Still to come (not in this phase): a migration assistant (task-specific → head
 - `phoenix.types.ts` — the wire contract. `provider-error-normalizer.ts` — turns a raw 4xx body into `{message,type,param,code}`. `autofix.types.ts` — internal `AutofixRecord` / `AutofixChainEntry`.
 - `autofix-health-probe.ts` — on boot (`OnApplicationBootstrap`), in production only, pings Phoenix `GET /api/health` once (fire-and-forget, never blocks/fails boot) and warns if unreachable — so blocked egress or a down Phoenix surfaces at deploy, not on the first repairable 4xx.
 - **Contract guardrail (anti-drift):** `phoenix.types.ts` is kept in lockstep with Phoenix's OpenAPI, vendored at `contract/phoenix-openapi.yaml`. `__tests__/phoenix-contract.spec.ts` (ajv) fails CI if the status enums or required fields drift — the status unions live as `as const` arrays (`HEAL_STATUSES`/`ISSUE_STATUSES`/`OUTCOME_STATUSES`) so they're compared to the spec at runtime. Refresh with `npm run contract:refresh --workspace=packages/backend` (uses `gh`; needs read access to the private `mnfst/phoenix`). `.github/workflows/phoenix-contract-drift.yml` flags weekly when the vendored copy falls behind Phoenix `main` (needs a `PHOENIX_CONTRACT_TOKEN` secret).
-- **Hook:** `proxy.service.ts`, after the primary forward and _before_ `shouldTriggerFallback`. `ProxyResult.autofix` threads the record to the recorder.
+- **Hooks:** `proxy.service.ts`, after the primary forward and _before_ `shouldTriggerFallback`; and `proxy-fallback.service.ts` (`maybeHealFallback()`), after each failed fallback forward, when the hop carries a wire body and a `retryWireBody` hook. `ProxyResult.autofix` threads the primary record to the recorder; a healed fallback hop records the original failure as its own terminal provider attempt plus the patched retry.
 
 **Self-hosted identity is an identifier, not a credential.** A self-hosted install with no `AUTOFIX_HEALING_API_KEY` announces `X-Manifest-Instance: <install_id>` on every Phoenix call, alongside `X-Manifest-Version` and `X-Manifest-Harness`. That id is the **same anonymous `install_metadata.install_id` the telemetry sender uses** — one identity per install, so Phoenix heal history and Peacock telemetry can be correlated on it. It is deliberately not secret and there is **no registration handshake**: Phoenix creates the instance row the first time it sees an id. A handshake would only have carried `version`, which already rides on every request.
 
@@ -726,6 +791,8 @@ The registry exports derived maps used throughout the codebase:
 - `expandProviderNames()` — expands a set of names to include aliases
 
 **Do NOT duplicate the provider list here.** Read `PROVIDER_REGISTRY` in `common/constants/providers.ts` for the current list of supported providers, their IDs, aliases, and OpenRouter prefix mappings.
+
+**Custom providers have an `alias`** (`custom_providers.alias`, nullable, unique per tenant case-insensitively): the readable prefix their models publish under in `/v1/models` (`vercel-ai-gateway/alibaba/qwen-3-14b` instead of `custom:<uuid>/alibaba/qwen-3-14b`). It defaults to the provider name, is editable at creation and later, and the proxy accepts **both** the alias form and the internal `custom:<uuid>/…` form in the `model` field, so existing client configs keep working. Existing rows were backfilled on upgrade. Do not add a third naming scheme.
 
 ### Adding a New Specificity Category
 
@@ -789,7 +856,7 @@ All pricing comes from a single source:
 
 ## Releases
 
-The workspace packages are **not published to npm**: `packages/backend`, `packages/frontend`, `packages/shared`, and `packages/manifest` are all `private: true`. Manifest itself ships exclusively as the Docker image at `manifestdotbuild/manifest` (built from `docker/Dockerfile`).
+The workspace packages are **not published to npm**: `packages/backend`, `packages/frontend`, `packages/shared`, `packages/cli`, and `packages/manifest` are all `private: true` (the CLI is meant to be published later; today it is built and linked from the monorepo). Manifest itself ships exclusively as the Docker image at `manifestdotbuild/manifest` (built from `docker/Dockerfile`).
 
 The one npm-published artifact in the repo is the **n8n community node** `n8n-nodes-manifest` (`integrations/n8n-nodes-manifest/`, currently v0.2.2). It is standalone — outside the npm workspaces, Turborepo, and Changesets — with its own build and publish flow. The repo-root `nodes/` and `credentials/` directories are identical mirrors of its sources (required by n8n's community-node scanner, which looks at the repo root).
 
@@ -797,7 +864,7 @@ The one npm-published artifact in the repo is the **n8n community node** `n8n-no
 
 `packages/manifest/` is a **code-free shell package** that exists only to hold the canonical "Manifest version". It has no `src/`, no tests, no dependencies — just `package.json`, `README.md`, and (after the first release) a `CHANGELOG.md`. The real backend and frontend live under `packages/backend/` and `packages/frontend/` as before.
 
-`.changeset/config.json` has `"ignore": ["manifest-backend", "manifest-frontend", "manifest-shared"]`, so when a contributor runs `npx changeset`, **only `manifest` is a selectable target**. Bumps to `manifest-backend` / `manifest-frontend` / `manifest-shared` are silently discarded. Always target `manifest` regardless of which files you actually changed. A CI check (`scripts/check-changesets.js`, wired into the `changeset-check` job) enforces this: a changeset that targets an ignored package fails the PR, because it makes `changeset version` a no-op and breaks the Release workflow with "No commits between main and changeset-release/main".
+`.changeset/config.json` has `"ignore": ["manifest-backend", "manifest-frontend", "manifest-shared", "mnfst-cli"]`, so when a contributor runs `npx changeset`, **only `manifest` is a selectable target**. Bumps to `manifest-backend` / `manifest-frontend` / `manifest-shared` / `mnfst-cli` are silently discarded. Always target `manifest` regardless of which files you actually changed. A CI check (`scripts/check-changesets.js`, wired into the `changeset-check` job) enforces this: a changeset that targets an ignored package fails the PR, because it makes `changeset version` a no-op and breaks the Release workflow with "No commits between main and changeset-release/main".
 
 ### Adding a changeset
 
