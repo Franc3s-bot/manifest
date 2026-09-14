@@ -106,6 +106,77 @@ describe('isConsumerEmail', () => {
   it('leaves real company domains alone', () => {
     expect(isConsumerEmail('ada@stripe.com')).toBe(false);
   });
+
+  describe('brand families', () => {
+    // Every one of these reached the live feed on 2026-09-14 because the
+    // exact-match list did not enumerate them.
+    it.each([
+      'yahoo.de',
+      'yahoo.com.br',
+      'yahoo.co.jp',
+      'outlook.de',
+      'hotmail.de',
+      'live.de',
+      'bk.ru',
+      'list.ru',
+      'inbox.ru',
+      'tuta.io',
+      'tutamail.com',
+      'tutanota.com',
+      'disroot.org',
+      'mail.com',
+      'gmx.at',
+      'engineer.com',
+    ])('flags %s as a consumer country variant', (domain) => {
+      expect(isConsumerEmail(`ada@${domain}`)).toBe(true);
+    });
+
+    it('does not mistake a corporate mail subdomain for the mail.com family', () => {
+      // `mail.acme.com`: second label is a brand, not a 2-3 letter TLD.
+      expect(isConsumerEmail('ada@mail.acme.com')).toBe(false);
+    });
+
+    it('does not flag a company whose name merely starts with a brand word', () => {
+      expect(isConsumerEmail('ada@livestorm.co')).toBe(false);
+      expect(isConsumerEmail('ada@freshmail.io')).toBe(false);
+      expect(isConsumerEmail('ada@webflow.com')).toBe(false);
+    });
+  });
+
+  describe('relays and disposables', () => {
+    it.each([
+      'privaterelay.appleid.com',
+      'passinbox.com',
+      'passmail.net',
+      'mozmail.com',
+      'sharklasers.com',
+      'yopmail.com',
+      'harakirimail.com',
+      'agentmail.to',
+    ])('flags %s', (domain) => {
+      expect(isConsumerEmail(`ada@${domain}`)).toBe(true);
+    });
+  });
+
+  describe('universities', () => {
+    it.each([
+      'berkeley.edu',
+      'csu.fullerton.edu',
+      'iit.du.ac.bd',
+      'diu.edu.bd',
+      'alfalah.ac.id',
+      'blps.tyc.edu.tw',
+      'pace.edu.in',
+      'campus.technion.ac.il',
+    ])('flags %s as academic', (domain) => {
+      expect(isConsumerEmail(`ada@${domain}`)).toBe(true);
+    });
+
+    it('does not flag a company that happens to contain "edu"', () => {
+      expect(isConsumerEmail('ada@educative.io')).toBe(false);
+      expect(isConsumerEmail('ada@procedure.com')).toBe(false);
+    });
+  });
 });
 
 describe('isCorporateSignupEmail', () => {

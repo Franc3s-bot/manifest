@@ -10,7 +10,7 @@
  */
 
 /** Our own addresses. Emailing ourselves about our own launch is noise. */
-const INTERNAL_DOMAINS = ['manifest.build', 'buddyweb.fr', 'mnfstinc.com'];
+const INTERNAL_DOMAINS = ['manifest.build', 'buddyweb.fr', 'mnfstinc.com', 'mnfstinc.dev'];
 
 /** Team members signed up on a personal address, so the domain rule misses them. */
 const INTERNAL_EMAILS = ['sebastien.conejo@gmail.com'];
@@ -137,9 +137,119 @@ const CONSUMER_DOMAINS = [
   'zoho.com',
   'fastmail.com',
   'hey.com',
+  'engineer.com',
+  'consultant.com',
+  'usa.com',
+  'europe.com',
   'example.com',
   'test.com',
 ];
+
+/**
+ * Consumer providers with country variants, matched as a family.
+ *
+ * An exact list cannot keep up: the first live run of the signup feed let
+ * through yahoo.de, yahoo.com.br, outlook.de, bk.ru, tuta.io and thirty more
+ * that were simply not enumerated. The brand followed by a 2-3 letter TLD and
+ * an optional country suffix covers the whole family — `yahoo.de`,
+ * `yahoo.com.br`, `yahoo.co.jp` — without touching `mail.acme.com`, whose
+ * second label is not a TLD.
+ */
+const CONSUMER_FAMILIES = new RegExp(
+  '^(?:' +
+    [
+      'gmail',
+      'googlemail',
+      'yahoo',
+      'ymail',
+      'rocketmail',
+      'outlook',
+      'hotmail',
+      'live',
+      'msn',
+      'aol',
+      'icloud',
+      'me',
+      'mac',
+      'proton',
+      'protonmail',
+      'pm',
+      'tuta',
+      'tutanota',
+      'tutamail',
+      'gmx',
+      'web',
+      'mail',
+      'email',
+      'inbox',
+      'bk',
+      'list',
+      'yandex',
+      'rambler',
+      'disroot',
+      'posteo',
+      'mailbox',
+      'riseup',
+      'zoho',
+      'fastmail',
+      'hey',
+      'qq',
+      'foxmail',
+      'naver',
+      'daum',
+      'seznam',
+      'laposte',
+      'orange',
+      'wanadoo',
+      'free',
+      'sfr',
+      'comcast',
+    ].join('|') +
+    ')\\.[a-z]{2,3}(?:\\.[a-z]{2})?$',
+);
+
+/**
+ * Privacy relays and disposable inboxes seen in production signups. Real
+ * people, but the address is not an organisation's and often not even a
+ * lasting one. Kept separate from CONSUMER_DOMAINS so the two lists say what
+ * they are.
+ */
+const RELAY_AND_DISPOSABLE_DOMAINS = [
+  'privaterelay.appleid.com',
+  'passinbox.com',
+  'passmail.net',
+  'passmail.com',
+  'passfwd.com',
+  'mozmail.com',
+  'relay.firefox.com',
+  'addy.io',
+  'anonaddy.me',
+  'simplelogin.co',
+  'simplelogin.fr',
+  'startmail.com',
+  'sharklasers.com',
+  'guerrillamail.com',
+  'guerrillamail.info',
+  'grr.la',
+  'yopmail.com',
+  'harakirimail.com',
+  'tempmail10.com',
+  'mailinator.com',
+  'agentmail.to',
+  'maildrop.cc',
+  'getnada.com',
+  'dispostable.com',
+  'trashmail.com',
+  '10minutemail.com',
+];
+
+/**
+ * Universities. `.edu`, `.edu.xx` and `.ac.xx` cover every national scheme
+ * seen in production (Bangladesh, India, Korea, Taiwan, the UK, Indonesia,
+ * Vietnam, Brazil…). A student is a real person with a real address, but not
+ * the "team behind a corporate domain" this feed exists to find.
+ */
+const ACADEMIC_DOMAIN = /(?:^|\.)(?:edu|ac)\.[a-z]{2,3}$|\.edu$/;
 
 /** Signups on one domain inside this span, with no traffic, look scripted. */
 const CLUSTER_WINDOW_MS = 30 * 86_400_000;
@@ -156,15 +266,21 @@ export function domainOf(email: string): string {
 }
 
 /**
- * True when the address belongs to a consumer mailbox or a privacy relay,
- * rather than to an organisation.
+ * True when the address does not belong to an organisation: a consumer
+ * mailbox (exact list or brand family), a privacy relay or disposable inbox,
+ * or a university.
  *
  * Subdomains count (`mail.duck.com`), matching `isExcludedEmail`.
  */
 export function isConsumerEmail(email: string): boolean {
   const domain = domainOf(email);
   if (!domain) return true;
-  return matchesDomain(domain, CONSUMER_DOMAINS);
+  return (
+    matchesDomain(domain, CONSUMER_DOMAINS) ||
+    matchesDomain(domain, RELAY_AND_DISPOSABLE_DOMAINS) ||
+    CONSUMER_FAMILIES.test(domain) ||
+    ACADEMIC_DOMAIN.test(domain)
+  );
 }
 
 /**
