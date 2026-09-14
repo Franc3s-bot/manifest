@@ -121,6 +121,44 @@
   margin-bottom: var(--gap-md);
 }
 
+.sidebar-pivot-modal__features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin: 0 0 var(--gap-lg);
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-pivot-modal__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+/* Check marks use the logo blue: brand art color, not a theme token. */
+.sidebar-pivot-modal__features svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #2430f0;
+}
+
+.sidebar-pivot-modal__features div {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-pivot-modal__features strong {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.sidebar-pivot-modal__features span {
+  color: hsl(var(--muted-foreground));
+}
+
 /* Joined state inside the waiting-list modal */
 .sidebar-pivot__joined {
   display: flex;
