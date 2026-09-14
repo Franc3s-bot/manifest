@@ -14,6 +14,20 @@ import { hasPivotJoined, markPivotJoined, submitPivotClaim } from '../services/w
 export const PIVOT_ARTICLE_URL =
   'https://manifest.build/blog/manifest-is-taking-a-new-direction/';
 const PIVOT_CARD_DISMISSED_KEY = 'pivot-card-dismissed';
+const PIVOT_FEATURES = [
+  {
+    title: 'Fix and retry automatically.',
+    detail: 'Failed requests are patched and retried in real time.',
+  },
+  {
+    title: 'Works with any API.',
+    detail: 'Internal APIs, third-party services and AI providers.',
+  },
+  {
+    title: 'Know what was fixed.',
+    detail: 'Get notified with the error, patch and lasting fix.',
+  },
+];
 
 /**
  * Bottom-of-sidebar announcement of the pivot. The card shows for everyone,
@@ -156,13 +170,32 @@ const PivotAnnouncement: Component = () => {
                 <img src="/logotype-dark.svg" alt="" class="auth-logo__img auth-logo__img--dark" />
               </div>
               <h2 class="modal-card__title" id="pivot-modal-title">
-                Manifest is becoming the self-healing layer for APIs
+                Your failed API requests can now fix themselves
               </h2>
               <p class="modal-card__desc" id="pivot-modal-description">
-                We're building a new product that fixes failed API requests on the fly,
-                independently of the gateway. The open-source gateway stays available and
-                maintained.
+                Manifest fixes failed API requests in real time, before they break your app. It
+                already reduced API errors by 36% on our LLM gateway.
               </p>
+              <ul class="sidebar-pivot-modal__features">
+                {PIVOT_FEATURES.map((feature) => (
+                  <li>
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="18"
+                      height="18"
+                      fill="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path d="M9 15.59 4.71 11.3 3.3 12.71l5 5c.2.2.45.29.71.29s.51-.1.71-.29l11-11-1.41-1.41L9.02 15.59Z" />
+                    </svg>
+                    <div>
+                      <strong>{feature.title}</strong>
+                      <span>{feature.detail}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
               <Show
                 when={!joined()}
                 fallback={
