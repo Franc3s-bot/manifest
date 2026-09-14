@@ -347,10 +347,17 @@ describe('proxy-response-handler', () => {
         expect.objectContaining({
           error: expect.objectContaining({
             type: 'api_error',
-            code: 'fallback_exhausted',
-            source: 'manifest',
+            code: null,
+            source: 'provider',
+            fallback_exhausted: true,
             primary_model: 'gpt-4o',
-            attempted_fallbacks: [{ model: 'claude-3-haiku', provider: 'anthropic', status: 429 }],
+            attempted_fallbacks: [
+              expect.objectContaining({
+                model: 'claude-3-haiku',
+                provider: 'anthropic',
+                status: 429,
+              }),
+            ],
           }),
         }),
       );
@@ -444,12 +451,16 @@ describe('proxy-response-handler', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: expect.objectContaining({
-            message,
+            message: expect.stringContaining(message),
             type: 'invalid_request_error',
             code: 'context_length_exceeded',
             source: 'provider',
             attempted_fallbacks: [
-              { model: 'claude-sonnet-4-6', provider: 'anthropic', status: 400 },
+              expect.objectContaining({
+                model: 'claude-sonnet-4-6',
+                provider: 'anthropic',
+                status: 400,
+              }),
             ],
           }),
         }),
@@ -490,7 +501,7 @@ describe('proxy-response-handler', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: expect.objectContaining({
-            message: '`temperature` is deprecated for this model.',
+            message: expect.stringContaining('`temperature` is deprecated for this model.'),
             type: 'invalid_request_error',
             code: 'deprecated_parameter',
             source: 'provider',
@@ -532,7 +543,7 @@ describe('proxy-response-handler', () => {
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           error: expect.objectContaining({
-            code: 'fallback_exhausted',
+            code: null,
             source: 'provider',
           }),
         }),
@@ -859,6 +870,219 @@ describe('proxy-response-handler', () => {
   });
 
   /* ── recordFallbackFailures ── */
+
+  describe('fallback-exhausted wire shape', () => {
+    const codexBody = JSON.stringify({
+      detail: "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    });
+
+    async function exhausted(opts: {
+      errorStatus?: number;
+      errorBody?: string;
+      failedFallbacks?: FailedFallback[];
+      autofix?: AutofixRecord;
+      meta?: Partial<RoutingMeta>;
+    }) {
+      const { res, headers } = mockResponse();
+      const meta = makeMeta({
+        model: 'gpt-5.4-mini',
+        auth_type: 'subscription',
+        ...opts.meta,
+      });
+      await handleProviderError(
+        res as any,
+        testCtx,
+        meta,
+        buildMetaHeaders(meta),
+        opts.errorStatus ?? 400,
+        opts.errorBody ?? 'not json',
+        opts.failedFallbacks ?? [
+          { model: 'grok-4.5', provider: 'xai', fallbackIndex: 0, status: 403, errorBody: 'nope' },
+        ],
+        mockRecorder() as any,
+        undefined,
+        undefined,
+        undefined,
+        opts.autofix,
+        'request-shape',
+      );
+      const body = res.json.mock.calls[0][0] as { error: Record<string, unknown> };
+      return { error: body.error, headers };
+    }
+
+    it('attributes an exhausted chain to the provider and keeps code free of the routing outcome', async () => {
+      const { error, headers } = await exhausted({});
+
+      expect(headers['X-Manifest-Fallback-Exhausted']).toBe('true');
+      expect(error).toEqual(
+        expect.objectContaining({
+          source: 'provider',
+          code: null,
+          status: 400,
+          fallback_exhausted: true,
+          auth_type: 'subscription',
+          primary_model: 'gpt-5.4-mini',
+          primary_provider: 'openai',
+        }),
+      );
+    });
+
+    it('keeps a structured provider code in the code slot', async () => {
+      const { error } = await exhausted({
+        errorBody: JSON.stringify({
+          error: { message: 'Insufficient quota', code: 'insufficient_quota' },
+        }),
+      });
+
+      expect(error.code).toBe('insufficient_quota');
+      expect(error.fallback_exhausted).toBe(true);
+    });
+
+    it("leads with the provider's own sentence and appends the attempt summary", async () => {
+      const { error } = await exhausted({
+        errorBody: codexBody,
+        failedFallbacks: [
+          { model: 'grok-4.5', provider: 'xai', fallbackIndex: 0, status: 403, errorBody: 'x' },
+          {
+            model: 'gemini-3.1-flash-lite',
+            provider: 'gemini',
+            fallbackIndex: 1,
+            status: 403,
+            errorBody: 'x',
+          },
+        ],
+      });
+
+      expect(error.message).toBe(
+        "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account. " +
+          'Every attempt failed: openai/gpt-5.4-mini 400, xai/grok-4.5 403, ' +
+          'gemini/gemini-3.1-flash-lite 403.',
+      );
+    });
+
+    it('projects each fallback hop with its sanitized message, code and auth type', async () => {
+      const { error } = await exhausted({
+        failedFallbacks: [
+          {
+            model: 'grok-4.5',
+            provider: 'xai',
+            fallbackIndex: 0,
+            status: 403,
+            authType: 'api_key',
+            errorBody: JSON.stringify({
+              error: {
+                message: 'Your API key does not have access to model grok-4.5',
+                code: 'permission_denied',
+              },
+            }),
+          },
+          {
+            model: 'deepseek-flash',
+            provider: 'opencode-go',
+            fallbackIndex: 1,
+            status: 403,
+            errorBody: 'forbidden',
+          },
+        ],
+      });
+
+      expect(error.attempted_fallbacks).toEqual([
+        {
+          model: 'grok-4.5',
+          provider: 'xai',
+          auth_type: 'api_key',
+          status: 403,
+          code: 'permission_denied',
+          message: 'Your API key does not have access to model grok-4.5',
+        },
+        {
+          model: 'deepseek-flash',
+          provider: 'opencode-go',
+          auth_type: null,
+          status: 403,
+          code: null,
+          message: 'Forbidden by upstream provider',
+        },
+      ]);
+    });
+
+    it('summarizes the primary Autofix attempt only when Phoenix was consulted', async () => {
+      const withAutofix = await exhausted({ autofix: failedAutofixRetry() });
+      expect(withAutofix.error.autofix).toEqual({
+        applied: true,
+        original_status: 400,
+        retry_status: 422,
+      });
+
+      const without = await exhausted({});
+      expect(without.error).not.toHaveProperty('autofix');
+    });
+
+    it('collapses a patched-then-failed fallback hop into one entry carrying its Autofix summary', async () => {
+      const retried = failedAutofixRetry();
+      const unfixable: AutofixRecord = {
+        groupId: 'grp-unfixable',
+        outcome: 'unfixable',
+        original_http_status: 403,
+        chain: [
+          {
+            attempt: 0,
+            origin: 'original',
+            request: {},
+            http_status: 403,
+            error: { message: 'x' },
+          },
+        ],
+      };
+      const { error } = await exhausted({
+        failedFallbacks: [
+          {
+            model: 'grok-4.5',
+            provider: 'xai',
+            fallbackIndex: 0,
+            status: 403,
+            errorBody: 'x',
+            autofix: unfixable,
+            autofixRole: 'original',
+          },
+          {
+            model: 'deepseek-flash',
+            provider: 'opencode-go',
+            fallbackIndex: 1,
+            status: 400,
+            errorBody: 'x',
+            autofix: retried,
+            autofixRole: 'original',
+          },
+          {
+            model: 'deepseek-flash',
+            provider: 'opencode-go',
+            fallbackIndex: 1,
+            status: 422,
+            errorBody: 'x',
+            autofix: retried,
+            autofixRole: 'retry',
+          },
+        ],
+      });
+
+      expect(error.attempted_fallbacks).toEqual([
+        expect.objectContaining({
+          model: 'grok-4.5',
+          status: 403,
+          autofix: { applied: false, original_status: 403, retry_status: null },
+        }),
+        expect.objectContaining({
+          model: 'deepseek-flash',
+          status: 422,
+          autofix: { applied: true, original_status: 400, retry_status: 422 },
+        }),
+      ]);
+      expect(error.message).toContain(
+        'Every attempt failed: openai/gpt-5.4-mini 400, xai/grok-4.5 403, opencode-go/deepseek-flash 422.',
+      );
+    });
+  });
 
   describe('recordFallbackFailures', () => {
     it('should return undefined when no fallbackFromModel', () => {

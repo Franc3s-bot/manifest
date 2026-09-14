@@ -401,32 +401,95 @@ function handleFallbackExhausted(
   );
 
   logger.warn(`Fallback chain exhausted: ${scrubSecrets(errorBody).slice(0, 200)}`);
-  const classified = classifyProviderError(errorStatus, errorBody);
-  const structured = parseStructuredProviderError(errorStatus, errorBody);
-  const providerCode = classified?.code ?? structured?.code;
   res.status(errorStatus);
   setHeaders(res, metaHeaders);
   res.setHeader('X-Manifest-Fallback-Exhausted', 'true');
+  const attempted = attemptedFallbackEntries(failedFallbacks, apiMode);
+  const primaryAutofix = autofixSummary(autofix);
+  // Every attempt reached a provider, so the error is provider-authored: the
+  // exhaustion is a routing outcome (the boolean + header), not an error class,
+  // and `code` keeps whatever the primary provider sent (null when nothing).
+  const primary = buildOpenAiCompatibleError(errorStatus, errorBody, {
+    source: 'provider',
+    provider: meta.provider,
+    model: meta.model,
+    apiMode,
+    extra: {
+      auth_type: meta.auth_type ?? null,
+      fallback_exhausted: true,
+      primary_model: meta.model,
+      primary_provider: meta.provider,
+      ...(primaryAutofix ? { autofix: primaryAutofix } : {}),
+      attempted_fallbacks: attempted,
+    },
+  });
   const responseBody = {
     ...(apiMode === 'messages' ? { type: 'error' } : {}),
-    error: buildOpenAiCompatibleError(errorStatus, errorBody, {
-      source: classified?.source ?? (structured ? 'provider' : 'manifest'),
-      code: providerCode ?? 'fallback_exhausted',
-      provider: meta.provider,
-      model: meta.model,
-      apiMode,
-      extra: {
-        primary_model: meta.model,
-        primary_provider: meta.provider,
-        attempted_fallbacks: failedFallbacks.map((f) => ({
-          model: f.model,
-          provider: f.provider,
-          status: f.status,
-        })),
-      },
-    }),
+    error: {
+      ...primary,
+      message: exhaustedMessage(primary.message as string, [
+        { provider: meta.provider, model: meta.model, status: errorStatus },
+        ...attempted,
+      ]),
+    },
   };
   res.json(responseBody);
+}
+
+/** Request-scoped Autofix evidence for the wire error body (never config). */
+function autofixSummary(
+  record: AutofixRecord | undefined,
+): { applied: boolean; original_status: number; retry_status: number | null } | undefined {
+  if (!record) return undefined;
+  const retry = getAutofixRetry(record);
+  return {
+    applied: retry !== undefined,
+    original_status: record.original_http_status,
+    retry_status: retry?.http_status ?? null,
+  };
+}
+
+/**
+ * One wire entry per fallback hop, each with the same sanitized message/code the
+ * primary gets. A patched retry and the original it replaced are two provider
+ * attempts (two audit rows) but one hop to the caller: keep the retry's entry
+ * and let its Autofix summary carry the pre-heal status.
+ */
+function attemptedFallbackEntries(
+  failedFallbacks: FailedFallback[],
+  apiMode?: ProxyApiMode,
+): Array<Record<string, unknown> & { provider: string; model: string; status: number }> {
+  const retriedHops = new Set(
+    failedFallbacks.filter((f) => f.autofixRole === 'retry').map((f) => f.fallbackIndex),
+  );
+  return failedFallbacks
+    .filter((f) => !(f.autofixRole === 'original' && retriedHops.has(f.fallbackIndex)))
+    .map((f) => {
+      const hop = buildOpenAiCompatibleError(f.status, f.errorBody, { apiMode });
+      const hopAutofix = autofixSummary(f.autofix);
+      return {
+        model: f.model,
+        provider: f.provider,
+        auth_type: f.authType ?? null,
+        status: f.status,
+        code: hop.code ?? null,
+        message: hop.message,
+        ...(hopAutofix ? { autofix: hopAutofix } : {}),
+      };
+    });
+}
+
+/**
+ * Lead with the primary provider's own sentence, then list the chain. No count:
+ * a patched-then-failed hop is two provider attempts but one entry here.
+ */
+function exhaustedMessage(
+  primaryMessage: string,
+  attempts: Array<{ provider: string; model: string; status: number }>,
+): string {
+  const lead = /[.!?]$/.test(primaryMessage) ? primaryMessage : `${primaryMessage}.`;
+  const list = attempts.map((a) => `${a.provider}/${a.model} ${a.status}`).join(', ');
+  return `${lead} Every attempt failed: ${list}.`;
 }
 
 export function recordFallbackFailures(

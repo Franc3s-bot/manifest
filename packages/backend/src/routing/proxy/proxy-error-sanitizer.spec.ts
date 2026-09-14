@@ -120,6 +120,74 @@ describe('sanitizeProviderError', () => {
     );
   });
 
+  it('preserves a FastAPI-style {detail} 4xx diagnostic in production', () => {
+    // ChatGPT Codex answers an unsupported model with `{detail}` and no `error`
+    // envelope. Dropping it hides the one sentence that explains the failure.
+    const body = JSON.stringify({
+      detail: "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    });
+
+    expect(sanitizeProviderError(400, body, 'production')).toBe(
+      "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    );
+  });
+
+  it('joins a FastAPI validation detail array into one diagnostic', () => {
+    const body = JSON.stringify({
+      detail: [
+        { loc: ['body', 'model'], msg: 'field required', type: 'value_error.missing' },
+        { loc: ['body', 'input'], msg: 'none is not an allowed value', type: 'type_error' },
+      ],
+    });
+
+    expect(sanitizeProviderError(422, body, 'production')).toBe(
+      'field required; none is not an allowed value',
+    );
+  });
+
+  it('falls back to the generic message when detail is empty or carries no msg entries', () => {
+    expect(sanitizeProviderError(400, JSON.stringify({ detail: '' }), 'production')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(
+      sanitizeProviderError(
+        422,
+        JSON.stringify({ detail: [null, 'plain', { loc: ['body'] }, { msg: '' }] }),
+        'production',
+      ),
+    ).toBe('Upstream provider rejected the request');
+  });
+
+  it('keeps the generic message for whitespace-only detail or error strings outside production', () => {
+    expect(sanitizeProviderError(400, JSON.stringify({ detail: '   ' }), 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(sanitizeProviderError(400, JSON.stringify({ error: ' \n ' }), 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(
+      sanitizeProviderError(422, JSON.stringify({ detail: [{ msg: '  ' }] }), 'development'),
+    ).toBe('Upstream provider rejected the request');
+  });
+
+  it('keeps the generic message when the body parses to a non-object outside production', () => {
+    expect(sanitizeProviderError(400, '42', 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(sanitizeProviderError(400, '["x"]', 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+  });
+
+  it('preserves a bare string error field in production', () => {
+    // Ollama and several OpenAI-compatible servers return `{"error":"..."}`.
+    const body = JSON.stringify({ error: 'model "llama9" not found, try pulling it first' });
+
+    expect(sanitizeProviderError(404, body, 'production')).toBe(
+      'model "llama9" not found, try pulling it first',
+    );
+  });
+
   it('redacts credentials from structured provider 4xx diagnostics in production', () => {
     const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
     const body = JSON.stringify({
