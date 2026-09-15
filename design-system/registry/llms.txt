@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (312 BEM blocks, 1693 classes)
+## Blocks (314 BEM blocks, 1698 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -229,6 +229,8 @@ hljs-title (syntax-highlight.css): hljs-title
 hljs-type (syntax-highlight.css): hljs-type
 hljs-variable (syntax-highlight.css): hljs-variable
 info-tooltip (tooltip.css): info-tooltip info-tooltip__bubble info-tooltip__icon
+integration-grid (wizard.css): integration-grid
+integration-panel (wizard.css): integration-panel__desc integration-panel__header integration-panel__tabs
 json-block (request-drawer.css): json-block json-block__size-notice
 json-block-wrap (request-drawer.css): json-block-wrap
 language-json (request-drawer.css): language-json
@@ -354,7 +356,7 @@ setup-segment (wizard.css): setup-segment setup-segment--full setup-segment__btn
 setup-step (wizard.css): setup-step__desc setup-step__heading
 setup-step-providers (overview.css): setup-step-providers
 setup-steps (controls.css): setup-steps setup-steps__content setup-steps__divider setup-steps__number setup-steps__step
-sidebar (controls.css, theme.css): sidebar sidebar--mobile-open sidebar__feedback sidebar__feedback-hint sidebar__feedback-title sidebar__footer sidebar__link sidebar__link--disabled sidebar__link-row sidebar__logo sidebar__logo-dot sidebar__section-add sidebar__section-label sidebar__spacer
+sidebar (controls.css, theme.css): sidebar sidebar--mobile-open sidebar__badge sidebar__feedback sidebar__feedback-hint sidebar__feedback-title sidebar__footer sidebar__link sidebar__link--disabled sidebar__link-row sidebar__logo sidebar__logo-dot sidebar__section-add sidebar__section-label sidebar__spacer
 sidebar-pivot (pivot.css): sidebar-pivot sidebar-pivot__bottom sidebar-pivot__btn sidebar-pivot__canvas sidebar-pivot__desc sidebar-pivot__dismiss sidebar-pivot__header sidebar-pivot__joined sidebar-pivot__title sidebar-pivot__top
 sidebar-pivot-modal (pivot.css): sidebar-pivot-modal sidebar-pivot-modal__features sidebar-pivot-modal__logo
 sidebar-upgrade (modals.css): sidebar-upgrade
@@ -444,16 +446,16 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .feed-item { gap: var(--gap-md) }  ← theme.css:588
 .feed-item { padding: 10px 0 }  ← theme.css:589
 .sidebar { padding: var(--gap-lg) 0 0 0 }  ← theme.css:785
-.theme-toggle { padding: 6px 12px }  ← theme.css:928
-.theme-toggle { width: 100% }  ← theme.css:937
-.chart-tooltip { font-size: var(--font-size-xs) }  ← theme.css:1014
-.expandable-card__fade { height: 64px }  ← theme.css:1045
-.expandable-card__fade { background: linear-gradient(transparent, hsl(var(--card)) 70%) }  ← theme.css:1046
-.expandable-card__fade { padding-bottom: 12px }  ← theme.css:1051
+.theme-toggle { padding: 6px 12px }  ← theme.css:943
+.theme-toggle { width: 100% }  ← theme.css:952
+.chart-tooltip { font-size: var(--font-size-xs) }  ← theme.css:1029
+.expandable-card__fade { height: 64px }  ← theme.css:1060
+.expandable-card__fade { background: linear-gradient(transparent, hsl(var(--card)) 70%) }  ← theme.css:1061
+.expandable-card__fade { padding-bottom: 12px }  ← theme.css:1066
 .modal { box-shadow: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px,
-    0 25px 50px -12px rgb(0 0 0 / 0.25) }  ← theme.css:1102
-.modal__close { width: 2rem }  ← theme.css:1127
-.modal__close { height: 2rem }  ← theme.css:1128
+    0 25px 50px -12px rgb(0 0 0 / 0.25) }  ← theme.css:1117
+.modal__close { width: 2rem }  ← theme.css:1142
+.modal__close { height: 2rem }  ← theme.css:1143
 .toast { align-items: flex-start }  ← toast.css:16
 .toast { gap: var(--gap-sm) }  ← toast.css:17
 .toast { padding: 12px var(--gap-md) }  ← toast.css:18
@@ -477,10 +479,10 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .chart-card { box-shadow: var(--card-shadow) }  at cards.css:86 loses to theme.css:285
 .chart-card__header { align-items: stretch }  at cards.css:92 loses to theme.css:291
 .chart-card__value-row { align-items: center }  at cards.css:160 loses to theme.css:323
-.chart-tooltip { font-size: var(--tooltip-font-size) }  at charts.css:78 loses to theme.css:1014
-.expandable-card__fade { height: 80px }  at charts.css:110 loses to theme.css:1045
-.expandable-card__fade { background: linear-gradient(transparent, hsl(var(--card)) 60%) }  at charts.css:111 loses to theme.css:1046
-.expandable-card__fade { padding-bottom: 16px }  at charts.css:116 loses to theme.css:1051
+.chart-tooltip { font-size: var(--tooltip-font-size) }  at charts.css:78 loses to theme.css:1029
+.expandable-card__fade { height: 80px }  at charts.css:110 loses to theme.css:1060
+.expandable-card__fade { background: linear-gradient(transparent, hsl(var(--card)) 60%) }  at charts.css:111 loses to theme.css:1061
+.expandable-card__fade { padding-bottom: 16px }  at charts.css:116 loses to theme.css:1066
 .toast { align-items: center }  at controls.css:124 loses to toast.css:16
 .toast { gap: 10px }  at controls.css:125 loses to toast.css:17
 .toast { padding: 12px 16px }  at controls.css:126 loses to toast.css:18
@@ -494,12 +496,12 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .feed-item { align-items: flex-start }  at data.css:507 loses to theme.css:587
 .feed-item { gap: 12px }  at data.css:508 loses to theme.css:588
 .feed-item { padding: 12px 0 }  at data.css:509 loses to theme.css:589
-.theme-toggle { width: 2rem }  at layout.css:141 loses to theme.css:937
-.theme-toggle { padding: 0 }  at layout.css:149 loses to theme.css:928
+.theme-toggle { width: 2rem }  at layout.css:141 loses to theme.css:952
+.theme-toggle { padding: 0 }  at layout.css:149 loses to theme.css:943
 .modal { box-shadow: var(--card-shadow),
-    0 25px 50px -12px rgb(0 0 0 / 0.25) }  at modals.css:22 loses to theme.css:1102
-.modal__close { width: 32px }  at modals.css:47 loses to theme.css:1127
-.modal__close { height: 32px }  at modals.css:48 loses to theme.css:1128
+    0 25px 50px -12px rgb(0 0 0 / 0.25) }  at modals.css:22 loses to theme.css:1117
+.modal__close { width: 32px }  at modals.css:47 loses to theme.css:1142
+.modal__close { height: 32px }  at modals.css:48 loses to theme.css:1143
 .setup-modal__header { align-items: flex-start }  at modals.css:64 loses to overview.css:15
 .setup-modal__next { padding: 8px 20px }  at modals.css:97 loses to overview.css:42
 .setup-modal__next { color: hsl(var(--primary-foreground)) }  at modals.css:101 loses to overview.css:46

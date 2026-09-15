@@ -841,6 +841,21 @@ h6 {
   font-weight: 500;
 }
 
+/* "New" pill on a nav entry. A showcase device with a short life: delete this
+   rule and the matching spans in Sidebar.tsx once the entries stop being new.
+   Same token pair as .setup-method__badge, so it follows the theme. */
+.sidebar__badge {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-3xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: hsl(var(--chart-1) / 0.15);
+  color: hsl(var(--chart-1));
+}
+
 /* Nav row pairing a link with the create button (Harnesses). */
 .sidebar__link-row {
   display: flex;

@@ -4,6 +4,7 @@
 .dark .platform-icon[src*='vercel'],
 .dark .platform-icon[src*='opencode'],
 .dark .platform-icon[src*='hermes'],
+.dark .platform-icon[src*='codex'],
 .dark .platform-icon[src*='other'] {
   filter: invert(1);
 }

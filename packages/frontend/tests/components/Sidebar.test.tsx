@@ -162,8 +162,23 @@ describe("Sidebar — global nav links", () => {
       "/providers/local",
       "/providers/usage-based",
       "/providers/subscriptions",
+      "/integrations/mcp",
+      "/integrations/cli",
       "/playground",
     ]);
+  });
+
+  it("shows the Integrations entries with their New pills", async () => {
+    const { container } = render(() => <Sidebar />);
+    await waitFor(() =>
+      expect(container.querySelector('a[href="/providers/local"]')).not.toBeNull(),
+    );
+    const mcp = container.querySelector('a[href="/integrations/mcp"]');
+    const cli = container.querySelector('a[href="/integrations/cli"]');
+    expect(mcp?.textContent).toContain("MCP server");
+    expect(cli?.textContent).toContain("CLI");
+    expect(mcp?.querySelector(".sidebar__badge")?.textContent).toBe("New");
+    expect(cli?.querySelector(".sidebar__badge")?.textContent).toBe("New");
   });
 });
 

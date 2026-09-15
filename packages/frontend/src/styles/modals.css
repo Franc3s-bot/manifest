@@ -237,6 +237,7 @@
 .dark .autofix-consent__agent-icon[src*='anthropic'],
 .dark .autofix-consent__agent-icon[src*='vercel'],
 .dark .autofix-consent__agent-icon[src*='opencode'],
+.dark .autofix-consent__agent-icon[src*='codex'],
 .dark .autofix-consent__agent-icon[src*='other'] {
   filter: invert(1);
 }

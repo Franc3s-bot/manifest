@@ -1825,6 +1825,24 @@
         "tooltip.css"
       ]
     },
+    "integration-grid": {
+      "classes": [
+        "integration-grid"
+      ],
+      "files": [
+        "wizard.css"
+      ]
+    },
+    "integration-panel": {
+      "classes": [
+        "integration-panel__desc",
+        "integration-panel__header",
+        "integration-panel__tabs"
+      ],
+      "files": [
+        "wizard.css"
+      ]
+    },
     "json-block": {
       "classes": [
         "json-block",
@@ -3568,6 +3586,7 @@
       "classes": [
         "sidebar",
         "sidebar--mobile-open",
+        "sidebar__badge",
         "sidebar__feedback",
         "sidebar__feedback-hint",
         "sidebar__feedback-title",
@@ -4490,63 +4509,63 @@
       "prop": "padding",
       "value": "6px 12px",
       "file": "theme.css",
-      "line": 928
+      "line": 943
     },
     {
       "selector": ".theme-toggle",
       "prop": "width",
       "value": "100%",
       "file": "theme.css",
-      "line": 937
+      "line": 952
     },
     {
       "selector": ".chart-tooltip",
       "prop": "font-size",
       "value": "var(--font-size-xs)",
       "file": "theme.css",
-      "line": 1014
+      "line": 1029
     },
     {
       "selector": ".expandable-card__fade",
       "prop": "height",
       "value": "64px",
       "file": "theme.css",
-      "line": 1045
+      "line": 1060
     },
     {
       "selector": ".expandable-card__fade",
       "prop": "background",
       "value": "linear-gradient(transparent, hsl(var(--card)) 70%)",
       "file": "theme.css",
-      "line": 1046
+      "line": 1061
     },
     {
       "selector": ".expandable-card__fade",
       "prop": "padding-bottom",
       "value": "12px",
       "file": "theme.css",
-      "line": 1051
+      "line": 1066
     },
     {
       "selector": ".modal",
       "prop": "box-shadow",
       "value": "rgba(0, 0, 0, 0.08) 0px 0px 0px 1px,\n    0 25px 50px -12px rgb(0 0 0 / 0.25)",
       "file": "theme.css",
-      "line": 1102
+      "line": 1117
     },
     {
       "selector": ".modal__close",
       "prop": "width",
       "value": "2rem",
       "file": "theme.css",
-      "line": 1127
+      "line": 1142
     },
     {
       "selector": ".modal__close",
       "prop": "height",
       "value": "2rem",
       "file": "theme.css",
-      "line": 1128
+      "line": 1143
     },
     {
       "selector": ".toast",
@@ -4706,7 +4725,7 @@
       "value": "var(--tooltip-font-size)",
       "file": "charts.css",
       "line": 78,
-      "losesTo": "theme.css:1014"
+      "losesTo": "theme.css:1029"
     },
     {
       "selector": ".expandable-card__fade",
@@ -4714,7 +4733,7 @@
       "value": "80px",
       "file": "charts.css",
       "line": 110,
-      "losesTo": "theme.css:1045"
+      "losesTo": "theme.css:1060"
     },
     {
       "selector": ".expandable-card__fade",
@@ -4722,7 +4741,7 @@
       "value": "linear-gradient(transparent, hsl(var(--card)) 60%)",
       "file": "charts.css",
       "line": 111,
-      "losesTo": "theme.css:1046"
+      "losesTo": "theme.css:1061"
     },
     {
       "selector": ".expandable-card__fade",
@@ -4730,7 +4749,7 @@
       "value": "16px",
       "file": "charts.css",
       "line": 116,
-      "losesTo": "theme.css:1051"
+      "losesTo": "theme.css:1066"
     },
     {
       "selector": ".toast",
@@ -4842,7 +4861,7 @@
       "value": "2rem",
       "file": "layout.css",
       "line": 141,
-      "losesTo": "theme.css:937"
+      "losesTo": "theme.css:952"
     },
     {
       "selector": ".theme-toggle",
@@ -4850,7 +4869,7 @@
       "value": "0",
       "file": "layout.css",
       "line": 149,
-      "losesTo": "theme.css:928"
+      "losesTo": "theme.css:943"
     },
     {
       "selector": ".modal",
@@ -4858,7 +4877,7 @@
       "value": "var(--card-shadow),\n    0 25px 50px -12px rgb(0 0 0 / 0.25)",
       "file": "modals.css",
       "line": 22,
-      "losesTo": "theme.css:1102"
+      "losesTo": "theme.css:1117"
     },
     {
       "selector": ".modal__close",
@@ -4866,7 +4885,7 @@
       "value": "32px",
       "file": "modals.css",
       "line": 47,
-      "losesTo": "theme.css:1127"
+      "losesTo": "theme.css:1142"
     },
     {
       "selector": ".modal__close",
@@ -4874,7 +4893,7 @@
       "value": "32px",
       "file": "modals.css",
       "line": 48,
-      "losesTo": "theme.css:1128"
+      "losesTo": "theme.css:1143"
     },
     {
       "selector": ".setup-modal__header",
@@ -5070,8 +5089,8 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 312,
-    "classes": 1693,
+    "blocks": 314,
+    "classes": 1698,
     "canonicalRules": 46,
     "ghostRules": 46
   }
