@@ -352,7 +352,7 @@ async handler(@CurrentUser() user: AuthUser) {
 
 ### CLI login (`mnfst login`)
 
-`packages/cli/` is the `mnfst` management CLI: a thin wrapper over the `/api/v1` REST API (JSON on stdout, exit `0`/`1`, never interactive mid-task). One global tenant credential unlocks every command; per-agent `mnfst_*` keys are outputs only (written to `--key-file` paths with mode `0600`), never inputs. The package is `private: true` and not yet on npm — build with `npm run build --workspace=packages/cli` and run `node packages/cli/bin/mnfst.js`. `packages/cli/README.md` is the user-facing reference; the repo also ships a `mnfst-cli` skill under `.claude/skills/`.
+`packages/cli/` is the `mnfst` management CLI: a thin wrapper over the `/api/v1` REST API (JSON on stdout, exit `0`/`1`, never interactive mid-task). One global tenant credential unlocks every command; per-agent `mnfst_*` keys are outputs only (written to `--key-file` paths with mode `0600`), never inputs. The package publishes to npm as `@mnfst/gateway-cli` (`npm i -g @mnfst/gateway-cli`, command still `mnfst`); from the monorepo, build with `npm run build --workspace=packages/shared && npm run build --workspace=packages/cli` and run `node packages/cli/bin/mnfst.js`. `packages/cli/README.md` is the user-facing reference; the repo also ships a `mnfst-cli` skill under `.claude/skills/`.
 
 The default login is a browser flow, PKCE-protected so an intercepted code is useless without the verifier:
 
@@ -856,7 +856,9 @@ All pricing comes from a single source:
 
 ## Releases
 
-The workspace packages are **not published to npm**: `packages/backend`, `packages/frontend`, `packages/shared`, `packages/cli`, and `packages/manifest` are all `private: true` (the CLI is meant to be published later; today it is built and linked from the monorepo). Manifest itself ships exclusively as the Docker image at `manifestdotbuild/manifest` (built from `docker/Dockerfile`).
+Most workspace packages are **not published to npm**: `packages/backend`, `packages/frontend`, `packages/shared`, and `packages/manifest` are all `private: true`. Manifest itself ships as the Docker image at `manifestdotbuild/manifest` (built from `docker/Dockerfile`).
+
+`packages/cli` is the exception: it publishes to npm as **`@mnfst/gateway-cli`**. The name is scoped and gateway-qualified because the bare `mnfst` name belongs to an unrelated project and `manifest` is the Manifest SDK; the binary stays `mnfst`. Its version **tracks the Manifest release** — it has no changeset target of its own and stays in the `.changeset/config.json` ignore list. The `publish-npm` job in `release.yml` runs on the same `should_publish` gate as the Docker image: it stamps the version from `packages/manifest/package.json` onto all three files that carry it (`packages/cli/package.json`, `src/version.ts`, and the generated `SKILL_VERSION` in `src/skill-content.gen.ts`, which `skill-content.spec.ts` pins to package.json) via `npm run set-version --workspace=packages/cli`, builds shared then the CLI, and publishes with provenance. Re-running the workflow for an already-published version is a no-op. Publishing needs the `NPM_TOKEN` repository secret.
 
 The one npm-published artifact in the repo is the **n8n community node** `n8n-nodes-manifest` (`integrations/n8n-nodes-manifest/`, currently v0.2.2). It is standalone — outside the npm workspaces, Turborepo, and Changesets — with its own build and publish flow. The repo-root `nodes/` and `credentials/` directories are identical mirrors of its sources (required by n8n's community-node scanner, which looks at the repo root).
 

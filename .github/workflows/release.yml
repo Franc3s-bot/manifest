@@ -153,3 +153,69 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+  # Publishes the management CLI to npm as @mnfst/gateway-cli. Gated on the same
+  # `should_publish` output as the Docker image, so the CLI version always
+  # matches the Manifest release it shipped with — that is why the package stays
+  # in the `.changeset/config.json` ignore list and has no changeset target of
+  # its own.
+  publish-npm:
+    needs: release
+    if: needs.release.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Stamp the CLI version from packages/manifest/package.json
+        run: npm run set-version --workspace=packages/cli
+      - name: Check whether this version is already on npm
+        id: published
+        run: |
+          # Re-running the workflow for an already-published version must be a
+          # no-op, not a red release: `npm publish` hard-fails on a duplicate
+          # version and the Docker job beside us is likewise idempotent.
+          #
+          # Only an E404 means "not published". Every other npm view failure —
+          # DNS, timeout, auth, registry 5xx — must stop the job, because
+          # treating it as "not published" would send a duplicate publish and
+          # redden the release for a reason that had nothing to do with it.
+          # Verified exit codes: version present -> 0; package or version
+          # absent -> 1 with E404 in the output.
+          VERSION=$(jq -r .version packages/cli/package.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          set +e
+          VIEW_OUTPUT=$(npm view "@mnfst/gateway-cli@${VERSION}" version 2>&1)
+          VIEW_STATUS=$?
+          set -e
+          if [ "$VIEW_STATUS" -eq 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "@mnfst/gateway-cli@${VERSION} is already published; skipping."
+          elif printf '%s' "$VIEW_OUTPUT" | grep -q 'E404'; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "@mnfst/gateway-cli@${VERSION} is not on npm yet; publishing."
+          else
+            echo "npm view failed for a reason other than E404; refusing to guess:" >&2
+            printf '%s\n' "$VIEW_OUTPUT" >&2
+            exit 1
+          fi
+      - name: Build shared, then the CLI
+        if: steps.published.outputs.skip != 'true'
+        # The CLI's `gen` step reads manifest-shared's build output to regenerate
+        # its provider catalog, so shared must be built first.
+        run: |
+          npm run build --workspace=packages/shared
+          npm run build --workspace=packages/cli
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        # access + provenance come from publishConfig in packages/cli/package.json.
+        run: npm publish --workspace=packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

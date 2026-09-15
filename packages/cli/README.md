@@ -4,9 +4,29 @@ Configure Manifest from the terminal (or from a coding agent): create agents, co
 
 ## Install / run
 
-The package is part of the monorepo (not yet published to npm):
+Published to npm as [`@mnfst/gateway-cli`](https://www.npmjs.com/package/@mnfst/gateway-cli).
+The package name is scoped and gateway-qualified because the bare `manifest` name on npm
+belongs to the Manifest SDK; the command you type stays `mnfst`.
 
 ```bash
+npm install -g @mnfst/gateway-cli
+mnfst --help
+```
+
+Or run it without installing:
+
+```bash
+npx @mnfst/gateway-cli --help
+```
+
+The published version tracks the Manifest release it ships with, so `mnfst --version`
+tells you which server version the CLI was built against.
+
+### From the monorepo
+
+```bash
+npm install
+npm run build --workspace=packages/shared
 npm run build --workspace=packages/cli
 node packages/cli/bin/mnfst.js --help
 # or link it:

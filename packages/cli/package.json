@@ -1,18 +1,50 @@
 {
-  "name": "mnfst-cli",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Manifest management CLI (mnfst) \u2014 configure agents, providers, and routing from the terminal",
+  "name": "@mnfst/gateway-cli",
+  "version": "6.24.0",
+  "description": "Manifest gateway management CLI (mnfst) — configure agents, providers, and routing from the terminal",
   "license": "MIT",
+  "homepage": "https://manifest.build/docs/cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mnfst/llm-gateway.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/mnfst/llm-gateway/issues"
+  },
+  "keywords": [
+    "manifest",
+    "llm",
+    "gateway",
+    "router",
+    "cli",
+    "ai-agents",
+    "openai-compatible"
+  ],
   "bin": {
     "mnfst": "./bin/mnfst.js"
   },
   "main": "dist/index.js",
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "npm run gen && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json",
+    "build": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && npm run gen && tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
-    "gen": "node scripts/generate-provider-catalog.cjs && node scripts/generate-skill-content.cjs"
+    "gen": "node scripts/generate-provider-catalog.cjs && node scripts/generate-skill-content.cjs",
+    "set-version": "node scripts/set-version.cjs"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
