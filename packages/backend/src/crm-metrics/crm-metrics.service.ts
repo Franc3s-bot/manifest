@@ -6,6 +6,7 @@ import { sqlIsSuccessStatus } from '../analytics/services/query-helpers';
 import {
   domainOf,
   isCorporateSignupEmail,
+  isMachineGeneratedDomain,
   isSignupCluster,
   isExcludedEmail,
 } from './crm-metrics.filters';
@@ -368,6 +369,7 @@ function buildSignups(rows: SignupRow[]): CrmCorporateSignup[] {
   const kept: CrmCorporateSignup[] = [];
   for (const signups of byDomain.values()) {
     if (isSignupCluster(signups)) continue;
+    if (isMachineGeneratedDomain(signups.map((s) => s.email.split('@')[0]))) continue;
     for (const signup of signups) {
       signup.domain_signups = signups.length;
       kept.push(signup);

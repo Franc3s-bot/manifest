@@ -652,6 +652,27 @@ describe('CrmMetricsService', () => {
       ]);
     });
 
+    it('drops a domain whose signups all look machine-generated', async () => {
+      // Temp-mail domains: Faker names, traffic, and every local part is
+      // letters-then-digits. The quiet-cluster rule misses them because they
+      // have traffic; this one catches them on the address shape.
+      setup({
+        signups: [
+          signupRow({ email: 'vatiy14692@aratrin.com', user_name: 'Mrs. Beaulah Shanahan' }),
+          signupRow({
+            email: 'xiyese3594@aratrin.com',
+            user_name: 'Test01',
+            last_request_at: '2026-09-01T00:00:00.000Z',
+          }),
+          signupRow({ email: 'ada@stripe.com' }),
+        ],
+      });
+
+      expect((await service.getCorporateSignups(365, NOW)).map((s) => s.email)).toEqual([
+        'ada@stripe.com',
+      ]);
+    });
+
     it('keeps a burst where somebody actually used the gateway', async () => {
       setup({
         signups: [
