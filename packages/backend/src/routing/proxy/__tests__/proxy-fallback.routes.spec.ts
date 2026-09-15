@@ -168,6 +168,48 @@ describe('ProxyFallbackService.tryFallbacks — route-aware path', () => {
 
   const body = { messages: [{ role: 'user', content: 'Hello' }], stream: false };
 
+  it("carries the caller's anthropic-beta flags onto an Anthropic fallback hop", async () => {
+    // A fallback that lands on Anthropic needs the beta header just as much as
+    // the primary did; without it a beta-gated body 400s on the recovery hop.
+    providerClient.forward.mockResolvedValue({
+      response: new Response('{}', { status: 200 }),
+      isGoogle: false,
+      isAnthropic: true,
+      isChatGpt: false,
+    });
+    const routes: ModelRoute[] = [
+      { provider: 'anthropic', authType: 'subscription', model: 'claude-sonnet-4' },
+    ];
+
+    await service.tryFallbacks(
+      'agent-1',
+      'user-1',
+      ['claude-sonnet-4'],
+      body,
+      false,
+      'sess-1',
+      'gpt-4o',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      routes,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'structured-outputs-2025-11-13',
+    );
+
+    expect(providerClient.forward.mock.calls[0][0].clientAnthropicBeta).toBe(
+      'structured-outputs-2025-11-13',
+    );
+  });
+
   it('uses route.provider and route.authType directly, skipping inference cascade', async () => {
     providerClient.forward.mockResolvedValue({
       response: new Response('{}', { status: 200 }),

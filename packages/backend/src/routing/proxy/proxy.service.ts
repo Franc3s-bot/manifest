@@ -412,6 +412,7 @@ export class ProxyService {
           primaryKeyLabel: route.keyLabel ?? undefined,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientAnthropicBeta: headers?.['anthropic-beta'],
         });
         if (fallbackResult) return fallbackResult;
       }
@@ -447,6 +448,7 @@ export class ProxyService {
       providerRegion: credentials.providerRegion,
       signatureLookup,
       thinkingLookup,
+      clientAnthropicBeta: headers?.['anthropic-beta'],
       paramMergeContext,
       tenantProviderId: credentials.tenantProviderId,
       startProviderAttempt,
@@ -536,6 +538,7 @@ export class ProxyService {
         primaryKeyLabel: credentials.keyLabel,
         startProviderAttempt,
         credentialDashboardUrl: dashboardUrl,
+        clientAnthropicBeta: headers?.['anthropic-beta'],
       });
       if (fallbackResult) {
         return {
@@ -645,6 +648,7 @@ export class ProxyService {
           primaryKeyLabel: credentials.keyLabel,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientAnthropicBeta: headers?.['anthropic-beta'],
         });
         if (fallbackResult) {
           return {
@@ -827,6 +831,7 @@ export class ProxyService {
       providerRegion: credentials.providerRegion,
       signatureLookup: ctx.signatureLookup,
       thinkingLookup: ctx.thinkingLookup,
+      clientAnthropicBeta: ctx.headers?.['anthropic-beta'],
       paramMergeContext: explicitModelOverride ? undefined : { agentId: ctx.agentId, scopeKey },
       tenantProviderId: credentials.tenantProviderId,
       startProviderAttempt: ctx.startProviderAttempt,
@@ -1189,6 +1194,8 @@ export class ProxyService {
     startProviderAttempt?: StartProviderAttempt;
     /** Dashboard URL embedded in mid-chain M100/M102 credential failure bodies. */
     credentialDashboardUrl?: string;
+    /** The caller's raw `anthropic-beta` header, forwarded on an Anthropic hop. */
+    clientAnthropicBeta?: string | string[];
   }): Promise<ProxyResult | null> {
     const {
       agentId,
@@ -1241,6 +1248,7 @@ export class ProxyService {
       args.credentialDashboardUrl,
       providerCacheKey,
       sessionCacheKey,
+      args.clientAnthropicBeta,
     );
 
     this.recordTierIfScoring(sessionMomentumKey, resolved.tier);

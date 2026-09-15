@@ -11,6 +11,7 @@ import {
 import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
 import { resolveSubscriptionEndpointKey } from './provider-hooks';
+import { isAnthropicHost, mergeAnthropicBeta } from './anthropic-beta';
 import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
 import {
   applyAnthropicAutomaticCacheControl,
@@ -117,6 +118,20 @@ interface BuiltProviderRequest {
   structuredOutputToolName?: string;
 }
 
+/**
+ * Anthropic-format headers with the caller's beta flags folded in. Manifest's
+ * own flags always win their slot; the caller's are appended, so a request that
+ * sent none is byte-identical to before.
+ */
+function withClientAnthropicBeta(
+  headers: Record<string, string>,
+  clientAnthropicBeta: string | string[] | undefined,
+): Record<string, string> {
+  const merged = mergeAnthropicBeta(headers['anthropic-beta'], clientAnthropicBeta);
+  if (merged === undefined || merged === headers['anthropic-beta']) return headers;
+  return { ...headers, 'anthropic-beta': merged };
+}
+
 const parsedProviderTimeout = Number.parseInt(process.env.PROVIDER_TIMEOUT_MS ?? '', 10);
 const PROVIDER_TIMEOUT_MS =
   Number.isFinite(parsedProviderTimeout) && parsedProviderTimeout > 0
@@ -126,6 +141,17 @@ const QWEN_TOKEN_PLAN_RESPONSES_RE = /^qwen3\.7-max$/i;
 const COPILOT_CHAT_COMPLETIONS_ENDPOINT = '/chat/completions';
 const COPILOT_RESPONSES_ENDPOINTS = new Set(['/responses', 'ws:/responses']);
 
+/**
+ * Narrower than `isAnthropicHost` on purpose, and the two are meant to
+ * disagree for a custom provider row pointed at Anthropic.
+ *
+ * Forwarding a beta header the caller already chose is additive: the request
+ * either keeps working or starts working. Injecting a cache breakpoint edits
+ * the body, changes prompt-caching behaviour and moves what the tenant is
+ * billed. Extending that to custom-Anthropic endpoints is a real behaviour
+ * change for people who do not get it today, so it belongs in its own change
+ * with its own evidence, not folded into header forwarding.
+ */
 function shouldApplyAnthropicAutomaticCacheControl(endpointKey: string): boolean {
   return endpointKey === 'anthropic';
 }
@@ -423,6 +449,7 @@ export class ProviderClient {
       signatureLookup: opts.signatureLookup,
       thinkingLookup: opts.thinkingLookup,
       thinkingRouteContext: opts.thinkingRouteContext,
+      clientAnthropicBeta: opts.clientAnthropicBeta,
       providerResource: opts.providerResource,
       sessionKey: opts.sessionKey,
       providerCacheKey: opts.providerCacheKey,
@@ -669,6 +696,7 @@ export class ProviderClient {
     signatureLookup?: ForwardOptions['signatureLookup'];
     thinkingLookup?: ForwardOptions['thinkingLookup'];
     thinkingRouteContext?: ForwardOptions['thinkingRouteContext'];
+    clientAnthropicBeta?: ForwardOptions['clientAnthropicBeta'];
     providerResource?: string;
     sessionKey?: string;
     providerCacheKey?: string;
@@ -742,7 +770,14 @@ export class ProviderClient {
       }
       return {
         url: `${endpoint.baseUrl}${endpoint.buildPath(bareModel)}`,
-        headers: endpoint.buildHeaders(apiKey, authType),
+        headers: withClientAnthropicBeta(
+          endpoint.buildHeaders(apiKey, authType),
+          // Keyed on the host, not the registry key: a tenant can reach
+          // Anthropic through a custom provider row (endpointKey `custom`) and
+          // needs the flags just as much, while the Anthropic-compatible third
+          // parties stay excluded.
+          isAnthropicHost(endpoint.baseUrl) ? ctx.clientAnthropicBeta : undefined,
+        ),
         requestBody,
         structuredOutputToolName: syntheticToolName,
       };

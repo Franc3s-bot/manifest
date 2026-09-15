@@ -48,6 +48,8 @@ interface ForwardProviderOptions {
   apiMode?: ProxyApiMode;
   signatureLookup?: SignatureLookup;
   thinkingLookup?: ThinkingBlockLookup;
+  /** The caller's raw `anthropic-beta` header, merged in when the endpoint is Anthropic. */
+  clientAnthropicBeta?: string | string[];
   paramMergeContext?: ParamMergeContext;
   tenantProviderId?: string | null;
   startProviderAttempt?: StartProviderAttempt;
@@ -214,6 +216,8 @@ export class ProxyFallbackService {
     credentialDashboardUrl?: string,
     providerCacheKey?: string,
     reasoningCacheKey?: string,
+    /** The caller's raw `anthropic-beta` header; a fallback hop onto Anthropic needs it too. */
+    clientAnthropicBeta?: string | string[],
   ): Promise<{
     success: {
       forward: ForwardResult;
@@ -344,6 +348,7 @@ export class ProxyFallbackService {
         providerRegion: credentials.providerRegion,
         signatureLookup,
         thinkingLookup,
+        clientAnthropicBeta,
         paramMergeContext,
         tenantProviderId,
         startProviderAttempt,
@@ -936,6 +941,7 @@ export class ProxyFallbackService {
               },
             }
           : {}),
+        clientAnthropicBeta: opts.clientAnthropicBeta,
         providerResource,
         attempt,
       });

@@ -313,6 +313,34 @@ describe('ProxyService — orchestration', () => {
       expect(fallbackService.tryForwardToProvider.mock.calls[0][0].body).toBe(body);
     });
 
+    it("hands the caller's anthropic-beta header to the forward", async () => {
+      // Manifest builds upstream headers from scratch, so without this the
+      // caller's beta flags never reach Anthropic and every beta-gated body
+      // field comes back as `Extra inputs are not permitted`.
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('anthropic', 'subscription', 'claude-sonnet-4-20250514'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockResolvedValue({
+        response: okResponse(200),
+        isGoogle: false,
+        isAnthropic: true,
+        isChatGpt: false,
+      });
+
+      await svc.proxyRequest(
+        baseOpts({ headers: { 'anthropic-beta': 'structured-outputs-2025-11-13' } } as never),
+      );
+
+      expect(fallbackService.tryForwardToProvider.mock.calls[0][0].clientAnthropicBeta).toBe(
+        'structured-outputs-2025-11-13',
+      );
+    });
+
     it('replaces null content with empty string', async () => {
       resolveService.resolve.mockResolvedValue({
         tier: 'standard',

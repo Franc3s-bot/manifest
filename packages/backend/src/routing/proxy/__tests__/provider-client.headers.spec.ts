@@ -378,3 +378,132 @@ describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)',
     expect(prepareSpy).toHaveBeenCalledWith('oauth-token', expect.any(Object));
   });
 });
+
+describe('ProviderClient — anthropic-beta merge', () => {
+  let client: ProviderClient;
+
+  beforeEach(() => {
+    client = new ProviderClient();
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+  });
+
+  const sentBeta = () =>
+    (mockFetch.mock.calls[0][1].headers as Record<string, string>)['anthropic-beta'];
+
+  it("appends the caller's beta flags after Manifest's on the subscription path", async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-oat-token',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      authType: 'subscription',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    // Manifest's OAuth flags are load-bearing for this route, so they survive…
+    expect(sentBeta()).toContain('oauth-2025-04-20');
+    // …and the flag that makes the caller's `output_config` legal rides along.
+    expect(sentBeta()).toContain('structured-outputs-2025-11-13');
+  });
+
+  it("forwards the caller's beta flags on the api_key path, which sends none of its own", async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      clientAnthropicBeta: 'context-management-2025-06-27',
+    });
+
+    expect(sentBeta()).toBe('context-management-2025-06-27');
+  });
+
+  it('never repeats a flag Manifest already sends', async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-oat-token',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      authType: 'subscription',
+      clientAnthropicBeta: 'oauth-2025-04-20',
+    });
+
+    expect(
+      sentBeta()
+        .split(',')
+        .filter((f) => f === 'oauth-2025-04-20'),
+    ).toHaveLength(1);
+  });
+
+  it('drops a malformed flag rather than letting it reach the provider', async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      clientAnthropicBeta: 'bad\r\nx-injected: 1',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
+  it('forwards through a custom endpoint that points at Anthropic', async () => {
+    // A tenant can reach Anthropic through a custom provider row, which
+    // resolves to the `custom` endpoint key. The flags are as necessary there.
+    await client.forward({
+      provider: 'my-anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+      customEndpoint: {
+        baseUrl: 'https://api.anthropic.com',
+        buildHeaders: (apiKey: string) => ({
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+        }),
+        buildPath: () => '/v1/messages',
+        format: 'anthropic',
+      },
+    });
+
+    expect(sentBeta()).toBe('structured-outputs-2025-11-13');
+  });
+
+  it('does not send the header to an Anthropic-compatible third party', async () => {
+    // Kimi, Bedrock, BytePlus and friends only speak the Messages *shape* —
+    // they have never received an `anthropic-beta` header and a flag naming an
+    // Anthropic-only feature means nothing to them.
+    await client.forward({
+      provider: 'moonshot',
+      apiKey: 'kimi-code-key',
+      model: 'kimi-for-coding',
+      body,
+      stream: false,
+      authType: 'subscription',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
+  it('leaves a non-Anthropic provider untouched', async () => {
+    await client.forward({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-4o',
+      body,
+      stream: false,
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+});

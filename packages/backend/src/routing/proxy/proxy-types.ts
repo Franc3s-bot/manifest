@@ -113,6 +113,15 @@ export interface ForwardOptions {
   /** Route scope used to decide whether cached Anthropic thinking can be replayed. */
   thinkingRouteContext?: ThinkingBlockRouteContext;
   /**
+   * The caller's raw `anthropic-beta` header, merged into (never replacing)
+   * Manifest's own flags when the resolved endpoint is Anthropic itself (the
+   * `anthropic` route or a custom row pointed at it, never the
+   * Anthropic-compatible third parties). Without it, beta-gated
+   * body fields the caller legitimately sent come back as
+   * `<field>: Extra inputs are not permitted`. Sanitized at the merge.
+   */
+  clientAnthropicBeta?: string | string[];
+  /**
    * Provider-specific routing field carried in the OAuth token blob's `u`
    * slot. For Gemini OAuth this is the CodeAssist
    * `cloudaicompanionProject` id assigned during `enrichBlob`.
