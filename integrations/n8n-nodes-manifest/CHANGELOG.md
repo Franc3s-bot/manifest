@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3
+
+- Point the package `repository` and `bugs` URLs, and the node documentation links, at `mnfst/llm-gateway` after the repository rename. npm requires the `repository` field to match the repository a package is published from with provenance, so the stale name risked failing the next provenance-signed publish.
+
 ## 0.2.2
 
 - Identify Manifest requests from this node with `User-Agent: n8n-nodes-manifest`, `X-Title: n8n`, and `HTTP-Referer: https://n8n.io`, so Manifest can attribute usage to the node itself.

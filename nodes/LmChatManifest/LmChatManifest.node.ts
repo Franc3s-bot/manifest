@@ -50,7 +50,7 @@ export class LmChatManifest implements INodeType {
 			resources: {
 				primaryDocumentation: [
 					{
-						url: 'https://github.com/mnfst/manifest/tree/main/integrations/n8n-nodes-manifest',
+						url: 'https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest',
 					},
 				],
 			},
