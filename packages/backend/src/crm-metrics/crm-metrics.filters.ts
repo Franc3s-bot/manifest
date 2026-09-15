@@ -312,6 +312,16 @@ export interface ClusterCandidate {
  * Any traffic at all clears the whole domain: a real user among them means the
  * burst was a launch, not a script.
  */
+export function isSignupCluster(signups: ClusterCandidate[]): boolean {
+  if (signups.length < CLUSTER_MIN_SIGNUPS) return false;
+  if (signups.some((signup) => signup.has_traffic)) return false;
+
+  const times = signups
+    .map((signup) => new Date(signup.signed_up_at).getTime())
+    .sort((a, b) => a - b);
+  return times[times.length - 1] - times[0] <= CLUSTER_WINDOW_MS;
+}
+
 /**
  * The local-part shape temp-mail generators produce: a run of letters and a
  * run of digits, nothing else. `lidosej357`, `xiyese3594`, `gimade8897`.
@@ -336,14 +346,4 @@ const MACHINE_LOCAL_PART = /^[a-z]{4,8}[0-9]{3,6}$/;
  */
 export function isMachineGeneratedDomain(localParts: string[]): boolean {
   return localParts.length >= 2 && localParts.every((local) => MACHINE_LOCAL_PART.test(local));
-}
-
-export function isSignupCluster(signups: ClusterCandidate[]): boolean {
-  if (signups.length < CLUSTER_MIN_SIGNUPS) return false;
-  if (signups.some((signup) => signup.has_traffic)) return false;
-
-  const times = signups
-    .map((signup) => new Date(signup.signed_up_at).getTime())
-    .sort((a, b) => a - b);
-  return times[times.length - 1] - times[0] <= CLUSTER_WINDOW_MS;
 }
