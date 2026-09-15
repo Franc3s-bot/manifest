@@ -48,7 +48,6 @@ const mockGetCustomProviders = vi.fn();
 const mockGetSpecificityAssignments = vi.fn();
 const mockGetMessageDetails = vi.fn();
 const mockGetRoutingStatus = vi.fn();
-const mockListHeaderTiers = vi.fn();
 const mockSetMessageFeedback = vi.fn();
 const mockClearMessageFeedback = vi.fn();
 vi.mock('../../src/services/api.js', () => ({
@@ -60,7 +59,6 @@ vi.mock('../../src/services/api.js', () => ({
   getSpecificityAssignments: (...args: unknown[]) => mockGetSpecificityAssignments(...args),
   getMessageDetails: (...args: unknown[]) => mockGetMessageDetails(...args),
   getRoutingStatus: (...args: unknown[]) => mockGetRoutingStatus(...args),
-  listHeaderTiers: (...args: unknown[]) => mockListHeaderTiers(...args),
   setMessageFeedback: (...args: unknown[]) => mockSetMessageFeedback(...args),
   clearMessageFeedback: (...args: unknown[]) => mockClearMessageFeedback(...args),
 }));
@@ -331,7 +329,6 @@ describe('MessageLog', () => {
     mockGetCustomProviders.mockResolvedValue([]);
     mockGetSpecificityAssignments.mockResolvedValue([]);
     mockGetRoutingStatus.mockResolvedValue({ enabled: false });
-    mockListHeaderTiers.mockResolvedValue([]);
     const [ping, setPing] = createSignal(0);
     pingBox.read = ping;
     pingBox.set = setPing;
@@ -1440,10 +1437,13 @@ describe('MessageLog', () => {
         { category: 'coding', is_active: true },
         { category: 'trading', is_active: false },
       ]);
-      mockListHeaderTiers.mockResolvedValue([
-        { id: 'ht-premium', name: 'Premium', enabled: true, sort_order: 0 },
-        { id: 'ht-legacy', name: 'Legacy', enabled: false, sort_order: 1 },
-      ]);
+      mockGetMessageFilterOptions.mockResolvedValue({
+        providers: ['anthropic'],
+        header_tiers: [
+          { name: 'Premium', ids: ['ht-premium'] },
+          { name: 'Legacy', ids: ['ht-legacy'] },
+        ],
+      });
 
       const { container } = render(() => <MessageLog />);
       await vi.waitFor(() => {
@@ -1500,9 +1500,36 @@ describe('MessageLog', () => {
       });
     });
 
+    it('lists custom tiers on the global log, where no harness is selected', async () => {
+      mockAgentName = '';
+      mockGetMessages.mockResolvedValue(messagesData);
+      mockGetMessageFilterOptions.mockResolvedValue({
+        providers: ['anthropic'],
+        header_tiers: [{ name: 'Premium', ids: ['ht-premium-a', 'ht-premium-b'] }],
+      });
+
+      const { container } = render(() => <MessageLog />);
+
+      await vi.waitFor(() => {
+        const tierSelect = selectWithOption(container, 'All tiers');
+        expect(tierSelect.textContent).toContain('Premium');
+      });
+
+      // The regression was the options being fetched per harness: on the
+      // global log that resolved to nothing. Pin the request as unscoped, or
+      // an agent-scoped fetch would satisfy the assertion above.
+      expect(mockGetMessageFilterOptions).toHaveBeenCalled();
+      for (const [query] of mockGetMessageFilterOptions.mock.calls) {
+        expect(query).not.toHaveProperty('agent_name');
+      }
+    });
+
     it('sends header_tier_id in the query when a custom tier is selected', async () => {
       mockGetMessages.mockResolvedValue(messagesData);
-      mockListHeaderTiers.mockResolvedValue([{ id: 'ht-premium', name: 'Premium' }]);
+      mockGetMessageFilterOptions.mockResolvedValue({
+        providers: ['anthropic'],
+        header_tiers: [{ name: 'Premium', ids: ['ht-premium'] }],
+      });
 
       const { container } = render(() => <MessageLog />);
       await vi.waitFor(() => {
@@ -1520,6 +1547,30 @@ describe('MessageLog', () => {
         const lastQ = calls[calls.length - 1]?.[0] ?? {};
         expect(lastQ.header_tier_id).toBe('ht-premium');
         expect(lastQ.routing_tier).toBeUndefined();
+      });
+    });
+
+    it('filters on every harness defining a same-named custom tier', async () => {
+      mockAgentName = '';
+      mockGetMessages.mockResolvedValue(messagesData);
+      mockGetMessageFilterOptions.mockResolvedValue({
+        providers: ['anthropic'],
+        header_tiers: [{ name: 'Premium', ids: ['ht-alpha', 'ht-beta'] }],
+      });
+
+      const { container } = render(() => <MessageLog />);
+      await vi.waitFor(() => {
+        expect(selectWithOption(container, 'All tiers').textContent).toContain('Premium');
+      });
+
+      const tierSelect = selectWithOption(container, 'All tiers');
+      mockGetMessages.mockClear();
+      fireEvent.change(tierSelect, { target: { value: 'header:ht-alpha,ht-beta' } });
+
+      await vi.waitFor(() => {
+        const calls = mockGetMessages.mock.calls;
+        const lastQ = calls[calls.length - 1]?.[0] ?? {};
+        expect(lastQ.header_tier_id).toBe('ht-alpha,ht-beta');
       });
     });
   });
@@ -1618,7 +1669,10 @@ describe('MessageLog', () => {
     it('loads custom tier options for the selected agent in global mode', async () => {
       mockAgentName = '';
       mockGetMessages.mockResolvedValue(messagesData);
-      mockListHeaderTiers.mockResolvedValue([{ id: 'ht-premium', name: 'Premium' }]);
+      mockGetMessageFilterOptions.mockResolvedValue({
+        providers: ['anthropic'],
+        header_tiers: [{ name: 'Premium', ids: ['ht-premium'] }],
+      });
 
       const { container } = render(() => <MessageLog />);
       await vi.waitFor(() => {
@@ -1634,7 +1688,9 @@ describe('MessageLog', () => {
       fireEvent.change(agentSelect, { target: { value: 'agent-alpha' } });
 
       await vi.waitFor(() => {
-        expect(mockListHeaderTiers).toHaveBeenCalledWith('agent-alpha');
+        expect(mockGetMessageFilterOptions).toHaveBeenCalledWith(
+          expect.objectContaining({ agent_name: 'agent-alpha' }),
+        );
         const tierSelect = selectWithOption(container, 'All tiers');
         expect(tierSelect.textContent).toContain('Premium');
       });

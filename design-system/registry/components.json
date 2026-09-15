@@ -472,6 +472,7 @@
         "agent-type-select__dropdown",
         "agent-type-select__dropdown--inline",
         "agent-type-select__group-label",
+        "agent-type-select__groups",
         "agent-type-select__option",
         "agent-type-select__option--selected",
         "agent-type-select__option-icon",
@@ -3615,6 +3616,7 @@
     "sidebar-pivot-modal": {
       "classes": [
         "sidebar-pivot-modal",
+        "sidebar-pivot-modal__features",
         "sidebar-pivot-modal__logo"
       ],
       "files": [
@@ -5079,7 +5081,7 @@
     "tokens": 79,
     "darkOverrides": 38,
     "blocks": 313,
-    "classes": 1694,
+    "classes": 1696,
     "canonicalRules": 46,
     "ghostRules": 46
   }

@@ -30,7 +30,6 @@ import {
   getMessages,
   getMessageFilterOptions,
   getRoutingStatus,
-  listHeaderTiers,
 } from '../services/api.js';
 import { createCursorPagination } from '../services/cursor-pagination.js';
 import { usePlanRangeLock } from '../services/plan-range-lock.js';
@@ -55,9 +54,16 @@ interface MessagesData {
   provider_labels?: Record<string, string>;
 }
 
+interface HeaderTierFilterOption {
+  name: string;
+  /** Every custom-tier id this option covers — same name on several harnesses. */
+  ids: string[];
+}
+
 interface MessageFilterOptionsData {
   providers: string[];
   provider_labels?: Record<string, string>;
+  header_tiers?: HeaderTierFilterOption[];
 }
 
 interface AgentFilterOption {
@@ -296,11 +302,6 @@ const MessageLog: Component = () => {
   const [specificityAssignments] = createResource(
     () => ({ agentName: tierMetadataAgentName() }),
     ({ agentName }) => (agentName ? getSpecificityAssignments(agentName) : Promise.resolve([])),
-  );
-
-  const [headerTiers] = createResource(
-    () => ({ agentName: tierMetadataAgentName() }),
-    ({ agentName }) => (agentName ? listHeaderTiers(agentName) : Promise.resolve([])),
   );
 
   const hasProviders = () => routingStatus()?.enabled === true;
@@ -549,9 +550,9 @@ const MessageLog: Component = () => {
         value: `${SPECIFICITY_FILTER_PREFIX}${stage.id}`,
       }),
     ),
-    ...(headerTiers() ?? []).map((tier) => ({
+    ...(messageFilterOptions()?.header_tiers ?? []).map((tier) => ({
       label: tier.name,
-      value: `${HEADER_TIER_FILTER_PREFIX}${tier.id}`,
+      value: `${HEADER_TIER_FILTER_PREFIX}${tier.ids.join(',')}`,
     })),
   ]);
 

@@ -460,7 +460,7 @@ describe('MessagesQueryService request-first queries', () => {
         expect.stringContaining('filtered_attempt.service_type = :requestServiceType'),
         expect.stringContaining('filtered_attempt.routing_tier = :requestTier'),
         expect.stringContaining('filtered_attempt.specificity_category = :requestSpecificity'),
-        expect.stringContaining('filtered_attempt.header_tier_id = :requestHeaderTier'),
+        expect.stringContaining('filtered_attempt.header_tier_id IN (:...requestHeaderTiers)'),
         expect.stringContaining('NOT EXISTS'),
       ]),
     );
