@@ -163,6 +163,11 @@ jobs:
     needs: release
     if: needs.release.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
+    # Shared with the on-demand Publish CLI workflow: the two must never race
+    # for the same package and version.
+    concurrency:
+      group: npm-publish-mnfst-gateway-cli
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write # npm provenance attestation
@@ -178,34 +183,7 @@ jobs:
         run: npm run set-version --workspace=packages/cli
       - name: Check whether this version is already on npm
         id: published
-        run: |
-          # Re-running the workflow for an already-published version must be a
-          # no-op, not a red release: `npm publish` hard-fails on a duplicate
-          # version and the Docker job beside us is likewise idempotent.
-          #
-          # Only an E404 means "not published". Every other npm view failure —
-          # DNS, timeout, auth, registry 5xx — must stop the job, because
-          # treating it as "not published" would send a duplicate publish and
-          # redden the release for a reason that had nothing to do with it.
-          # Verified exit codes: version present -> 0; package or version
-          # absent -> 1 with E404 in the output.
-          VERSION=$(jq -r .version packages/cli/package.json)
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          set +e
-          VIEW_OUTPUT=$(npm view "mnfst-gateway-cli@${VERSION}" version 2>&1)
-          VIEW_STATUS=$?
-          set -e
-          if [ "$VIEW_STATUS" -eq 0 ]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "mnfst-gateway-cli@${VERSION} is already published; skipping."
-          elif printf '%s' "$VIEW_OUTPUT" | grep -q 'E404'; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "mnfst-gateway-cli@${VERSION} is not on npm yet; publishing."
-          else
-            echo "npm view failed for a reason other than E404; refusing to guess:" >&2
-            printf '%s\n' "$VIEW_OUTPUT" >&2
-            exit 1
-          fi
+        run: bash .github/scripts/check-cli-npm-status.sh
       - name: Build shared, then the CLI
         if: steps.published.outputs.skip != 'true'
         # The CLI's `gen` step reads manifest-shared's build output to regenerate
