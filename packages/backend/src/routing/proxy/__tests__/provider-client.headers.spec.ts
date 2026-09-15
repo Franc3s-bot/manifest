@@ -399,6 +399,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       body,
       stream: false,
       authType: 'subscription',
+      apiMode: 'messages',
       clientAnthropicBeta: 'structured-outputs-2025-11-13',
     });
 
@@ -415,6 +416,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       model: 'claude-sonnet-4-20250514',
       body,
       stream: false,
+      apiMode: 'messages',
       clientAnthropicBeta: 'context-management-2025-06-27',
     });
 
@@ -429,6 +431,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       body,
       stream: false,
       authType: 'subscription',
+      apiMode: 'messages',
       clientAnthropicBeta: 'oauth-2025-04-20',
     });
 
@@ -446,6 +449,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       model: 'claude-sonnet-4-20250514',
       body,
       stream: false,
+      apiMode: 'messages',
       clientAnthropicBeta: 'bad\r\nx-injected: 1',
     });
 
@@ -461,6 +465,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       model: 'claude-sonnet-4-20250514',
       body,
       stream: false,
+      apiMode: 'messages',
       clientAnthropicBeta: 'structured-outputs-2025-11-13',
       customEndpoint: {
         baseUrl: 'https://api.anthropic.com',
@@ -477,6 +482,24 @@ describe('ProviderClient — anthropic-beta merge', () => {
     expect(sentBeta()).toBe('structured-outputs-2025-11-13');
   });
 
+  it('does not forward beta flags on a translated (non-Messages) request', async () => {
+    // A chat-completions body reaches Anthropic through the OpenAI->Anthropic
+    // converters, which only understand the content blocks they were written
+    // for. A beta that adds a new block type would be silently dropped from the
+    // response, so the flags stay behind until translation supports them.
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      apiMode: 'chat_completions',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
   it('does not send the header to an Anthropic-compatible third party', async () => {
     // Kimi, Bedrock, BytePlus and friends only speak the Messages *shape* —
     // they have never received an `anthropic-beta` header and a flag naming an
@@ -488,6 +511,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       body,
       stream: false,
       authType: 'subscription',
+      apiMode: 'messages',
       clientAnthropicBeta: 'structured-outputs-2025-11-13',
     });
 
@@ -501,6 +525,7 @@ describe('ProviderClient — anthropic-beta merge', () => {
       model: 'gpt-4o',
       body,
       stream: false,
+      apiMode: 'messages',
       clientAnthropicBeta: 'structured-outputs-2025-11-13',
     });
 

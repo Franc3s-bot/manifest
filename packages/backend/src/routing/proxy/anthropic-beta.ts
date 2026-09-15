@@ -1,10 +1,10 @@
 /**
  * `anthropic-beta` is how a caller opts into Anthropic API features that are
- * still gated behind a flag — structured outputs, context management, adaptive
- * thinking and friends. The body fields those features add (`output_config`,
- * `context_management`, `diagnostics`, `speed`, …) are only legal when the
- * matching flag rides along; without it Anthropic validates against the
- * non-beta schema and answers `<field>: Extra inputs are not permitted`.
+ * still gated behind a flag. A body field belonging to such a feature is only
+ * legal when its flag rides along; without it Anthropic validates the request
+ * against the non-beta schema and answers `<field>: Extra inputs are not
+ * permitted`. Which fields are gated is Anthropic's business and changes over
+ * time — that is the point of forwarding rather than curating.
  *
  * Manifest builds every upstream header set from scratch, so the caller's own
  * `anthropic-beta` never reached Anthropic: the api_key path sent no flags at

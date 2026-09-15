@@ -2,9 +2,11 @@
  * End-to-end cover for the `anthropic-beta` passthrough.
  *
  * Manifest builds the upstream header set from scratch, so a beta flag the
- * caller sent never reached Anthropic: beta-gated body fields (`output_config`,
- * `context_management`, `diagnostics`, `speed`) came back as
- * `<field>: Extra inputs are not permitted` on requests that were valid.
+ * caller sent never reached Anthropic, and a body field gated behind that flag
+ * was rejected as an extra input.
+ *
+ * This asserts transport only. The stubbed upstream always answers 200, so it
+ * shows which headers Manifest emits, never what Anthropic makes of them.
  *
  * The unit tests call `ProviderClient.forward` directly. This one drives a real
  * `POST /v1/messages` through the whole stack — Express header handling, key

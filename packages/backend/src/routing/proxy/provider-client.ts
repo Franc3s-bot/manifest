@@ -772,11 +772,21 @@ export class ProviderClient {
         url: `${endpoint.baseUrl}${endpoint.buildPath(bareModel)}`,
         headers: withClientAnthropicBeta(
           endpoint.buildHeaders(apiKey, authType),
-          // Keyed on the host, not the registry key: a tenant can reach
-          // Anthropic through a custom provider row (endpointKey `custom`) and
-          // needs the flags just as much, while the Anthropic-compatible third
-          // parties stay excluded.
-          isAnthropicHost(endpoint.baseUrl) ? ctx.clientAnthropicBeta : undefined,
+          // Native Messages traffic to Anthropic itself, and nothing else.
+          //
+          // Host, not the registry key: a tenant can reach Anthropic through a
+          // custom provider row (endpointKey `custom`) and needs the flags just
+          // as much, while the Anthropic-compatible third parties stay out.
+          //
+          // `messages` only: a translated request reaches Anthropic through the
+          // OpenAI->Anthropic converters, which understand just the content
+          // blocks they were written for. A beta that introduces a new block
+          // type would have its output silently dropped on the way back, which
+          // is worse than the 400 we are fixing. Native Messages responses pass
+          // through byte-for-byte, so unknown blocks survive there.
+          ctx.apiMode === 'messages' && isAnthropicHost(endpoint.baseUrl)
+            ? ctx.clientAnthropicBeta
+            : undefined,
         ),
         requestBody,
         structuredOutputToolName: syntheticToolName,
