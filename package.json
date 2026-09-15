@@ -47,7 +47,7 @@
     "lint": "eslint packages/shared/src packages/backend/src packages/frontend/src packages/cli/src",
     "format": "prettier --write 'packages/*/src/**/*.{ts,tsx,css}'",
     "changeset": "changeset",
-    "version-packages": "changeset version && npm run set-version --workspace=packages/cli && npm install --package-lock-only --ignore-scripts",
+    "version-packages": "changeset version",
     "release": "changeset publish",
     "prepare": "husky"
   },

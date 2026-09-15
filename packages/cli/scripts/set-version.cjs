@@ -4,16 +4,24 @@
  *
  * The CLI's version tracks the Manifest release it ships with, so there is no
  * separate changeset target for it (`@mnfst/gateway-cli` stays in the
- * `.changeset/config.json` ignore list). The release workflow calls this with
- * the version from packages/manifest/package.json before building and packing,
- * and the root `version-packages` script calls it so the version PR is
- * self-consistent.
+ * `.changeset/config.json` ignore list). The publish-npm job in release.yml
+ * calls this with the version from packages/manifest/package.json before
+ * building and packing.
+ *
+ * Deliberately NOT called from the root `version-packages` script. Bumping
+ * packages/cli/package.json there makes changesets/action believe the CLI was
+ * released, so it tries to read packages/cli/CHANGELOG.md to build the version
+ * PR body. That file does not exist, because the CLI is in the ignore list, and
+ * the action dies with ENOENT, taking the whole Release workflow down with it.
+ * The committed CLI version therefore drifts from the Manifest version between
+ * releases. That is cosmetic: the published version is stamped here, at publish
+ * time, from packages/manifest/package.json.
  *
  * Three files carry the version and must move together, or the next test run
  * turns red: index.spec.ts pins src/version.ts to package.json, and
  * skill-content.spec.ts pins the generated SKILL_VERSION to package.json too.
  * (`npm run gen` also rewrites the generated file, but it needs manifest-shared
- * built; this script deliberately does not, so it can run in the version PR.)
+ * built; this script deliberately does not, so it can run before the build.)
  *
  * Every write is resolved before any of them is performed, so a renamed or
  * reformatted declaration fails with the tree untouched instead of leaving
