@@ -3,6 +3,7 @@ import {
   isConsumerEmail,
   isCorporateSignupEmail,
   isExcludedEmail,
+  isMachineGeneratedDomain,
   isSignupCluster,
 } from './crm-metrics.filters';
 
@@ -272,5 +273,29 @@ describe('isSignupCluster', () => {
         at('2026-03-10T00:00:00.000Z'),
       ]),
     ).toBe(false);
+  });
+});
+
+describe('isMachineGeneratedDomain', () => {
+  it('flags a domain where every local part is letters then digits', () => {
+    // aratrin.com and lidugw.com on the first live dry run.
+    expect(isMachineGeneratedDomain(['vatiy14692', 'xiyese3594'])).toBe(true);
+    expect(isMachineGeneratedDomain(['lidosej357', 'safoh51835'])).toBe(true);
+    expect(isMachineGeneratedDomain(['gimade8897', 'taribe8832', 'wipejet728'])).toBe(true);
+  });
+
+  it('never judges a single address', () => {
+    expect(isMachineGeneratedDomain(['john1985'])).toBe(false);
+  });
+
+  it('spares a domain where anyone has a human-looking address', () => {
+    expect(isMachineGeneratedDomain(['john1985', 'ada.lovelace'])).toBe(false);
+    expect(isMachineGeneratedDomain(['vatiy14692', 'grace'])).toBe(false);
+  });
+
+  it('does not match shapes outside the generator pattern', () => {
+    expect(isMachineGeneratedDomain(['ab12', 'cd34'])).toBe(false); // too short
+    expect(isMachineGeneratedDomain(['a.b1234', 'c-d5678'])).toBe(false); // punctuation
+    expect(isMachineGeneratedDomain(['1234abcd', '5678efgh'])).toBe(false); // digits first
   });
 });

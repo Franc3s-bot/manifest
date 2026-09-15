@@ -312,6 +312,32 @@ export interface ClusterCandidate {
  * Any traffic at all clears the whole domain: a real user among them means the
  * burst was a launch, not a script.
  */
+/**
+ * The local-part shape temp-mail generators produce: a run of letters and a
+ * run of digits, nothing else. `lidosej357`, `xiyese3594`, `gimade8897`.
+ *
+ * Real people use it too (`john1985`), so it is never judged one address at
+ * a time — only when every address on a domain has the shape, below.
+ */
+const MACHINE_LOCAL_PART = /^[a-z]{4,8}[0-9]{3,6}$/;
+
+/**
+ * True when a domain's signups all look machine-generated.
+ *
+ * Two or more accounts, every one of them a letters-then-digits local part.
+ * A company does not sign up its whole team as `vatiy14692@` and
+ * `xiyese3594@`; a disposable-mail domain does nothing else. On the first
+ * dry run this was aratrin.com and lidugw.com — with Faker names attached,
+ * and with traffic, so the quiet-cluster rule above did not fire.
+ *
+ * Across every verified signup this matched four domains: those two,
+ * mypethealh.com, and one university whose student ids happen to fit and
+ * which the academic rule already removes.
+ */
+export function isMachineGeneratedDomain(localParts: string[]): boolean {
+  return localParts.length >= 2 && localParts.every((local) => MACHINE_LOCAL_PART.test(local));
+}
+
 export function isSignupCluster(signups: ClusterCandidate[]): boolean {
   if (signups.length < CLUSTER_MIN_SIGNUPS) return false;
   if (signups.some((signup) => signup.has_traffic)) return false;
