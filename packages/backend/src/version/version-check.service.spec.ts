@@ -61,7 +61,7 @@ describe('VersionCheckService', () => {
       update_available: true,
       releases_behind: 1,
       release_url: 'https://manifest.build/changelog/#v6-22-0',
-      github_release_url: 'https://github.com/mnfst/manifest/releases/tag/manifest%406.22.0',
+      github_release_url: 'https://github.com/mnfst/llm-gateway/releases/tag/manifest%406.22.0',
       upgrade_docs_url: UPGRADE_DOCS_URL,
       upgrade_command: UPGRADE_COMMAND,
       check_enabled: true,

@@ -15,7 +15,7 @@ This stack creates paid resources. Heroku no longer provides free dynos or free 
 Open the Heroku deploy link and choose an app name:
 
 ```text
-https://www.heroku.com/deploy?template=https://github.com/mnfst/manifest
+https://www.heroku.com/deploy?template=https://github.com/mnfst/llm-gateway
 ```
 
 Heroku dyno filesystems are ephemeral, so request recordings must use external object storage. Before deploying, create a private S3-compatible bucket and an access key that can read, write, and delete its objects.

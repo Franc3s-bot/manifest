@@ -12,7 +12,7 @@ import {
 } from './query-helpers';
 
 /**
- * Request-level volume metrics (mnfst/manifest#2511).
+ * Request-level volume metrics (mnfst/llm-gateway#2511).
  *
  * Grouping is a lens, not a filter: the Overview's Requests chart must stack
  * to the same total in all three views (By request status / By provider /

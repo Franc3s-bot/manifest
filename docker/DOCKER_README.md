@@ -1,16 +1,16 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-white.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg" />
-    <img src="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-white.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" />
+    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
   </picture>
 </p>
 <p align="center">
   <a href="https://hub.docker.com/r/manifestdotbuild/manifest"><img src="https://img.shields.io/docker/pulls/manifestdotbuild/manifest?color=2496ED&label=docker%20pulls" alt="Docker pulls" /></a>
   &nbsp;
-  <a href="https://github.com/mnfst/manifest/stargazers"><img src="https://img.shields.io/github/stars/mnfst/manifest?style=flat" alt="GitHub stars" /></a>
+  <a href="https://github.com/mnfst/llm-gateway/stargazers"><img src="https://img.shields.io/github/stars/mnfst/llm-gateway?style=flat" alt="GitHub stars" /></a>
   &nbsp;
-  <a href="https://github.com/mnfst/manifest/blob/main/LICENSE"><img src="https://img.shields.io/github/license/mnfst/manifest?color=blue" alt="license" /></a>
+  <a href="https://github.com/mnfst/llm-gateway/blob/main/LICENSE"><img src="https://img.shields.io/github/license/mnfst/llm-gateway?color=blue" alt="license" /></a>
   &nbsp;
   <a href="https://discord.gg/FepAked3W7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
@@ -32,7 +32,7 @@ Manifest is a smart model router for **AI agents** like OpenClaw, Hermes, or any
 - Set limits: don't exceed your budget
 - Self-hosted: your requests, your providers, your data
 
-![manifest-gh](https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/manifest-screenshot.png)
+![manifest-gh](https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/manifest-screenshot.png)
 
 ## Table of contents
 
@@ -80,7 +80,7 @@ Three paths, ordered from fastest to most hands-on. All three end in the same pl
 One command. The installer downloads the compose file, generates the secrets, and brings up the stack. First boot pulls the app image and Postgres, so give it up to a couple of minutes.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh)
 ```
 
 <details>
@@ -89,7 +89,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/mnfst/manifest/main/docker/in
 Download the script:
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh
+curl -sSLO https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh
 ```
 
 Review it (optional):
@@ -117,8 +117,8 @@ Same underlying flow as the install script, but you drive it yourself so you can
 1. Download the compose file and the env template into the same directory:
 
 ```bash
-curl -O https://raw.githubusercontent.com/mnfst/manifest/main/docker/docker-compose.yml
-curl -O https://raw.githubusercontent.com/mnfst/manifest/main/docker/.env.example
+curl -O https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/.env.example
 cp .env.example .env
 ```
 
@@ -249,7 +249,7 @@ Published images are signed with cosign keyless signing (Sigstore). Verify befor
 
 ```bash
 cosign verify manifestdotbuild/manifest:<version> \
-  --certificate-identity-regexp="^https://github.com/mnfst/manifest/" \
+  --certificate-identity-regexp="^https://github.com/mnfst/llm-gateway/" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
@@ -493,11 +493,11 @@ both announce a new one. Your install will look like a new install to both.
 
 ## Links
 
-- [GitHub](https://github.com/mnfst/manifest)
+- [GitHub](https://github.com/mnfst/llm-gateway)
 - [Website](https://manifest.build)
 - [Docs](https://manifest.build/docs)
 - [Discord](https://discord.gg/FepAked3W7)
 
 ## License
 
-[MIT](https://github.com/mnfst/manifest/blob/main/LICENSE)
+[MIT](https://github.com/mnfst/llm-gateway/blob/main/LICENSE)

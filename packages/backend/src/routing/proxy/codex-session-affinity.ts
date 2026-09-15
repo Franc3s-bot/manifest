@@ -53,7 +53,7 @@ export interface CodexAffinityRequest {
  * `x-codex-turn-state` sticky-routing token returned by each response on the
  * next request. Manifest sent none of these, so every request landed on an
  * arbitrary shard and `cached_tokens` was always 0 — agentic tool loops
- * re-paid their full prompt prefix on every step (mnfst/manifest#2217).
+ * re-paid their full prompt prefix on every step (mnfst/llm-gateway#2217).
  *
  * This service closes that gap:
  * - `prepare()` resolves a session for the subscription token + the caller's

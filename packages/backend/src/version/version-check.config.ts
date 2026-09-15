@@ -8,7 +8,7 @@ import { readManifestVersion, UNKNOWN_VERSION } from '../telemetry/telemetry.con
  * the newest and count how far behind an install is (capped at 100).
  */
 export const RELEASES_PAGE_SIZE = 100;
-export const RELEASES_URL = `https://api.github.com/repos/mnfst/manifest/releases?per_page=${RELEASES_PAGE_SIZE}`;
+export const RELEASES_URL = `https://api.github.com/repos/mnfst/llm-gateway/releases?per_page=${RELEASES_PAGE_SIZE}`;
 export const UPGRADE_DOCS_URL = 'https://manifest.build/docs/self-hosted#upgrading';
 export const UPGRADE_COMMAND = 'docker compose pull && docker compose up -d';
 
@@ -98,5 +98,5 @@ export function changelogUrlFor(version: string): string {
 }
 
 export function githubReleaseUrlFor(version: string): string {
-  return `https://github.com/mnfst/manifest/releases/tag/${encodeURIComponent(`manifest@${version}`)}`;
+  return `https://github.com/mnfst/llm-gateway/releases/tag/${encodeURIComponent(`manifest@${version}`)}`;
 }

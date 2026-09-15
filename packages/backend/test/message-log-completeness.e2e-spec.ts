@@ -1,5 +1,5 @@
 /**
- * Regression test for mnfst/manifest#2513 — "Some requests aren't logged in
+ * Regression test for mnfst/llm-gateway#2513 — "Some requests aren't logged in
  * the Messages view".
  *
  * The culprit was `ProxyMessageDedup.findExistingSuccessMessage()`, reached

@@ -1855,7 +1855,7 @@ describe('ProxyMessageRecorder', () => {
     });
 
     it('produces N separate inserts for N successive calls with identical usage, model and agent', async () => {
-      // The regression pinned by mnfst/manifest#2513: ProxyMessageDedup used to
+      // The regression pinned by mnfst/llm-gateway#2513: ProxyMessageDedup used to
       // treat "same tenant/agent/model/usage within a short window" as a
       // duplicate and silently drop it via an update-into-existing-row path.
       // Distinct requests that happen to look alike must each persist their

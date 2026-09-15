@@ -25,7 +25,7 @@ import {
 import { providerIcon } from './ProviderIcon.jsx';
 import DuplicateAgentModal from './DuplicateAgentModal.jsx';
 
-const GITHUB_REPO = 'mnfst/manifest';
+const GITHUB_REPO = 'mnfst/llm-gateway';
 const STAR_DISMISSED_KEY = 'github-star-dismissed';
 const STAR_CACHE_KEY = 'github-star-count';
 const STAR_CACHE_TS_KEY = 'github-star-ts';

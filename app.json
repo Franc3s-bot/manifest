@@ -1,9 +1,9 @@
 {
   "name": "Manifest",
   "description": "Open-source AI model router for agents and apps. Connect your providers to one OpenAI-compatible endpoint.",
-  "repository": "https://github.com/mnfst/manifest",
+  "repository": "https://github.com/mnfst/llm-gateway",
   "website": "https://manifest.build",
-  "logo": "https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg",
+  "logo": "https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg",
   "success_url": "/setup",
   "stack": "container",
   "keywords": ["ai", "llm", "model-router", "agents", "postgres"],

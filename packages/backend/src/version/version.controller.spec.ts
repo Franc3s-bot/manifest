@@ -9,7 +9,7 @@ describe('VersionController', () => {
     update_available: true,
     releases_behind: 1,
     release_url: 'https://manifest.build/changelog/#v6-22-0',
-    github_release_url: 'https://github.com/mnfst/manifest/releases/tag/manifest%406.22.0',
+    github_release_url: 'https://github.com/mnfst/llm-gateway/releases/tag/manifest%406.22.0',
     upgrade_docs_url: 'https://manifest.build/docs/self-hosted#upgrading',
     upgrade_command: 'docker compose pull && docker compose up -d',
     check_enabled: true,

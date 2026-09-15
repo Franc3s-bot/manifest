@@ -123,7 +123,7 @@ describe('release URLs', () => {
 
   it('points githubReleaseUrlFor at the encoded GitHub release tag', () => {
     expect(githubReleaseUrlFor('6.22.0')).toBe(
-      'https://github.com/mnfst/manifest/releases/tag/manifest%406.22.0',
+      'https://github.com/mnfst/llm-gateway/releases/tag/manifest%406.22.0',
     );
   });
 
