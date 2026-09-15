@@ -1015,16 +1015,6 @@
         "routing-providers.css"
       ]
     },
-    "cost-range-filter": {
-      "classes": [
-        "cost-range-filter",
-        "cost-range-filter__input",
-        "cost-range-filter__sep"
-      ],
-      "files": [
-        "controls.css"
-      ]
-    },
     "count-link": {
       "classes": [
         "count-link"
@@ -4747,7 +4737,7 @@
       "prop": "align-items",
       "value": "center",
       "file": "controls.css",
-      "line": 172,
+      "line": 124,
       "losesTo": "toast.css:16"
     },
     {
@@ -4755,7 +4745,7 @@
       "prop": "gap",
       "value": "10px",
       "file": "controls.css",
-      "line": 173,
+      "line": 125,
       "losesTo": "toast.css:17"
     },
     {
@@ -4763,7 +4753,7 @@
       "prop": "padding",
       "value": "12px 16px",
       "file": "controls.css",
-      "line": 174,
+      "line": 126,
       "losesTo": "toast.css:18"
     },
     {
@@ -4771,7 +4761,7 @@
       "prop": "box-shadow",
       "value": "0 4px 16px rgb(0 0 0 / 0.15)",
       "file": "controls.css",
-      "line": 177,
+      "line": 129,
       "losesTo": "toast.css:22"
     },
     {
@@ -4779,7 +4769,7 @@
       "prop": "animation",
       "value": "toast-in 200ms ease-out",
       "file": "controls.css",
-      "line": 180,
+      "line": 132,
       "losesTo": "toast.css:26"
     },
     {
@@ -4787,7 +4777,7 @@
       "prop": "padding",
       "value": "var(--gap-md) 0",
       "file": "controls.css",
-      "line": 261,
+      "line": 213,
       "losesTo": "theme.css:785"
     },
     {
@@ -5080,8 +5070,8 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 313,
-    "classes": 1696,
+    "blocks": 312,
+    "classes": 1693,
     "canonicalRules": 46,
     "ghostRules": 46
   }

@@ -31,54 +31,6 @@
   color: hsl(var(--popover-foreground));
 }
 
-/* ── Cost Range Filter ─────────────────────────────── */
-.cost-range-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.cost-range-filter__input {
-  width: 80px;
-  height: 2.25rem;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--input));
-  border-radius: var(--radius);
-  padding: 0 0.5rem;
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family);
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.cost-range-filter__input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.cost-range-filter__input:focus-visible {
-  outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
-}
-
-/* Hide number input spinners */
-.cost-range-filter__input::-webkit-inner-spin-button,
-.cost-range-filter__input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.cost-range-filter__input {
-  -moz-appearance: textfield;
-}
-
-.cost-range-filter__sep {
-  color: hsl(var(--muted-foreground));
-  font-size: var(--font-size-sm);
-  user-select: none;
-}
-
 /* ── Setup Steps (inline) ──────────────────────────── */
 .setup-steps {
   display: flex;

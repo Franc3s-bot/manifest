@@ -435,6 +435,7 @@ describe('MessagesQueryService request-first queries', () => {
       range: '24h',
       agent_name: 'agent-1',
       provider: 'openai',
+      models: ['gpt-4o'],
       service_type: 'agent',
       status: 'failed',
       origin: 'manifest',
@@ -455,7 +456,14 @@ describe('MessagesQueryService request-first queries', () => {
     const clauses = requestQb.andWhere.mock.calls.map((call) => String(call[0]));
     expect(clauses).toEqual(
       expect.arrayContaining([
-        expect.stringContaining("r.status NOT IN ('ok', 'success')"),
+        // `failed` excludes cancelled and pending: a hung-up caller and an
+        // in-flight request are not failures. See sqlIsFailedStatus.
+        expect.stringContaining("r.status NOT IN ('pending', 'cancelled', 'ok', 'success')"),
+        // Model matches ANY attempt, or the requested model when a request
+        // never reached a provider — so it is its own clause, not one of the
+        // predicates that AND together on a single attempt row.
+        expect.stringContaining('model_attempt.model IN (:...requestModels)'),
+        expect.stringContaining('r.requested_model IN (:...requestModels)'),
         expect.stringContaining("r.error_origin IN ('config', 'policy', 'internal', 'request')"),
         expect.stringContaining('filtered_attempt.service_type = :requestServiceType'),
         expect.stringContaining('filtered_attempt.routing_tier = :requestTier'),

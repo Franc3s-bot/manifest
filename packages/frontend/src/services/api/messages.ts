@@ -134,6 +134,8 @@ export interface MessageListParams extends Record<string, string | undefined> {
   connections?: string;
   /** Comma-separated attempt-status facets: has_failed, has_succeeded. */
   attempts?: string;
+  /** Comma-separated model names (model filter). */
+  model?: string;
   service_type?: string;
   cursor?: string;
   limit?: string;

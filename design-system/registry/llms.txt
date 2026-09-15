@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (313 BEM blocks, 1696 classes)
+## Blocks (312 BEM blocks, 1693 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -160,7 +160,6 @@ conv-resize-handle (request-drawer.css): conv-resize-handle
 conv-split (request-drawer.css): conv-split
 conv-turns (request-drawer.css): conv-turns
 copilot-device-login (routing-providers.css): copilot-device-login__code copilot-device-login__code-box copilot-device-login__code-row copilot-device-login__copy-btn copilot-device-login__open-btn copilot-device-login__waiting
-cost-range-filter (controls.css): cost-range-filter cost-range-filter__input cost-range-filter__sep
 count-link (theme.css): count-link
 custom-provider-item (routing-providers.css): custom-provider-item custom-provider-item__delete custom-provider-item__icon custom-provider-item__info custom-provider-item__meta custom-provider-item__name
 custom-provider-model-row (routing-providers.css): custom-provider-model-row custom-provider-model-row__name custom-provider-model-row__price custom-provider-model-row__remove
@@ -482,12 +481,12 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .expandable-card__fade { height: 80px }  at charts.css:110 loses to theme.css:1045
 .expandable-card__fade { background: linear-gradient(transparent, hsl(var(--card)) 60%) }  at charts.css:111 loses to theme.css:1046
 .expandable-card__fade { padding-bottom: 16px }  at charts.css:116 loses to theme.css:1051
-.toast { align-items: center }  at controls.css:172 loses to toast.css:16
-.toast { gap: 10px }  at controls.css:173 loses to toast.css:17
-.toast { padding: 12px 16px }  at controls.css:174 loses to toast.css:18
-.toast { box-shadow: 0 4px 16px rgb(0 0 0 / 0.15) }  at controls.css:177 loses to toast.css:22
-.toast { animation: toast-in 200ms ease-out }  at controls.css:180 loses to toast.css:26
-.sidebar { padding: var(--gap-md) 0 }  at controls.css:261 loses to theme.css:785
+.toast { align-items: center }  at controls.css:124 loses to toast.css:16
+.toast { gap: 10px }  at controls.css:125 loses to toast.css:17
+.toast { padding: 12px 16px }  at controls.css:126 loses to toast.css:18
+.toast { box-shadow: 0 4px 16px rgb(0 0 0 / 0.15) }  at controls.css:129 loses to toast.css:22
+.toast { animation: toast-in 200ms ease-out }  at controls.css:132 loses to toast.css:26
+.sidebar { padding: var(--gap-md) 0 }  at controls.css:213 loses to theme.css:785
 .custom-select__option--top > svg { margin-top: calc((18px - 13px) / 2) }  at custom-select.css:137 loses to custom-select.css:142
 .custom-select__option--top > img { margin-top: calc((18px - 13px) / 2) }  at custom-select.css:137 loses to custom-select.css:142
 .tier-badge--fallback { background: hsl(var(--muted-foreground) / 0.1) }  at data.css:299 loses to overview.css:105

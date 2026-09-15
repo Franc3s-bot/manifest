@@ -85,6 +85,12 @@ interface MessageQueryParams extends MessageFilterParams {
   provider?: string;
   /** tenant_providers ids; requests must have touched one of these connections. */
   connections?: string[];
+  /**
+   * Model names, OR'd together. Matches any attempt's model — the same "any
+   * attempt" rule the provider filter uses — or, for a request that never
+   * reached a provider, its `requested_model`.
+   */
+  models?: string[];
   service_type?: string;
   cost_min?: number;
   cost_max?: number;
@@ -180,13 +186,18 @@ function emptyFilterOptions(): {
   providers: string[];
   provider_labels: Record<string, string>;
   header_tiers: HeaderTierFilterOption[];
+  models: string[];
 } {
-  return { providers: [], provider_labels: {}, header_tiers: [] };
+  return { providers: [], provider_labels: {}, header_tiers: [], models: [] };
 }
 
 @Injectable()
 export class MessagesQueryService {
   private readonly modelsCache = new TtlCache<string, { models: string[]; providers: string[] }>({
+    maxSize: MAX_CACHE_ENTRIES,
+    ttlMs: MODELS_CACHE_TTL_MS,
+  });
+  private readonly attemptlessModelsCache = new TtlCache<string, string[]>({
     maxSize: MAX_CACHE_ENTRIES,
     ttlMs: MODELS_CACHE_TTL_MS,
   });
@@ -276,6 +287,7 @@ export class MessagesQueryService {
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
       header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
@@ -306,7 +318,10 @@ export class MessagesQueryService {
     if (params.status === 'failed' || params.status === 'errors') {
       // "Not a success" across both vocabularies: a normalized `success` row must
       // never leak into the failed filter just because it is not literally `ok`.
-      qb.andWhere(`r.status NOT IN (${SUCCESS_STATUS_SQL_LIST})`);
+      // `cancelled` and `pending` are excluded on purpose — a hung-up caller and
+      // an in-flight request are not failures, which is the same line
+      // `sqlIsFailedStatus` draws. `cancelled` has its own filter value.
+      qb.andWhere(sqlIsFailedStatus('r.status'));
     } else if (params.status === 'ok' || params.status === 'success') {
       qb.andWhere(`r.status IN (${SUCCESS_STATUS_SQL_LIST})`);
     } else if (params.status) {
@@ -321,6 +336,25 @@ export class MessagesQueryService {
       qb.andWhere('r.error_class = :requestErrorClass', {
         requestErrorClass: params.error_class,
       });
+    }
+    if (params.models?.length) {
+      // Kept outside `attemptPredicates` on purpose: those AND together on ONE
+      // attempt row, while a model match is about the request as a whole. The
+      // requested_model arm catches Manifest-blocked requests, which carry no
+      // attempt but still render a model in the log.
+      qb.andWhere(
+        `(EXISTS (
+            SELECT 1 FROM agent_messages model_attempt
+            WHERE model_attempt.request_id = r.id AND model_attempt.model IN (:...requestModels)
+          )
+          OR (
+            r.requested_model IN (:...requestModels)
+            AND NOT EXISTS (
+              SELECT 1 FROM agent_messages any_attempt WHERE any_attempt.request_id = r.id
+            )
+          ))`,
+        { requestModels: params.models },
+      );
     }
     const attemptPredicates: string[] = [];
     const attemptParameters: Record<string, unknown> = {};
@@ -654,6 +688,7 @@ export class MessagesQueryService {
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
       header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
@@ -712,6 +747,7 @@ export class MessagesQueryService {
     providers: string[];
     provider_labels: Record<string, string>;
     header_tiers: HeaderTierFilterOption[];
+    models: string[];
   }> {
     const [distinctRows, headerTiers] = await Promise.all([
       this.getDistinctModels(params.tenantId, params.range, params.agent_name),
@@ -719,7 +755,19 @@ export class MessagesQueryService {
     ]);
     const providers = this.deriveProviders(distinctRows.models, distinctRows.providers);
     const providerLabels = await this.resolveCustomProviderLabels(providers, params.tenantId);
-    return { providers, provider_labels: providerLabels, header_tiers: headerTiers };
+    // The distinct-model scan already ran to derive providers, so the Model
+    // filter reuses it. It only sees `agent_messages`, though: a request Manifest
+    // blocked before any provider call has no attempt, and the log renders its
+    // `requested_model` in the Model column. Those models must be selectable too,
+    // or the column shows a value the dropdown cannot offer.
+    const blockedModels = await this.getAttemptlessRequestedModels(params);
+    const models = [...new Set([...distinctRows.models, ...blockedModels])].sort();
+    return {
+      providers,
+      provider_labels: providerLabels,
+      header_tiers: headerTiers,
+      models,
+    };
   }
 
   /**
@@ -789,6 +837,7 @@ export class MessagesQueryService {
     range?: string;
     tenantId: string | null;
     provider?: string;
+    models?: string[];
     service_type?: string;
     cost_min?: number;
     cost_max?: number;
@@ -807,6 +856,8 @@ export class MessagesQueryService {
 
     addTenantFilter(qb, params.tenantId);
 
+    if (params.models?.length)
+      qb.andWhere('at.model IN (:...legacyModels)', { legacyModels: params.models });
     if (params.service_type)
       qb.andWhere('at.service_type = :serviceType', { serviceType: params.service_type });
     if (params.cost_min !== undefined)
@@ -991,6 +1042,48 @@ export class MessagesQueryService {
     return [...seen].sort();
   }
 
+  /**
+   * Models named only by requests that never reached a provider. Cached on the
+   * same key shape and TTL as the distinct-model scan, so a tenant pays for it
+   * once per window rather than on every log load.
+   */
+  private async getAttemptlessRequestedModels(params: MessageFilterParams): Promise<string[]> {
+    // No tenant resolves to no rows, matching addTenantFilter's own contract.
+    if (!this.requestRepo || params.tenantId === null) return [];
+    const cacheKey = `blocked:${params.tenantId ?? 'no-tenant'}:${params.agent_name ?? ''}:${params.range ?? 'all'}`;
+    const cached = this.attemptlessModelsCache.get(cacheKey);
+    if (cached) return cached;
+
+    const cutoff = params.range
+      ? computeCutoff(rangeToInterval(params.range))
+      : computeCutoff(DISTINCT_MODELS_DEFAULT_INTERVAL);
+    const qb = this.requestRepo
+      .createQueryBuilder('r')
+      .select('DISTINCT r.requested_model', 'model')
+      .where('r.timestamp >= :cutoff', { cutoff })
+      .andWhere("r.requested_model IS NOT NULL AND r.requested_model <> ''")
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM agent_messages blocked_attempt WHERE blocked_attempt.request_id = r.id)',
+      )
+      // Scoped on `r` by hand: addTenantFilter hardcodes the `at` alias of the
+      // attempt-first queries and would emit SQL with no such FROM entry here.
+      .andWhere('r.tenant_id = :blockedTenantId', { blockedTenantId: params.tenantId });
+    if (params.agent_name) {
+      qb.andWhere(
+        `r.agent_id = (
+          SELECT id FROM agents
+          WHERE tenant_id = r.tenant_id AND name = :blockedAgentName AND deleted_at IS NULL
+          LIMIT 1
+        )`,
+        { blockedAgentName: params.agent_name },
+      );
+    }
+    const rows = (await qb.getRawMany()) as { model: string }[];
+    const models = rows.map((row) => String(row.model)).filter(Boolean);
+    this.attemptlessModelsCache.set(cacheKey, models);
+    return models;
+  }
+
   private async getDistinctModels(
     tenantId: string | null,
     range?: string,
@@ -1073,6 +1166,7 @@ export class MessagesQueryService {
     range?: string;
     provider?: string;
     connections?: string[];
+    models?: string[];
     attemptStatus?: ('has_failed' | 'has_succeeded')[];
     service_type?: string;
     agent_name?: string;
@@ -1093,6 +1187,7 @@ export class MessagesQueryService {
       params.range ?? '',
       params.provider ?? '',
       params.connections?.join(',') ?? '',
+      params.models?.join(',') ?? '',
       params.attemptStatus?.join(',') ?? '',
       params.service_type ?? '',
       params.agent_name ?? '',

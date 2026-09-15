@@ -27,6 +27,9 @@ export const MESSAGE_STATUS_FILTER_VALUES = [
   'success',
   'ok',
   'failed',
+  // The caller hung up: neither Manifest nor the provider failed, so it is its
+  // own outcome rather than a flavour of `failed`.
+  'cancelled',
   'error',
   'rate_limited',
   'fallback_error',
@@ -63,6 +66,18 @@ export class MessagesQueryDto {
   @IsOptional()
   @IsString()
   connections?: string;
+
+  /**
+   * Comma-separated model names. A request matches when any of its provider
+   * attempts ran on one of these models — the same "any attempt" semantics the
+   * provider filter uses, so filtering by the primary of a fallback chain still
+   * surfaces the request it was recovered on. A request that never reached a
+   * provider is matched on `requests.requested_model` instead, which is what
+   * the Model column renders for those rows.
+   */
+  @IsOptional()
+  @IsString()
+  model?: string;
 
   @IsOptional()
   @IsString()
