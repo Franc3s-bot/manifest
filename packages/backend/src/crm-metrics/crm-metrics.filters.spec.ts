@@ -124,9 +124,7 @@ describe('isConsumerEmail', () => {
       'tutamail.com',
       'tutanota.com',
       'disroot.org',
-      'mail.com',
       'gmx.at',
-      'engineer.com',
     ])('flags %s as a consumer country variant', (domain) => {
       expect(isConsumerEmail(`ada@${domain}`)).toBe(true);
     });
@@ -134,6 +132,29 @@ describe('isConsumerEmail', () => {
     it('does not mistake a corporate mail subdomain for the mail.com family', () => {
       // `mail.acme.com`: second label is a brand, not a 2-3 letter TLD.
       expect(isConsumerEmail('ada@mail.acme.com')).toBe(false);
+    });
+
+    it('catches a consumer brand behind a subdomain', () => {
+      expect(isConsumerEmail('ada@mail.yahoo.de')).toBe(true);
+      expect(isConsumerEmail('ada@imap.gmx.net')).toBe(true);
+    });
+
+    it('keeps companies whose name is also a consumer mail brand', () => {
+      // Consumer on their mail TLD, corporate everywhere else.
+      expect(isConsumerEmail('ada@comcast.net')).toBe(true);
+      expect(isConsumerEmail('ada@comcast.com')).toBe(false);
+      expect(isConsumerEmail('ada@orange.fr')).toBe(true);
+      expect(isConsumerEmail('ada@orange.com')).toBe(false);
+      expect(isConsumerEmail('ada@web.de')).toBe(true);
+      expect(isConsumerEmail('ada@web.com')).toBe(false);
+      expect(isConsumerEmail('ada@free.fr')).toBe(true);
+      expect(isConsumerEmail('ada@free.com')).toBe(false);
+    });
+
+    it('still catches the mail.com family through the exact list', () => {
+      expect(isConsumerEmail('ada@mail.com')).toBe(true);
+      expect(isConsumerEmail('ada@engineer.com')).toBe(true);
+      expect(isConsumerEmail('ada@bk.ru')).toBe(true);
     });
 
     it('does not flag a company whose name merely starts with a brand word', () => {
@@ -175,6 +196,15 @@ describe('isConsumerEmail', () => {
     it('does not flag a company that happens to contain "edu"', () => {
       expect(isConsumerEmail('ada@educative.io')).toBe(false);
       expect(isConsumerEmail('ada@procedure.com')).toBe(false);
+    });
+
+    it('only treats a two-letter country code as academic', () => {
+      // `edu` / `ac` followed by a generic 3-letter TLD is a company, not a
+      // university. Two letters is a country code by definition, so `.ac.uk`
+      // and `.edu.bd` stay academic.
+      expect(isConsumerEmail('ada@company.edu.com')).toBe(false);
+      expect(isConsumerEmail('ada@startup.ac.dev')).toBe(false);
+      expect(isConsumerEmail('ada@startup.ac.app')).toBe(false);
     });
   });
 });
