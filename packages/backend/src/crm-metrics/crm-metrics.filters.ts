@@ -131,6 +131,7 @@ const CONSUMER_DOMAINS = [
   'daum.net',
   'yandex.ru',
   'yandex.com',
+  'mail.com',
   'mail.ru',
   'rambler.ru',
   'seznam.cz',
@@ -141,6 +142,15 @@ const CONSUMER_DOMAINS = [
   'consultant.com',
   'usa.com',
   'europe.com',
+  'mail.ru',
+  'bk.ru',
+  'list.ru',
+  'inbox.ru',
+  'inbox.lv',
+  'email.com',
+  'email.cz',
+  'live.com',
+  'live.fr',
   'example.com',
   'test.com',
 ];
@@ -151,12 +161,20 @@ const CONSUMER_DOMAINS = [
  * An exact list cannot keep up: the first live run of the signup feed let
  * through yahoo.de, yahoo.com.br, outlook.de, bk.ru, tuta.io and thirty more
  * that were simply not enumerated. The brand followed by a 2-3 letter TLD and
- * an optional country suffix covers the whole family — `yahoo.de`,
+ * an optional two-letter country suffix covers the whole family — `yahoo.de`,
  * `yahoo.com.br`, `yahoo.co.jp` — without touching `mail.acme.com`, whose
  * second label is not a TLD.
+ *
+ * Matched at a label boundary, not only at the start, so `mail.yahoo.de` and
+ * `imap.gmx.net` count too.
+ *
+ * Only brands that are consumer mail on *every* TLD belong here. Names that
+ * are also a real company's domain — comcast.com, orange.com, web.com,
+ * free.fr vs free.com, mail.com vs mail.acme.com — stay in the exact list
+ * for their consumer TLDs, so a corporate signup at orange.com is kept.
  */
 const CONSUMER_FAMILIES = new RegExp(
-  '^(?:' +
+  '(?:^|\\.)(?:' +
     [
       'gmail',
       'googlemail',
@@ -169,21 +187,12 @@ const CONSUMER_FAMILIES = new RegExp(
       'msn',
       'aol',
       'icloud',
-      'me',
-      'mac',
       'proton',
       'protonmail',
-      'pm',
       'tuta',
       'tutanota',
       'tutamail',
       'gmx',
-      'web',
-      'mail',
-      'email',
-      'inbox',
-      'bk',
-      'list',
       'yandex',
       'rambler',
       'disroot',
@@ -192,18 +201,13 @@ const CONSUMER_FAMILIES = new RegExp(
       'riseup',
       'zoho',
       'fastmail',
-      'hey',
       'qq',
       'foxmail',
       'naver',
       'daum',
       'seznam',
       'laposte',
-      'orange',
       'wanadoo',
-      'free',
-      'sfr',
-      'comcast',
     ].join('|') +
     ')\\.[a-z]{2,3}(?:\\.[a-z]{2})?$',
 );
@@ -248,8 +252,11 @@ const RELAY_AND_DISPOSABLE_DOMAINS = [
  * seen in production (Bangladesh, India, Korea, Taiwan, the UK, Indonesia,
  * Vietnam, Brazil…). A student is a real person with a real address, but not
  * the "team behind a corporate domain" this feed exists to find.
+ *
+ * The country part is exactly two letters. `{2,3}` would also take
+ * `company.edu.com` and `startup.ac.dev`, which are companies.
  */
-const ACADEMIC_DOMAIN = /(?:^|\.)(?:edu|ac)\.[a-z]{2,3}$|\.edu$/;
+const ACADEMIC_DOMAIN = /(?:^|\.)(?:edu|ac)\.[a-z]{2}$|\.edu$/;
 
 /** Signups on one domain inside this span, with no traffic, look scripted. */
 const CLUSTER_WINDOW_MS = 30 * 86_400_000;
