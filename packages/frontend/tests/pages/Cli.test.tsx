@@ -40,7 +40,7 @@ describe('CLI page', () => {
 
   it('shows the npm install for the published package', () => {
     const { container } = render(() => <Cli />);
-    expect(container.textContent).toContain('npm install -g @mnfst/gateway-cli');
+    expect(container.textContent).toContain('npm install -g mnfst-gateway-cli');
   });
 
   it('shows a bare login on cloud', async () => {

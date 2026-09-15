@@ -5,7 +5,7 @@ import { installOrigin } from '../../services/install-endpoints.js';
 import { checkIsSelfHosted } from '../../services/setup-status.js';
 
 const DOCS_URL = 'https://manifest.build/docs/cli/';
-const PACKAGE = '@mnfst/gateway-cli';
+const PACKAGE = 'mnfst-gateway-cli';
 
 /**
  * On a self-hosted install the CLI has to be told which host to talk to, and
@@ -57,8 +57,8 @@ const Cli: Component = () => {
         <div class="panel">
           <div class="panel__title">1. Install</div>
           <p class="integration-panel__desc">
-            The package is scoped, but the command you type is <code>mnfst</code>. Its version
-            tracks the Manifest release it ships with.
+            The package is <code>mnfst-gateway-cli</code>, but the command you type is{' '}
+            <code>mnfst</code>. Its version tracks the Manifest release it ships with.
           </p>
           <CodeBlock code={`npm install -g ${PACKAGE}`} language="bash" />
         </div>

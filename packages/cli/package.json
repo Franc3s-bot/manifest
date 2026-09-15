@@ -1,5 +1,5 @@
 {
-  "name": "@mnfst/gateway-cli",
+  "name": "mnfst-gateway-cli",
   "version": "6.24.0",
   "description": "Manifest gateway management CLI (mnfst) — configure agents, providers, and routing from the terminal",
   "license": "MIT",
@@ -35,7 +35,6 @@
     "node": ">=20"
   },
   "publishConfig": {
-    "access": "public",
     "provenance": true
   },
   "scripts": {

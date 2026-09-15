@@ -154,7 +154,7 @@ jobs:
       contents: read
       id-token: write
 
-  # Publishes the management CLI to npm as @mnfst/gateway-cli. Gated on the same
+  # Publishes the management CLI to npm as mnfst-gateway-cli. Gated on the same
   # `should_publish` output as the Docker image, so the CLI version always
   # matches the Manifest release it shipped with — that is why the package stays
   # in the `.changeset/config.json` ignore list and has no changeset target of
@@ -192,15 +192,15 @@ jobs:
           VERSION=$(jq -r .version packages/cli/package.json)
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           set +e
-          VIEW_OUTPUT=$(npm view "@mnfst/gateway-cli@${VERSION}" version 2>&1)
+          VIEW_OUTPUT=$(npm view "mnfst-gateway-cli@${VERSION}" version 2>&1)
           VIEW_STATUS=$?
           set -e
           if [ "$VIEW_STATUS" -eq 0 ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "@mnfst/gateway-cli@${VERSION} is already published; skipping."
+            echo "mnfst-gateway-cli@${VERSION} is already published; skipping."
           elif printf '%s' "$VIEW_OUTPUT" | grep -q 'E404'; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "@mnfst/gateway-cli@${VERSION} is not on npm yet; publishing."
+            echo "mnfst-gateway-cli@${VERSION} is not on npm yet; publishing."
           else
             echo "npm view failed for a reason other than E404; refusing to guess:" >&2
             printf '%s\n' "$VIEW_OUTPUT" >&2

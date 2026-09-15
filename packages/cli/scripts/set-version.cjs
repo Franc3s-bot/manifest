@@ -3,7 +3,7 @@
  * Stamps one version onto every file in packages/cli that carries it.
  *
  * The CLI's version tracks the Manifest release it ships with, so there is no
- * separate changeset target for it (`@mnfst/gateway-cli` stays in the
+ * separate changeset target for it (`mnfst-gateway-cli` stays in the
  * `.changeset/config.json` ignore list). The publish-npm job in release.yml
  * calls this with the version from packages/manifest/package.json before
  * building and packing.
@@ -100,7 +100,7 @@ function main(argv) {
     fs.writeFileSync(write.path, write.contents);
   }
   console.log(
-    'Stamped @mnfst/gateway-cli ' +
+    'Stamped mnfst-gateway-cli ' +
       version +
       ' onto package.json, src/version.ts and src/skill-content.gen.ts',
   );
