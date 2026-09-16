@@ -148,17 +148,17 @@ const Consent: Component = () => {
               class="auth-form__submit"
               type="button"
               disabled={busy() !== null}
-              onClick={() => void decide(false)}
-            >
-              {busy() === 'deny' ? 'Denying…' : 'Deny'}
-            </button>
-            <button
-              class="auth-form__submit"
-              type="button"
-              disabled={busy() !== null}
               onClick={() => void decide(true)}
             >
               {busy() === 'approve' ? 'Allowing…' : 'Allow access'}
+            </button>
+            <button
+              class="auth-form__submit auth-form__submit--secondary"
+              type="button"
+              disabled={busy() !== null}
+              onClick={() => void decide(false)}
+            >
+              {busy() === 'deny' ? 'Denying…' : 'Deny'}
             </button>
           </div>
         </Show>
