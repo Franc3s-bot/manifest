@@ -42,6 +42,56 @@ export const authIssuer = `${authOrigin}/api/auth`;
 export const mcpResource = `${authOrigin}/api/v1/mcp`;
 export { MCP_READ_SCOPE, MCP_WRITE_SCOPE, MCP_SCOPES } from './mcp-scopes';
 
+/** Host (with optional port) of an origin or bare hostname, or null when junk. */
+function parseOriginHost(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return url.host || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Better Auth pins the OAuth callback and the session cookie to its `baseURL`.
+ * The dashboard and the API can answer on more than one host — the hosted
+ * Cloud serves app.manifest.build and gateway.manifest.build from the same
+ * service — so a single static origin sends a user who started on host A
+ * through a callback on host B, where the session cookie lands on an origin
+ * the dashboard cannot read. When a second host is configured, resolve the
+ * base URL from the request host instead, restricted to an allow-list.
+ *
+ * Hosts come from `BETTER_AUTH_URL` (canonical), `CORS_ORIGIN` (the dashboard
+ * origin already trusted for cross-origin calls), and the optional
+ * `BETTER_AUTH_ALLOWED_HOSTS` (comma-separated patterns, `*.` wildcards
+ * allowed). Unknown hosts fall back to the canonical origin, and dev keeps the
+ * static origin so the Vite proxy on :3000 doesn't move the callback off the
+ * registered :3001 URL.
+ */
+function buildAuthBaseURL():
+  | string
+  | { allowedHosts: string[]; fallback: string; protocol: 'http' | 'https' } {
+  if (isDev) return authOrigin;
+  const hosts = new Set<string>();
+  const add = (value: string | undefined) => {
+    const host = parseOriginHost(value);
+    if (host) hosts.add(host);
+  };
+  add(process.env['BETTER_AUTH_URL']);
+  add(process.env['CORS_ORIGIN']);
+  for (const entry of (process.env['BETTER_AUTH_ALLOWED_HOSTS'] ?? '').split(',')) add(entry);
+  if (hosts.size <= 1) return authOrigin;
+  return {
+    allowedHosts: [...hosts],
+    fallback: authOrigin,
+    protocol: authOrigin.startsWith('https://') ? 'https' : 'http',
+  };
+}
+
+export const authBaseURL = buildAuthBaseURL();
+
 function createDatabaseConnection() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Pool } = require('pg');
@@ -162,7 +212,7 @@ function buildPlugins() {
 
 const pluginAuth = betterAuth({
   database,
-  baseURL: authOrigin,
+  baseURL: authBaseURL,
   basePath: '/api/auth',
   secret: betterAuthSecret,
   logger: { level: 'debug' },

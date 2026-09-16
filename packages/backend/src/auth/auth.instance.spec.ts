@@ -478,6 +478,92 @@ describe('auth.instance', () => {
     });
   });
 
+  describe('multi-host baseURL resolution', () => {
+    beforeEach(() => {
+      process.env['NODE_ENV'] = 'production';
+      process.env['BETTER_AUTH_SECRET'] = 'a]3kF9!xLm2@pQzR7^wYu4&vN6*cE0hT';
+      delete process.env['BETTER_AUTH_ALLOWED_HOSTS'];
+    });
+
+    it('stays a static origin when only the API host is configured', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      delete process.env['CORS_ORIGIN'];
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toBe('https://gateway.manifest.build');
+    });
+
+    it('resolves per request when the dashboard origin differs from the API origin', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toEqual({
+        allowedHosts: expect.arrayContaining(['gateway.manifest.build', 'app.manifest.build']),
+        fallback: 'https://gateway.manifest.build',
+        protocol: 'https',
+      });
+      expect(config.baseURL.allowedHosts).toHaveLength(2);
+    });
+
+    it('adds extra hosts from BETTER_AUTH_ALLOWED_HOSTS, including wildcards', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      delete process.env['CORS_ORIGIN'];
+      process.env['BETTER_AUTH_ALLOWED_HOSTS'] =
+        'dashboard.manifest.build, *.preview.manifest.build';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect([...config.baseURL.allowedHosts].sort()).toEqual([
+        '*.preview.manifest.build',
+        'dashboard.manifest.build',
+        'gateway.manifest.build',
+      ]);
+    });
+
+    it('ignores malformed allowed-host entries', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      process.env['BETTER_AUTH_ALLOWED_HOSTS'] = ',   ,not a url';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect([...config.baseURL.allowedHosts].sort()).toEqual([
+        'app.manifest.build',
+        'gateway.manifest.build',
+      ]);
+    });
+
+    it('uses http when the canonical origin is http', () => {
+      process.env['BETTER_AUTH_URL'] = 'http://manifest.internal';
+      process.env['CORS_ORIGIN'] = 'http://dashboard.internal';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL.protocol).toBe('http');
+    });
+
+    it('keeps the static origin in development', () => {
+      process.env['NODE_ENV'] = 'development';
+      process.env['BETTER_AUTH_URL'] = 'http://localhost:3001';
+      process.env['CORS_ORIGIN'] = 'http://localhost:3000';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toBe('http://localhost:3001');
+    });
+
+    it('exports the same base URL passed to betterAuth', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      const mod = loadModule();
+
+      expect(mod.authBaseURL).toEqual(mockBetterAuth.mock.calls[0][0].baseURL);
+    });
+  });
+
   describe('plugins', () => {
     beforeEach(() => {
       mockStripePlugin.mockClear();
