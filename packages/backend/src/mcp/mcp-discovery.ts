@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { oauthProviderAuthServerMetadata } from '@better-auth/oauth-provider';
 import { fromNodeHeaders } from 'better-auth/node';
 import type { Request, Response } from 'express';
+import { mcpOAuthResponse } from '../auth/mcp-oauth-response';
 import {
   authInstance,
   authIssuerForHost,
@@ -37,12 +38,14 @@ export function mountMcpDiscovery(app: INestApplication): void {
   const serveAuthMetadata = async (req: Request, res: Response): Promise<void> => {
     cors(res);
     try {
-      const response = await authServerMetadata(
-        new globalThis.Request(`${authOriginForHost(req.headers.host)}${req.originalUrl}`, {
+      const webRequest = new globalThis.Request(
+        `${authOriginForHost(req.headers.host)}${req.originalUrl}`,
+        {
           method: req.method,
           headers: fromNodeHeaders(req.headers),
-        }),
+        },
       );
+      const response = await mcpOAuthResponse(webRequest, await authServerMetadata(webRequest));
       response.headers.forEach((value, key) => res.set(key, value));
       res.status(response.status).send(req.method === 'HEAD' ? undefined : await response.text());
     } catch {

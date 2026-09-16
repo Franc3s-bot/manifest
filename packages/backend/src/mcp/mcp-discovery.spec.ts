@@ -86,12 +86,30 @@ describe('mountMcpDiscovery', () => {
     expect(res.body).toMatchObject({ issuer: 'http://localhost:3001/api/auth' });
   });
 
+  it('does not advertise registration that requires a signed-in user', async () => {
+    oauthProviderAuthServerMetadata.mockReturnValue(
+      async () =>
+        new Response(
+          JSON.stringify({
+            issuer: 'http://localhost:3001/api/auth',
+            registration_endpoint: '/register',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    const res = await request(makeApp())
+      .get('/.well-known/oauth-authorization-server/api/auth')
+      .expect(200);
+    expect(res.body).toEqual({ issuer: 'http://localhost:3001/api/auth' });
+  });
+
   it('uses the gateway host for gateway authorization metadata', async () => {
-    const serve = jest.fn(async (req: Request) =>
-      new Response(JSON.stringify({ issuer: new URL(req.url).origin + '/api/auth' }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }),
+    const serve = jest.fn(
+      async (req: Request) =>
+        new Response(JSON.stringify({ issuer: new URL(req.url).origin + '/api/auth' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
     );
     oauthProviderAuthServerMetadata.mockReturnValue(serve);
     const res = await request(makeApp())

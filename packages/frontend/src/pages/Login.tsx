@@ -90,7 +90,7 @@ const Login: Component = () => {
     }
 
     setLastAuthMethod('email');
-    window.location.href = getAuthDestination(searchParams);
+    window.location.href = getAuthDestination(searchParams, location.search);
   };
 
   // Dev shortcut: fill + submit the seed admin. One click, no credentials in the URL;
@@ -122,7 +122,7 @@ const Login: Component = () => {
 
     const { error: resendError } = await authClient.sendVerificationEmail({
       email: email(),
-      callbackURL: getAuthDestination(searchParams),
+      callbackURL: getAuthDestination(searchParams, location.search),
     });
 
     if (resendError) {

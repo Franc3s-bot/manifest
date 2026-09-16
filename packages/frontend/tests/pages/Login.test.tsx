@@ -280,6 +280,30 @@ describe('Login', () => {
     locationSpy.mockRestore();
   });
 
+  it('resumes a signed MCP authorization request after successful login', async () => {
+    const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
+      ...window.location,
+      href: '',
+    });
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window.location, 'href', { set: hrefSetter, configurable: true });
+    mockLocationSearch =
+      '?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc';
+    mockSignInEmail.mockResolvedValue({ error: null });
+    const { container } = render(() => <Login />);
+    fireEvent.input(container.querySelector('input[type="email"]')!, {
+      target: { value: 'user@test.com' },
+    });
+    fireEvent.input(container.querySelector('input[type="password"]')!, {
+      target: { value: 'password123' },
+    });
+    fireEvent.submit(container.querySelector('form')!);
+    await vi.waitFor(() => {
+      expect(hrefSetter).toHaveBeenCalledWith(`/api/auth/oauth2/authorize${mockLocationSearch}`);
+    });
+    locationSpy.mockRestore();
+  });
+
   it('resends unverified pro logins with an upgrade callback', async () => {
     mockSearchParams = { plan: 'pro' };
     mockSignInEmail.mockResolvedValue({

@@ -33,6 +33,7 @@ const Account = lazyReload(() => import('./pages/Account.jsx'));
 const Upgrade = lazyReload(() => import('./pages/Upgrade.jsx'));
 const CliAuth = lazyReload(() => import('./pages/CliAuth.jsx'));
 const Consent = lazyReload(() => import('./pages/Consent.jsx'));
+const OauthError = lazyReload(() => import('./pages/OauthError.jsx'));
 const Login = lazyReload(() => import('./pages/Login.jsx'));
 const Register = lazyReload(() => import('./pages/Register.jsx'));
 const ResetPassword = lazyReload(() => import('./pages/ResetPassword.jsx'));
@@ -152,6 +153,9 @@ render(
         </Route>
         <Route path="/consent" component={AuthGuard}>
           <Route path="/" component={Consent} />
+        </Route>
+        <Route path="/oauth-error" component={AuthLayout}>
+          <Route path="/" component={OauthError} />
         </Route>
         <Route path="/" component={GuestLayout}>
           <Route path="/login" component={Login} />
