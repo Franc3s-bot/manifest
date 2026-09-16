@@ -27,7 +27,7 @@ describe('waitlist service', () => {
 
     it('targets the cloud endpoint from production self-hosted', () => {
       expect(getPivotClaimUrl(true, false)).toBe(
-        'https://gateway.manifest.build/api/v1/waitlist/pivot/claim',
+        'https://app.manifest.build/api/v1/waitlist/pivot/claim',
       );
     });
 

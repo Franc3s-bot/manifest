@@ -8,7 +8,12 @@ import type { Cache } from 'cache-manager';
 import type { Request, Response } from 'express';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { auth, authIssuer, MCP_READ_SCOPE, mcpResource } from '../auth/auth.instance';
+import {
+  auth,
+  authIssuerForHost,
+  mcpResourceForHost,
+  MCP_READ_SCOPE,
+} from '../auth/auth.instance';
 import { Public } from '../common/decorators/public.decorator';
 import { TenantCacheService } from '../common/services/tenant-cache.service';
 import { AgentListCacheService } from '../common/services/agent-list-cache.service';
@@ -136,7 +141,9 @@ export class McpController {
   @Public()
   async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
     const deps = this.deps();
-    const webRequest = new globalThis.Request(mcpResource, {
+    const resource = mcpResourceForHost(req.headers.host);
+    const issuer = authIssuerForHost(req.headers.host);
+    const webRequest = new globalThis.Request(resource, {
       method: req.method,
       headers: fromNodeHeaders(req.headers),
     });
@@ -146,15 +153,15 @@ export class McpController {
       const { internalAdapter } = await auth.$context;
       const verify = createMcpProtectedRequestHandler(
         {
-          issuer: authIssuer,
-          audience: mcpResource,
-          jwksUrl: `${authIssuer}/jwks`,
+          issuer,
+          audience: resource,
+          jwksUrl: `${issuer}/jwks`,
           requiredScopes: [MCP_READ_SCOPE],
           dpop: { replayStore: createDpopReplayStore(internalAdapter) },
         },
         async (request, claims) => {
           const operator = await resolveMcpOperator(this.tenantCache, claims);
-          if (!operator) return unauthorizedResponse();
+          if (!operator) return unauthorizedResponse(resource);
           // A fresh handler per request keeps the operator closure un-forgeable:
           // no caller-supplied field can change whose tenant a tool acts on.
           const handler = createMcpHandler(() => buildMcpServer(deps, operator), {
@@ -198,8 +205,8 @@ function methodNotAllowedResponse(): globalThis.Response {
   );
 }
 
-function unauthorizedResponse(): globalThis.Response {
-  const url = new URL(mcpResource);
+function unauthorizedResponse(resource: string): globalThis.Response {
+  const url = new URL(resource);
   const metadata = `${url.origin}/.well-known/oauth-protected-resource${url.pathname}`;
   return new globalThis.Response(
     JSON.stringify({

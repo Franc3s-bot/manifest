@@ -95,7 +95,7 @@ describe("HeaderTierSnippetModal", () => {
     expect(getByTestId("snippets-base-url").textContent).toBe("http://localhost:3001/v1");
   });
 
-  it("uses the production URL on gateway.manifest.build", () => {
+  it("uses the app URL on gateway.manifest.build", () => {
     Object.defineProperty(window, "location", {
       configurable: true,
       value: { hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
@@ -103,7 +103,7 @@ describe("HeaderTierSnippetModal", () => {
     const { getByTestId } = render(() => (
       <HeaderTierSnippetModal agentName="demo" tier={baseTier} onClose={vi.fn()} />
     ));
-    expect(getByTestId("snippets-base-url").textContent).toBe("https://gateway.manifest.build/v1");
+    expect(getByTestId("snippets-base-url").textContent).toBe("https://app.manifest.build/v1");
   });
 
   it("calls onClose when the close button is clicked", () => {

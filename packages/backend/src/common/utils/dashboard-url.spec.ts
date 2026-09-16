@@ -9,10 +9,10 @@ describe('dashboard URLs', () => {
     else process.env['BETTER_AUTH_URL'] = originalUrl;
   });
 
-  it('uses the gateway dashboard when no deployment URL is configured', () => {
-    expect(getDashboardBaseUrl()).toBe('https://gateway.manifest.build');
+  it('uses the app dashboard when no deployment URL is configured', () => {
+    expect(getDashboardBaseUrl()).toBe('https://app.manifest.build');
     expect(getEmailAssetUrl('manifest-logo.png')).toBe(
-      'https://gateway.manifest.build/manifest-logo.png',
+      'https://app.manifest.build/manifest-logo.png',
     );
   });
 
