@@ -283,6 +283,13 @@ export class ProxyService {
       headers,
       startProviderAttempt,
     } = opts;
+    const rawUa = headers?.['user-agent'];
+    const clientUserAgent =
+      typeof rawUa === 'string'
+        ? rawUa
+        : Array.isArray(rawUa)
+          ? rawUa[0]
+          : undefined;
     const apiMode = opts.apiMode ?? 'chat_completions';
     const routingSource = opts.routingBody ?? body;
     const resolveChatBody = this.createChatBodyResolver(apiMode, body);
@@ -487,6 +494,7 @@ export class ProxyService {
           paramMergeContext,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientUserAgent,
         });
         if (rotation) {
           currentForward = rotation.forward;
@@ -548,6 +556,7 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
         });
         if (fallbackResult) return fallbackResult;
       }
@@ -594,6 +603,7 @@ export class ProxyService {
       paramMergeContext,
       tenantProviderId: credentials.tenantProviderId,
       startProviderAttempt,
+      clientUserAgent,
     });
     const autofixOriginalAttempt = forward.attempt;
     const autofixOriginalProviderCallStarted = forward.providerCallStarted;
@@ -702,6 +712,7 @@ export class ProxyService {
           paramMergeContext,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientUserAgent,
         });
         if (rotation) {
           forward = rotation.forward;
@@ -743,6 +754,7 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
         });
         if (fallbackResult) {
           return {
@@ -852,6 +864,7 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
         });
         if (fallbackResult) {
           return {
@@ -1450,6 +1463,7 @@ export class ProxyService {
     paramMergeContext: ParamMergeContext | undefined;
     startProviderAttempt?: StartProviderAttempt;
     credentialDashboardUrl: string;
+    clientUserAgent?: string;
   }): Promise<PrimaryRotationResult | null> {
     const {
       agentId,
@@ -1472,6 +1486,7 @@ export class ProxyService {
       paramMergeContext,
       startProviderAttempt,
       credentialDashboardUrl,
+      clientUserAgent,
     } = opts;
     if (rule.provider.toLowerCase() !== provider.toLowerCase()) return null;
     if (!nextUnusedKeyLabel(rule, state, model)) return null;
@@ -1545,6 +1560,7 @@ export class ProxyService {
         paramMergeContext,
         tenantProviderId: credentials.tenantProviderId,
         startProviderAttempt,
+        clientUserAgent,
       });
 
       if (forward.response.ok) {
@@ -1667,6 +1683,7 @@ export class ProxyService {
     credentialDashboardUrl?: string;
     /** Per-request key rotation state (see tryFallbacks). */
     keyRotationState?: KeyRotationState;
+    clientUserAgent?: string;
   }): Promise<ProxyResult | null> {
     const {
       agentId,
@@ -1683,10 +1700,14 @@ export class ProxyService {
       sessionMomentumKey,
       signal,
       apiMode,
+      clientUserAgent,
     } = args;
-    // The resolver owns the effective route chain. Null is a definitive
-    // "nothing remains", including when the only configured fallback was
-    // promoted to primary. Reloading the persisted tier here would retry that
+    // The chain evaluates structural fallback routes directly — it never
+    // infers candidate providers from model names, so an agent with an
+    // explicit fallback list cannot accidentally try a provider it didn't
+    // configure. When fallback_routes is empty or omitted, no fallback occurs.
+    //
+    // Use the effective list so streaming requests don't skip the
     // promoted route as its own fallback and could resurrect routes the
     // resolver deliberately skipped.
     const fallbackRoutes = this.effectiveFallbackRoutes(resolved);
@@ -1720,6 +1741,7 @@ export class ProxyService {
       providerCacheKey,
       args.keyRotationState,
       sessionCacheKey,
+      clientUserAgent,
     );
 
     this.recordTierIfScoring(sessionMomentumKey, resolved.tier);

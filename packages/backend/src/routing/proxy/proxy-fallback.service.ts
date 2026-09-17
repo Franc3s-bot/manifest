@@ -52,6 +52,7 @@ interface ForwardProviderOptions {
   paramMergeContext?: ParamMergeContext;
   tenantProviderId?: string | null;
   startProviderAttempt?: StartProviderAttempt;
+  clientUserAgent?: string;
 }
 
 import { ProviderKeyService } from '../routing-core/provider-key.service';
@@ -217,6 +218,7 @@ export class ProxyFallbackService {
      */
     keyRotationState?: KeyRotationState,
     sessionCacheKey?: string,
+    clientUserAgent?: string,
   ): Promise<{
     success: {
       forward: ForwardResult;
@@ -391,6 +393,7 @@ export class ProxyFallbackService {
           paramMergeContext,
           tenantProviderId,
           startProviderAttempt,
+          clientUserAgent,
         });
 
         if (forward.response.ok) {
@@ -862,6 +865,7 @@ export class ProxyFallbackService {
           : {}),
         providerResource,
         attempt,
+        clientUserAgent: opts.clientUserAgent,
       });
       if (attempt) attempt.completedAtMs = Date.now();
       return { ...forward, attempt, providerCallStarted: true };

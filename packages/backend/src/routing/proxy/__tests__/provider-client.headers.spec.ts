@@ -298,6 +298,41 @@ describe('ProviderClient — strict header contract on auth-critical paths', () 
     const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
     expect(sentHeaders['x-opencode-session']).toBe('custom-session-id-456');
   });
+
+  it('OpenCode forwards caller-supplied clientUserAgent', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-go',
+      apiKey: 'og-token',
+      model: 'opencode-go/glm-5.1',
+      body,
+      stream: false,
+      clientUserAgent: 'pi-coding-agent/0.85.0 (linux-x64)',
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders['user-agent']).toBe('pi-coding-agent/0.85.0 (linux-x64)');
+  });
+
+  it('OpenCode preserves caller-supplied user-agent in extraHeaders over clientUserAgent', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+    await client.forward({
+      provider: 'opencode-go',
+      apiKey: 'og-token',
+      model: 'opencode-go/glm-5.1',
+      body,
+      stream: false,
+      extraHeaders: {
+        'user-agent': 'custom-agent/2.0',
+      },
+      clientUserAgent: 'pi-coding-agent/0.85.0 (linux-x64)',
+    });
+
+    const sentHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    expect(sentHeaders['user-agent']).toBe('custom-agent/2.0');
+  });
 });
 
 describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)', () => {

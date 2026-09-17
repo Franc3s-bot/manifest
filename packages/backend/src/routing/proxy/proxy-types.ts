@@ -121,6 +121,8 @@ export interface ForwardOptions {
   providerResource?: string;
   /** Persisted identity of this exact upstream call. */
   attempt?: ProviderAttemptRef;
+  /** Caller-supplied User-Agent string to forward upstream when appropriate. */
+  clientUserAgent?: string;
 }
 
 /** Options for ProxyService.proxyRequest. */

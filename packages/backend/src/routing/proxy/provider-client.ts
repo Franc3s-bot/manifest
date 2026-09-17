@@ -410,10 +410,16 @@ export class ProviderClient {
 
     // OpenCode Go and OpenCode Zen require an x-opencode-session header on all requests
     // to route to the appropriate backend provider and maintain prompt-cache affinity.
-    if (isOpenCode(endpointKey, provider) && !finalHeaders['x-opencode-session']) {
-      finalHeaders['x-opencode-session'] = buildPromptCacheKey(
-        opts.providerCacheKey ?? opts.sessionKey ?? 'default',
-      );
+    // Also forward the caller's User-Agent to satisfy traffic analysis and prevent generic library flags.
+    if (isOpenCode(endpointKey, provider)) {
+      if (!finalHeaders['x-opencode-session']) {
+        finalHeaders['x-opencode-session'] = buildPromptCacheKey(
+          opts.providerCacheKey ?? opts.sessionKey ?? 'default',
+        );
+      }
+      if (!finalHeaders['user-agent'] && opts.clientUserAgent) {
+        finalHeaders['user-agent'] = opts.clientUserAgent;
+      }
     }
 
     const retryWireBody = async (
