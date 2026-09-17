@@ -30,7 +30,7 @@ describe('RequestVolumeService (#2511 request-level volume)', () => {
     // Unlinked legacy attempts stay in the universe (KPI parity).
     expect(sql).toContain('pa.request_id IS NULL');
     // Playground traffic excluded on both branches.
-    expect(sql).toContain('playag.is_playground = true');
+    expect(sql).toContain('is_playground = true');
     expect(lastParams()).toHaveLength(2);
     expect(lastParams()[0]).toBe('t1');
   });

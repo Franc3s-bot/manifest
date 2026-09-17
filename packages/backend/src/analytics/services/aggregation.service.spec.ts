@@ -122,7 +122,7 @@ describe('AggregationService', () => {
 
       await expect(requestAware.hasAnyData('tenant-1', undefined, true)).resolves.toBe(true);
       expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('playag.name = r.agent_name'),
+        expect.stringContaining('(r.tenant_id, r.agent_name) IN (SELECT plg.tenant_id, plg.name'),
       );
     });
 
@@ -425,7 +425,7 @@ describe('AggregationService', () => {
         expect.any(String),
         'agent-1',
       ]);
-      expect(query.mock.calls[0][0]).toContain('playag.is_playground = true');
+      expect(query.mock.calls[0][0]).toContain('is_playground = true');
     });
 
     it('excludes client-pinned (direct) traffic from both scoped_requests branches', async () => {

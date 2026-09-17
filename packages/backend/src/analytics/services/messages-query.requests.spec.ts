@@ -401,7 +401,7 @@ describe('MessagesQueryService request-first queries', () => {
     });
 
     expect(requestQb.andWhere).toHaveBeenCalledWith(
-      expect.stringContaining('playag.name = r.agent_name'),
+      expect.stringContaining('(r.tenant_id, r.agent_name) IN (SELECT plg.tenant_id, plg.name'),
     );
   });
 
