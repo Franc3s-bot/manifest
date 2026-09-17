@@ -1,5 +1,5 @@
 import { PROVIDER_BY_ID_OR_ALIAS } from '../common/constants/providers';
-import { resolveProviderMetadataIdentity } from 'manifest-shared';
+import { resolveMetadataEntry } from './metadata-identity';
 import type { AuthType, ModelCapability, ModelModality } from 'manifest-shared';
 import type { DiscoveredModel } from './model-fetcher';
 import type { ModelsDevModelEntry } from '../database/models-dev-sync.service';
@@ -133,12 +133,15 @@ export async function resolveModelCapabilityMetadata(
   );
   // Some routable ids proxy another provider's model namespace (gateway ids,
   // Bedrock vendor-prefixed ids). Resolve that provenance for metadata only.
-  const metadata = resolveProviderMetadataIdentity(model.provider, model.id);
-  const metadataProvider = metadata.provider ?? model.provider;
   // Capability-only providers (Kilo, Pioneer, Cline Pass, Xiaomi, OpenRouter)
   // resolve here too; every field read off this entry is capability metadata or
   // a display name, never a price.
-  const modelsDevEntry = modelsDevSync.lookupModelCapabilities(metadataProvider, metadata.model);
+  const { metadata, entry: modelsDevEntry } = resolveMetadataEntry(
+    model.provider,
+    model.id,
+    (providerId, modelId) => modelsDevSync.lookupModelCapabilities(providerId, modelId),
+  );
+  const metadataProvider = metadata.provider ?? model.provider;
   // Curated facts are the last resort, and applying them here (not only at
   // discovery time) means stale cached_models still resolve correctly.
   const known = lookupKnownModalities(metadataProvider, metadata.model);

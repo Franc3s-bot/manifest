@@ -51,14 +51,13 @@ vi.mock('../../src/services/formatters.js', async (importOriginal) => ({
   customProviderColor: () => '#000',
 }));
 
-const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } = vi.hoisted(
-  () => ({
+const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } =
+  vi.hoisted(() => ({
     mockRefreshModels: vi.fn(),
     mockRefreshProviderModels: vi.fn(),
     mockToastSuccess: vi.fn(),
     mockToastError: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock('../../src/services/api.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -1537,4 +1536,5 @@ describe('ModelPickerModal', () => {
       expect(container.textContent).not.toContain('GPT-4o 199');
     });
   });
+
 });

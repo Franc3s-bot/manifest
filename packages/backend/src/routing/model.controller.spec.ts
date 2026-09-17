@@ -80,9 +80,11 @@ describe('ModelController', () => {
     };
     mockModelsDevSync = {
       lookupModelCapabilities: jest.fn().mockReturnValue(null),
+      getModelsForProvider: jest.fn().mockReturnValue([]),
     };
     mockOpencodeGoCatalog = {
       resolveCostPerRequest: jest.fn().mockResolvedValue(null),
+      list: jest.fn().mockResolvedValue([]),
     };
     routingCache = new RoutingCacheService();
 
@@ -373,6 +375,58 @@ describe('ModelController', () => {
       const result = await controller.getAvailableModels(mockCtx, mockAgentName);
 
       expect(result[0]).not.toHaveProperty('cost_per_request');
+    });
+
+    it('hides an unpublished OpenCode Go id a published one already stands for', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'opencode-go/deepseek-v4.1-flash',
+          displayName: 'DeepSeek V4.1 Flash',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+        // DeepSeek's native alias for the same model. OpenCode serves it but
+        // documents neither it nor a quota for it, and it resolves to the very
+        // same name, so the picker would offer one model twice.
+        makeDiscovered({
+          id: 'opencode-go/deepseek-flash',
+          displayName: 'DeepSeek V4.1 Flash',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+      ]);
+      mockOpencodeGoCatalog.list.mockResolvedValue([{ id: 'deepseek-v4.1-flash' }]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result.map((m) => m.model_name)).toEqual(['opencode-go/deepseek-v4.1-flash']);
+    });
+
+    it('keeps an unpublished OpenCode Go model that nothing shadows', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'opencode-go/hy3',
+          displayName: 'Hy3',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+        // Its own model, not an alias of hy3 — OpenCode serves it and it has a
+        // name of its own, so it stays selectable.
+        makeDiscovered({
+          id: 'opencode-go/hy3-preview',
+          displayName: 'Hy3 Preview',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+      ]);
+      mockOpencodeGoCatalog.list.mockResolvedValue([{ id: 'hy3' }]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result.map((m) => m.model_name)).toEqual([
+        'opencode-go/hy3',
+        'opencode-go/hy3-preview',
+      ]);
     });
 
     it('does not query OpenCode Go cost for non-gateway providers', async () => {

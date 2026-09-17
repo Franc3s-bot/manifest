@@ -161,6 +161,58 @@ describe('OpencodeGoCatalogService', () => {
       expect(glm?.costPerRequestUsd).toBeCloseTo(OPENCODE_GO_BUDGET_5H_USD / 880, 12);
     });
 
+    it('reads the promoted count when a limits row strikes the old one through', () => {
+      // Live docs shape: a temporary multiplier strikes the previous count
+      // through and bolds the new one, and annotates the model name with a
+      // <small> note. Both cells carry markup the plain number regex misses.
+      const promo = [
+        '| DeepSeek V4.1 Flash<br /><small>4x \u00b7 Ends Sep 20</small> | ~~6,500~~<br />**26,000** | ~~16,250~~<br />**65,000** | ~~32,500~~<br />**130,000** |',
+        '## Endpoints',
+        '',
+        `| DeepSeek V4.1 Flash | deepseek-v4.1-flash | ${OAI} | ${OAI_SDK} |`,
+      ].join('\n');
+      const entries = service.parse(promo);
+      const flash = entries.find((e) => e.id === 'deepseek-v4.1-flash');
+      expect(flash?.displayName).toBe('DeepSeek V4.1 Flash');
+      expect(flash?.costPerRequestUsd).toBeCloseTo(OPENCODE_GO_BUDGET_5H_USD / 26000, 12);
+    });
+
+    it('reads a limits row that omits its trailing pipe', () => {
+      const noTrailingPipe = [
+        '| GLM-5.1 | 880 | 2,150 | 4,300',
+        '## Endpoints',
+        '',
+        `| GLM-5.1 | glm-5.1 | ${OAI} | ${OAI_SDK} |`,
+      ].join('\n');
+      const entries = service.parse(noTrailingPipe);
+      expect(entries.find((e) => e.id === 'glm-5.1')?.costPerRequestUsd).toBeCloseTo(
+        OPENCODE_GO_BUDGET_5H_USD / 880,
+        12,
+      );
+    });
+
+    it('ignores limits rows whose counts are not numbers', () => {
+      const unlimited = [
+        '| Union Alpha Free | Unlimited | Unlimited | Unlimited |',
+        '## Endpoints',
+        '',
+        `| Union Alpha Free | union-alpha | ${ANT} | ${ANT_SDK} |`,
+      ].join('\n');
+      const entries = service.parse(unlimited);
+      expect(entries.find((e) => e.id === 'union-alpha')?.costPerRequestUsd).toBeNull();
+    });
+
+    it('ignores the token-price table, whose leading cells are dollar amounts', () => {
+      const prices = [
+        '| GLM-5.1 | $1.40 | $4.40 | $0.26 | - | **$60** |',
+        '## Endpoints',
+        '',
+        `| GLM-5.1 | glm-5.1 | ${OAI} | ${OAI_SDK} |`,
+      ].join('\n');
+      const entries = service.parse(prices);
+      expect(entries.find((e) => e.id === 'glm-5.1')?.costPerRequestUsd).toBeNull();
+    });
+
     it('uses the first occurrence when the limits table contains duplicates', () => {
       const dupLimits = [
         '| GLM-5.1 | 880 | 2,150 | 4,300 |',

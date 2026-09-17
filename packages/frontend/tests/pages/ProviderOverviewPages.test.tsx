@@ -374,6 +374,8 @@ vi.mock('manifest-shared', () => ({
   // routing-utils (imported by GlobalOverview for stripCustomPrefix) reads
   // these at module scope.
   SHARED_PROVIDERS: [],
+  underlyingGatewayModel: (m: string) =>
+    m.startsWith('opencode-go/') ? m.slice('opencode-go/'.length) : null,
   inferProviderFromModel: (m: string) => (m.startsWith('custom:') ? 'custom' : null),
   isSuccessStatus: (s: string | null | undefined) => s == null || s === 'ok' || s === 'success',
 }));

@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (314 BEM blocks, 1698 classes)
+## Blocks (314 BEM blocks, 1699 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -125,7 +125,7 @@ attempt-item (request-drawer.css): attempt-item attempt-item--active attempt-ite
 auth-card (auth.css): auth-card
 auth-divider (auth.css): auth-divider auth-divider__text
 auth-footer (auth.css): auth-footer auth-footer__link
-auth-form (auth.css, discovery.css): auth-form auth-form__actions auth-form__error auth-form__error-link auth-form__forgot auth-form__input auth-form__label auth-form__link-btn auth-form__notice auth-form__notice-link auth-form__submit auth-form__success
+auth-form (auth.css, discovery.css): auth-form auth-form__actions auth-form__error auth-form__error-link auth-form__forgot auth-form__input auth-form__label auth-form__link-btn auth-form__notice auth-form__notice-link auth-form__submit auth-form__submit--secondary auth-form__success
 auth-header (auth.css): auth-header auth-header__subtitle auth-header__title
 auth-last-used (auth.css): auth-last-used
 auth-layout (auth.css): auth-layout

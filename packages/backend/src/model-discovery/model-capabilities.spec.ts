@@ -176,3 +176,66 @@ describe('resolveModelCapabilityMetadata', () => {
     );
   });
 });
+
+describe('resolveModelCapabilityMetadata — gateway ids', () => {
+  const paramSpecs = { getCapabilities: jest.fn() };
+
+  beforeEach(() => {
+    paramSpecs.getCapabilities.mockReset().mockResolvedValue(null);
+  });
+
+  /** models.dev knows the gateway's own catalog but not the vendor's. */
+  const gatewayOnlySync = {
+    lookupModelCapabilities: (providerId: string, modelId: string) =>
+      providerId === 'opencode-go' && modelId === 'deepseek-v4.1-flash'
+        ? makeModelsDevEntry({
+            id: 'deepseek-v4.1-flash',
+            name: 'DeepSeek V4.1 Flash',
+            capabilities: ['text', 'tools'],
+            inputModalities: ['text'],
+          })
+        : null,
+  };
+
+  it('falls back to the gateway catalog when the vendor has no entry', async () => {
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({
+        id: 'opencode-go/deepseek-v4.1-flash',
+        displayName: 'opencode-go/deepseek-v4.1-flash',
+        provider: 'opencode-go',
+        authType: 'subscription',
+      }),
+      paramSpecs,
+      gatewayOnlySync,
+    );
+
+    expect(resolved.modelsDevEntry?.name).toBe('DeepSeek V4.1 Flash');
+    expect(resolved.capabilities).toContain('tools');
+  });
+
+  it('still prefers the underlying vendor entry when it exists', async () => {
+    const bothSync = {
+      lookupModelCapabilities: (providerId: string, modelId: string) => {
+        if (providerId === 'deepseek' && modelId === 'deepseek-v4-pro') {
+          return makeModelsDevEntry({ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' });
+        }
+        if (providerId === 'opencode-go' && modelId === 'deepseek-v4-pro') {
+          return makeModelsDevEntry({ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro (New)' });
+        }
+        return null;
+      },
+    };
+
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({
+        id: 'opencode-go/deepseek-v4-pro',
+        provider: 'opencode-go',
+        authType: 'subscription',
+      }),
+      paramSpecs,
+      bothSync,
+    );
+
+    expect(resolved.modelsDevEntry?.name).toBe('DeepSeek V4 Pro');
+  });
+});

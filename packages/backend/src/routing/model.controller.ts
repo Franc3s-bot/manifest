@@ -15,6 +15,10 @@ import {
   resolveModelCapabilityMetadata,
 } from '../model-discovery/model-capabilities';
 import {
+  dropShadowedGatewayModels,
+  publishedOpencodeGoIds,
+} from '../model-discovery/published-gateway-models';
+import {
   AgentNameParamDto,
   AgentProviderParamDto,
   RemoveProviderQueryDto,
@@ -128,6 +132,13 @@ export class ModelController {
       allowPlayground: true,
     });
     const models = await this.discoveryService.getModelsForAgent(agent.tenant_id, agent.id);
+    // Resolved after the rows are built: whether two OpenCode Go ids are the
+    // same model is a question about the names the picker prints, not the ids.
+    const publishedGatewayIds = await publishedOpencodeGoIds(
+      models,
+      this.opencodeGoCatalog,
+      this.modelsDevSync,
+    );
 
     // Build display name map for custom providers (tenant-global)
     const customProviders = await this.customProviderService.list(agent.tenant_id);
@@ -136,7 +147,7 @@ export class ModelController {
       cpNameMap.set(CustomProviderService.providerKey(cp.id), cp.name);
     }
 
-    return Promise.all(
+    const rows = await Promise.all(
       models.map(async (m) => {
         const isCustom = CustomProviderService.isCustom(m.provider);
         const authType = m.authType ?? 'api_key';
@@ -176,5 +187,7 @@ export class ModelController {
         };
       }),
     );
+
+    return dropShadowedGatewayModels(rows, publishedGatewayIds);
   }
 }

@@ -1,7 +1,7 @@
 import { Injectable, Logger, Inject, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { resolveProviderMetadataIdentity, type AuthType } from 'manifest-shared';
+import { type AuthType } from 'manifest-shared';
 import { TenantProvider } from '../entities/tenant-provider.entity';
 import { AgentEnabledProvider } from '../entities/agent-enabled-provider.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
@@ -41,6 +41,7 @@ import {
   reconcileCachedSubscriptionContextWindow,
   supplementWithKnownModels,
 } from './model-fallback';
+import { resolveMetadataEntry } from './metadata-identity';
 import { lookupKnownPrice } from './known-model-prices';
 import { lookupKnownModalities } from './known-model-modalities';
 import { mergeModelCapabilities, modelSupportsStreaming } from './model-capabilities';
@@ -333,9 +334,12 @@ export class ModelDiscoveryService {
     // unusable. Only filter when models.dev has data — if no entry exists we
     // keep the model (we don't know its capabilities).
     const filtered = reconciled.filter((model) => {
-      const metadata = resolveProviderMetadataIdentity(provider.provider, model.id);
-      const metadataProvider = metadata.provider ?? provider.provider;
-      const mdEntry = this.modelsDevSync?.lookupModelCapabilities(metadataProvider, metadata.model);
+      const { entry: mdEntry } = resolveMetadataEntry(
+        provider.provider,
+        model.id,
+        (providerId, modelId) =>
+          this.modelsDevSync?.lookupModelCapabilities(providerId, modelId) ?? null,
+      );
       if (mdEntry && mdEntry.toolCall === false) return false;
       return true;
     });
@@ -701,11 +705,15 @@ export class ModelDiscoveryService {
     // capability flags (reasoning / tool-call) — those drive tier auto-
     // assignment quality scoring and shouldn't be lost just because we
     // overrode the price. Mirrors the price-already-set branch above.
-    const metadata = resolveProviderMetadataIdentity(providerId, model.id);
+    const { metadata, entry: metadataEntry } = resolveMetadataEntry(
+      providerId,
+      model.id,
+      (lookupProvider, lookupModel) =>
+        this.modelsDevSync?.lookupModel(lookupProvider, lookupModel) ?? null,
+    );
     const metadataProvider = metadata.provider ?? providerId;
     const metadataModel = metadata.model;
     const isBedrock = providerId.toLowerCase() === 'bedrock';
-    const metadataEntry = this.modelsDevSync?.lookupModel(metadataProvider, metadataModel) ?? null;
     const modelWithMetadataName =
       metadataEntry?.name && metadataEntry.name !== model.id
         ? { ...model, displayName: metadataEntry.name }
@@ -789,9 +797,13 @@ export class ModelDiscoveryService {
   /** Merge capability flags from models.dev without touching pricing or display name. */
   private applyCapabilities(model: DiscoveredModel, providerId: string): DiscoveredModel {
     if (!this.modelsDevSync) return model;
-    const metadata = resolveProviderMetadataIdentity(providerId, model.id);
+    const { metadata, entry: mdEntry } = resolveMetadataEntry(
+      providerId,
+      model.id,
+      (lookupProvider, lookupModel) =>
+        this.modelsDevSync!.lookupModelCapabilities(lookupProvider, lookupModel),
+    );
     const metadataProvider = metadata.provider ?? providerId;
-    const mdEntry = this.modelsDevSync.lookupModelCapabilities(metadataProvider, metadata.model);
     if (!mdEntry) return model;
     return {
       ...model,
