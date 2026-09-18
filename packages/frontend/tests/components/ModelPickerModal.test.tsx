@@ -1127,6 +1127,100 @@ describe('ModelPickerModal', () => {
     expect(letter?.textContent).toBe('G');
   });
 
+  it('surfaces a local custom provider (llama.cpp tile) that has no API key or cached count', () => {
+    // Custom providers keep their models on the custom_providers row, so
+    // /providers reports cached_model_count = 0 and has_api_key = false for
+    // them. The Local tab must still appear, otherwise the connection's
+    // models are unreachable from the picker.
+    const customProviders: CustomProviderData[] = [
+      {
+        id: 'cp-llamacpp',
+        name: 'llama.cpp',
+        base_url: 'http://100.68.118.38:9931/v1',
+        api_kind: 'openai',
+        has_api_key: false,
+        models: [{ model_name: 'Bonsai 27b' }],
+        created_at: '2025-01-01',
+      },
+    ];
+    const customModels: AvailableModel[] = [
+      {
+        ...baseModels[0],
+        model_name: 'custom:cp-llamacpp/Bonsai 27b',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        provider_display_name: 'llama.cpp',
+        display_name: 'Bonsai 27b',
+      },
+    ];
+    const localCustom: RoutingProvider[] = [
+      {
+        id: 'p11',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        is_active: true,
+        has_api_key: false,
+        cached_model_count: 0,
+        connected_at: '2025-01-01',
+      },
+    ];
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="simple"
+        models={[...baseModels, ...customModels]}
+        tiers={[]}
+        customProviders={customProviders}
+        connectedProviders={[...apiKeyOnly, ...localCustom]}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    const localTab = Array.from(container.querySelectorAll('[role="tab"]')).find((t) =>
+      t.textContent?.includes('Local'),
+    ) as HTMLButtonElement;
+    expect(localTab).toBeTruthy();
+    fireEvent.click(localTab);
+    expect(container.textContent).toContain('Bonsai 27b');
+  });
+
+  it('lists models of a lone local custom provider even without a tab strip', () => {
+    // Single auth category: no tab strip renders, and the model must still be
+    // listed. Without the custom-provider escape hatch the picker would fall
+    // back to the api_key tab and filter the local model out entirely.
+    const customModels: AvailableModel[] = [
+      {
+        ...baseModels[0],
+        model_name: 'custom:cp-llamacpp/Bonsai 27b',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        provider_display_name: 'llama.cpp',
+        display_name: 'Bonsai 27b',
+      },
+    ];
+    const localCustom: RoutingProvider[] = [
+      {
+        id: 'p12',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        is_active: true,
+        has_api_key: false,
+        cached_model_count: 0,
+        connected_at: '2025-01-01',
+      },
+    ];
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="simple"
+        models={customModels}
+        tiers={[]}
+        connectedProviders={localCustom}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    expect(container.textContent).toContain('Bonsai 27b');
+  });
+
   it('keeps Bedrock grouped by route provider while cleaning dotted model labels', () => {
     const bedrockModels: AvailableModel[] = [
       {

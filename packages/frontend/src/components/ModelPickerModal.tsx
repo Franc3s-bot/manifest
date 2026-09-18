@@ -88,8 +88,21 @@ const unavailableCapabilityLabel = (capability: ModelCapability): string => {
 };
 
 const ModelPickerModal: Component<Props> = (props) => {
-  const isUsable = (p: { is_active: boolean; has_api_key: boolean; cached_model_count?: number }) =>
-    p.is_active && (p.has_api_key || (p.cached_model_count ?? 0) > 0);
+  // A connection with no API key and no discovered models is an empty shell
+  // (e.g. a subscription that never synced) and must not surface its tab.
+  // Custom providers are the exception: their model list lives on the
+  // `custom_providers` row, so `cached_model_count` is always 0 for them.
+  // Without this escape hatch an active `custom:` connection (llama.cpp /
+  // LM Studio tile, remote engines) would hide its whole auth category and
+  // its models would be unreachable from the picker.
+  const isUsable = (p: {
+    provider?: string;
+    is_active: boolean;
+    has_api_key: boolean;
+    cached_model_count?: number;
+  }) =>
+    p.is_active &&
+    (p.has_api_key || (p.cached_model_count ?? 0) > 0 || !!p.provider?.startsWith('custom:'));
   const hasSubscription = () =>
     (props.connectedProviders ?? []).some((p) => isUsable(p) && p.auth_type === 'subscription');
   const hasApiKey = () =>
