@@ -55,8 +55,11 @@ export interface MaybeHealParams {
   /**
    * The request's shared key-rotation state. rotate_key heal operations mark
    * the rotated label used here so the later fallback loop never re-tries it.
+   * Optional: hops healed outside the primary key-rotation flow (e.g. a
+   * fallback hop) may have no state, in which case a rotate_key operation
+   * degrades to a same-key retry.
    */
-  keyRotationState: KeyRotationState;
+  keyRotationState?: KeyRotationState;
   /** Re-send a patched body to the provider and return the fresh forward. */
   reforward: (
     healedBody: Record<string, unknown>,
@@ -75,9 +78,12 @@ interface AgentAutofixConfig {
   harness: AgentPlatform;
 }
 
+interface AgentConfigLoad {
+  generation: number;
+  promise: Promise<AgentAutofixConfig>;
+}
+
 const DEFAULT_REPAIRABLE_STATUSES = '400,404,422';
-const CONFIG_CACHE_TTL_MS = 30_000;
-const CONFIG_CACHE_MAX = 5_000;
 
 // Circuit breaker for the healing service. After this many consecutive heal-call
 // transport failures (timeout / unreachable), stop calling Phoenix for the
@@ -146,10 +152,8 @@ export class AutofixService {
   // ON in cloud, OFF in self-hosted. Computed once at boot.
   private readonly defaultAgentEnabled: boolean;
   private readonly repairableStatuses: Set<number>;
-  private readonly configCache = new Map<
-    string,
-    { value: AgentAutofixConfig; expiresAt: number }
-  >();
+  private readonly configLoads = new Map<string, AgentConfigLoad>();
+  private configLoadGeneration = 0;
   // Circuit-breaker state (process-local). `breakerOpenUntil` is an epoch-ms
   // deadline; while it is in the future, heal calls are skipped.
   private healFailureStreak = 0;
@@ -188,19 +192,6 @@ export class AutofixService {
   /** Whether a status is one Autofix will try to heal. */
   isRepairable(status: number): boolean {
     return this.repairableStatuses.has(status);
-  }
-
-  /** Drop a cached per-agent config so a toggle change takes effect now. */
-  invalidateConfig(tenantId: string, agentId: string): void {
-    this.configCache.delete(`${tenantId}:${agentId}`);
-  }
-
-  /** Drop every cached config for a tenant (used after a workspace-wide backfill). */
-  invalidateTenantConfig(tenantId: string): void {
-    const prefix = `${tenantId}:`;
-    for (const key of this.configCache.keys()) {
-      if (key.startsWith(prefix)) this.configCache.delete(key);
-    }
   }
 
   /**
@@ -563,7 +554,16 @@ export class AutofixService {
       return undefined;
     }
 
-    const label = nextUnusedKeyLabel(rule, params.keyRotationState, params.model);
+    const state = params.keyRotationState;
+    if (!state) {
+      this.logger.warn(
+        `autofix: rotate_key requested without key rotation state for model=${params.model} ` +
+          `provider=${params.provider} — same-key retry`,
+      );
+      return undefined;
+    }
+
+    const label = nextUnusedKeyLabel(rule, state, params.model);
     if (!label) {
       this.logger.warn(
         `autofix: rotate_key requested but all key labels already used for ` +
@@ -572,7 +572,7 @@ export class AutofixService {
       return undefined;
     }
 
-    markKeyLabelUsed(params.keyRotationState, rule, params.model, label);
+    markKeyLabelUsed(state, rule, params.model, label);
     this.logger.log(
       `autofix: rotate_key — retrying model=${params.model} provider=${params.provider} ` +
         `with key label=${label}`,
@@ -581,33 +581,64 @@ export class AutofixService {
   }
 
   private async loadAgentConfig(agentId: string, tenantId: string): Promise<AgentAutofixConfig> {
+    // Autofix enablement is the consent boundary for sending request bodies to
+    // Phoenix. Read it from the database on every repairable failure so a toggle
+    // handled by one replica takes effect immediately on every other replica.
     const key = `${tenantId}:${agentId}`;
-    const now = Date.now();
-    const cached = this.configCache.get(key);
-    if (cached && cached.expiresAt > now) return cached.value;
+    const existing = this.configLoads.get(key);
+    // A request that arrives during an older read waits for the next generation.
+    // This prevents a post-toggle request from joining a query that began before
+    // the toggle, while all requests queued behind that query share one new read.
+    const minimumGeneration = existing ? existing.generation + 1 : 0;
+    return this.loadAgentConfigGeneration(agentId, tenantId, key, minimumGeneration);
+  }
 
-    const agent = await this.agentRepo.findOne({
-      where: { id: agentId, tenant_id: tenantId },
-      // Select the PK alongside the flag. TypeORM's entity transformer treats a
-      // row whose only selected column is NULL as "no entity" and returns null,
-      // so `select: ['autofix_enabled']` alone makes every NULL-flag agent (the
-      // default "inherit the mode default" state) look not-found — which then
-      // resolves to `enabled: false` below and silently disables Autofix for it.
-      // The always-present `id` keeps the row materialized so the NULL flag is read.
-      select: ['id', 'autofix_enabled', 'agent_platform'],
-    });
-    // Unknown agent → off. Known agent → its explicit flag, or the mode default
-    // when unset (NULL).
-    const value: AgentAutofixConfig = {
-      enabled: agent ? this.resolveEnabled(agent.autofix_enabled) : false,
-      harness: coerceAgentPlatform(agent?.agent_platform),
-    };
+  private async loadAgentConfigGeneration(
+    agentId: string,
+    tenantId: string,
+    key: string,
+    minimumGeneration: number,
+  ): Promise<AgentAutofixConfig> {
+    const existing = this.configLoads.get(key);
+    if (existing) {
+      if (existing.generation >= minimumGeneration) return existing.promise;
 
-    // Only the failure path reaches here; caching keeps a 4xx storm from doing a
-    // DB read per failed request. Bounded + short TTL, invalidated on config change.
-    if (this.configCache.size >= CONFIG_CACHE_MAX) this.configCache.clear();
-    this.configCache.set(key, { value, expiresAt: now + CONFIG_CACHE_TTL_MS });
-    return value;
+      // The caller arrived after this generation started. Wait for it to leave
+      // the slot, then create or join the next generation. Its result is ignored.
+      try {
+        await existing.promise;
+      } catch {
+        // A fresh generation below gets its own database result or error.
+      }
+      if (this.configLoads.get(key) === existing) this.configLoads.delete(key);
+      return this.loadAgentConfigGeneration(agentId, tenantId, key, minimumGeneration);
+    }
+
+    const promise = (async (): Promise<AgentAutofixConfig> => {
+      const agent = await this.agentRepo.findOne({
+        where: { id: agentId, tenant_id: tenantId },
+        // Select the PK alongside the flag. TypeORM's entity transformer treats a
+        // row whose only selected column is NULL as "no entity" and returns null,
+        // so `select: ['autofix_enabled']` alone makes every NULL-flag agent (the
+        // default "inherit the mode default" state) look not-found — which then
+        // resolves to `enabled: false` below and silently disables Autofix for it.
+        // The always-present `id` keeps the row materialized so the NULL flag is read.
+        select: ['id', 'autofix_enabled', 'agent_platform'],
+      });
+      // Unknown agent → off. Known agent → its explicit flag, or the mode default
+      // when unset (NULL).
+      return {
+        enabled: agent ? this.resolveEnabled(agent.autofix_enabled) : false,
+        harness: coerceAgentPlatform(agent?.agent_platform),
+      };
+    })();
+    const load = { generation: ++this.configLoadGeneration, promise };
+    this.configLoads.set(key, load);
+    try {
+      return await promise;
+    } finally {
+      if (this.configLoads.get(key) === load) this.configLoads.delete(key);
+    }
   }
 
   /** Fire-and-forget the learning signal so it never delays the client. */

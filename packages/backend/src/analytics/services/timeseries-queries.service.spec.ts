@@ -549,7 +549,7 @@ describe('TimeseriesQueriesService', () => {
         expect.objectContaining({ requestAgentName: 'agent-1' }),
       );
       expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('playag.is_playground = true'),
+        expect.stringContaining('is_playground = true'),
       );
     });
 
@@ -904,8 +904,9 @@ describe('TimeseriesQueriesService', () => {
       expect(mockTurnQb.leftJoin).not.toHaveBeenCalled();
       // Matching by name (not just id) means a Playground row carrying only
       // agent_name (NULL agent_id) is excluded too — no leak.
+      expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('at.agent_id IN (SELECT plg.id');
       expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain(
-        'playag.id = at.agent_id OR playag.name = at.agent_name',
+        '(at.tenant_id, at.agent_name) IN (SELECT plg.tenant_id, plg.name',
       );
     });
 
@@ -944,7 +945,7 @@ describe('TimeseriesQueriesService', () => {
 
       expect(out.timeseries).toEqual([{ hour: '01', alpha: 3, bravo: 1 }]);
       expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('playag.name = r.agent_name'),
+        expect.stringContaining('(r.tenant_id, r.agent_name) IN (SELECT plg.tenant_id, plg.name'),
       );
     });
 

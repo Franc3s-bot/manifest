@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { HttpStatus, Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { OPENAI_RESPONSES_ONLY_RE, stripVendorPrefix } from '../../common/constants/openai-models';
 import { XAI_RESPONSES_ONLY_RE } from '../../common/constants/xai-models';
 import {
@@ -11,9 +11,8 @@ import {
 import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
 import { resolveSubscriptionEndpointKey } from './provider-hooks';
+import { isAnthropicHost, mergeAnthropicBeta } from './anthropic-beta';
 import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
-import type { ReasoningModelCatalog } from './reasoning-format';
-import { ModelsDevReasoningCatalog } from './reasoning-model-catalog';
 import {
   applyAnthropicAutomaticCacheControl,
   applyAnthropicMessagesMutations,
@@ -38,7 +37,9 @@ import {
   type ProviderAttemptRef,
 } from './proxy-types';
 import { CodexSessionAffinity } from './codex-session-affinity';
+import { ModelsDevReasoningCatalog } from './reasoning-model-catalog';
 import { toNativeResponsesRequest } from './responses-adapter';
+import { responsesToolNames, ResponsesToolNames } from './responses-tools';
 import { forwardKiroChat } from './kiro-adapter';
 import { forwardCommandCodeChat } from './command-code-adapter';
 import { OpencodeGoCatalogService } from '../../model-discovery/opencode-go-catalog.service';
@@ -85,6 +86,7 @@ export interface ForwardResult {
   structuredOutputToolName?: string;
   /** Internal: original Responses text.format metadata for synthesized Responses bodies. */
   responsesTextFormat?: Record<string, unknown>;
+  responsesToolNames?: ResponsesToolNames;
 }
 
 function wireApiMode(endpoint: ProviderEndpoint): ProxyApiMode | undefined {
@@ -117,6 +119,20 @@ interface BuiltProviderRequest {
   structuredOutputToolName?: string;
 }
 
+/**
+ * Anthropic-format headers with the caller's beta flags folded in. Manifest's
+ * own flags always win their slot; the caller's are appended, so a request that
+ * sent none is byte-identical to before.
+ */
+function withClientAnthropicBeta(
+  headers: Record<string, string>,
+  clientAnthropicBeta: string | string[] | undefined,
+): Record<string, string> {
+  const merged = mergeAnthropicBeta(headers['anthropic-beta'], clientAnthropicBeta);
+  if (merged === undefined || merged === headers['anthropic-beta']) return headers;
+  return { ...headers, 'anthropic-beta': merged };
+}
+
 const parsedProviderTimeout = Number.parseInt(process.env.PROVIDER_TIMEOUT_MS ?? '', 10);
 const PROVIDER_TIMEOUT_MS =
   Number.isFinite(parsedProviderTimeout) && parsedProviderTimeout > 0
@@ -126,12 +142,69 @@ const QWEN_TOKEN_PLAN_RESPONSES_RE = /^qwen3\.7-max$/i;
 const COPILOT_CHAT_COMPLETIONS_ENDPOINT = '/chat/completions';
 const COPILOT_RESPONSES_ENDPOINTS = new Set(['/responses', 'ws:/responses']);
 
+/**
+ * Narrower than `isAnthropicHost` on purpose, and the two are meant to
+ * disagree for a custom provider row pointed at Anthropic.
+ *
+ * Forwarding a beta header the caller already chose is additive: the request
+ * either keeps working or starts working. Injecting a cache breakpoint edits
+ * the body, changes prompt-caching behaviour and moves what the tenant is
+ * billed. Extending that to custom-Anthropic endpoints is a real behaviour
+ * change for people who do not get it today, so it belongs in its own change
+ * with its own evidence, not folded into header forwarding.
+ */
 function shouldApplyAnthropicAutomaticCacheControl(endpointKey: string): boolean {
   return endpointKey === 'anthropic';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasChatCompletionOutput(message: Record<string, unknown>): boolean {
+  return Object.entries(message).some(([key, value]) => {
+    if (key === 'role' || value == null) return false;
+    if (typeof value === 'string' || Array.isArray(value)) return value.length > 0;
+    return true;
+  });
+}
+
+function isEmptyChatCompletion(body: unknown): boolean {
+  if (!isRecord(body) || !Array.isArray(body.choices)) return false;
+  return body.choices.every(
+    (choice) =>
+      isRecord(choice) &&
+      choice.finish_reason === 'stop' &&
+      isRecord(choice.message) &&
+      !hasChatCompletionOutput(choice.message),
+  );
+}
+
+async function qualifyEmptyChatCompletion(
+  response: Response,
+  attempt?: ProviderAttemptRef,
+): Promise<Response> {
+  if (response.status !== HttpStatus.OK) return response;
+
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return response;
+  }
+  if (!isEmptyChatCompletion(body)) return response;
+  await attempt?.finishRecording?.({ type: 'json', body });
+
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: 'Upstream provider returned an empty Chat Completions response',
+        type: 'server_error',
+        code: 'empty_response',
+      },
+    }),
+    { status: HttpStatus.BAD_GATEWAY, headers: { 'content-type': 'application/json' } },
+  );
 }
 
 function responsesTextFormat(
@@ -193,6 +266,52 @@ function applyHashedPromptCacheKey(
   const trimmedCacheKey = providerCacheKey?.trim();
   if (!trimmedCacheKey) return;
   body.prompt_cache_key = buildPromptCacheKey(trimmedCacheKey);
+}
+
+// Anthropic metadata.user_id identifies the caller. OpenAI metadata instead
+// annotates stored completions, so the equivalent OpenAI field is safety_identifier.
+function applyAnthropicUserIdForOpenAi(
+  body: Record<string, unknown>,
+  source: Record<string, unknown> = body,
+): void {
+  const metadata = isRecord(source.metadata) ? source.metadata : undefined;
+  delete body.metadata;
+
+  const userId = metadata?.user_id;
+  if (typeof userId !== 'string' || !userId) return;
+
+  body.safety_identifier =
+    userId.length <= 64 ? userId : createHash('sha256').update(userId).digest('hex');
+}
+
+// Anthropic thinking configures extended reasoning. OpenAI rejects the field
+// as an unknown parameter and expresses the same control as an effort tier, so
+// translate instead of forwarding. Only `disabled` has a lossless equivalent
+// (`reasoning_effort: none`); adaptive/enabled budgets map to no single effort
+// tier and fall back to the provider's default reasoning.
+//
+// The effort tier is emitted only for models that actually reason: a
+// non-reasoning model rejects `reasoning_effort` outright, so for it dropping
+// `thinking` is the whole fix.
+function anthropicThinkingEffort(
+  body: Record<string, unknown>,
+  supportsReasoning: boolean,
+): 'none' | undefined {
+  if (!supportsReasoning) return undefined;
+  return isRecord(body.thinking) && body.thinking.type === 'disabled' ? 'none' : undefined;
+}
+
+function applyAnthropicThinkingForOpenAi(
+  body: Record<string, unknown>,
+  supportsReasoning: boolean,
+): void {
+  if (!('thinking' in body)) return;
+  const effort = anthropicThinkingEffort(body, supportsReasoning);
+  delete body.thinking;
+
+  if (effort !== undefined && body.reasoning_effort === undefined) {
+    body.reasoning_effort = effort;
+  }
 }
 
 function openRouterCacheMode(model: string): 'anthropic' | 'message' | null {
@@ -278,10 +397,14 @@ export class ProviderClient {
     @Optional()
     codexAffinity?: CodexSessionAffinity,
     @Optional()
-    @Inject(ModelsDevReasoningCatalog)
-    private readonly reasoningCatalog?: ReasoningModelCatalog,
+    private readonly reasoningCatalog?: ModelsDevReasoningCatalog,
   ) {
     this.codexAffinity = codexAffinity ?? new CodexSessionAffinity();
+  }
+
+  /** Whether the target model reasons, so an OpenAI effort tier is meaningful. */
+  private modelSupportsReasoning(endpointKey: string, model: string): boolean {
+    return this.reasoningCatalog?.isReasoningModel(endpointKey, model) === true;
   }
 
   async forward(opts: ForwardOptions): Promise<ForwardResult> {
@@ -349,6 +472,8 @@ export class ProviderClient {
         wireFormat: 'kiro_chat',
         wireApiMode: opts.apiMode,
         responsesTextFormat: textFormat,
+        responsesToolNames:
+          opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
       };
     }
     if (endpoint.format === 'commandcode') {
@@ -392,6 +517,7 @@ export class ProviderClient {
       signatureLookup: opts.signatureLookup,
       thinkingLookup: opts.thinkingLookup,
       thinkingRouteContext: opts.thinkingRouteContext,
+      clientAnthropicBeta: opts.clientAnthropicBeta,
       providerResource: opts.providerResource,
       sessionKey: opts.sessionKey,
       providerCacheKey: opts.providerCacheKey,
@@ -410,10 +536,16 @@ export class ProviderClient {
 
     // OpenCode Go and OpenCode Zen require an x-opencode-session header on all requests
     // to route to the appropriate backend provider and maintain prompt-cache affinity.
-    if (isOpenCode(endpointKey, provider) && !finalHeaders['x-opencode-session']) {
-      finalHeaders['x-opencode-session'] = buildPromptCacheKey(
-        opts.providerCacheKey ?? opts.sessionKey ?? 'default',
-      );
+    // Also forward the caller's User-Agent to satisfy traffic analysis and prevent generic library flags.
+    if (isOpenCode(endpointKey, provider)) {
+      if (!finalHeaders['x-opencode-session']) {
+        finalHeaders['x-opencode-session'] = buildPromptCacheKey(
+          opts.providerCacheKey ?? opts.sessionKey ?? 'default',
+        );
+      }
+      if (!finalHeaders['user-agent'] && opts.clientUserAgent) {
+        finalHeaders['user-agent'] = opts.clientUserAgent;
+      }
     }
 
     const retryWireBody = async (
@@ -448,17 +580,31 @@ export class ProviderClient {
         isCodeAssist,
         structuredOutputToolName,
         responsesTextFormat: textFormat,
+        responsesToolNames:
+          opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
       });
+      const response =
+        !stream &&
+        endpoint.format === 'openai' &&
+        (opts.apiMode === undefined || opts.apiMode === 'chat_completions')
+          ? await qualifyEmptyChatCompletion(result.response, attempt)
+          : result.response;
       const qualifiedResult =
         endpointKey === 'openai-subscription'
           ? {
               ...result,
-              response: await qualifyChatGptResponse(result.response, {
+              response: await qualifyChatGptResponse(response, {
                 downstreamFormat: isResponses ? 'responses' : 'chat-completions',
               }),
             }
-          : result;
-      if (affinity) this.codexAffinity.capture(affinity.storeKey, qualifiedResult.response);
+          : { ...result, response };
+      if (affinity) {
+        this.codexAffinity.capture(
+          affinity.storeKey,
+          qualifiedResult.response,
+          affinity.incarnation,
+        );
+      }
       return {
         ...qualifiedResult,
         wireRequestBody,
@@ -531,11 +677,23 @@ export class ProviderClient {
       if (bareOpenCodeModel.includes('musespark') || bareOpenCodeModel.includes('muse-spark')) {
         resolved = 'opencode-go-musespark';
       } else {
-        const knownAnthropicFamily = this.isKnownOpencodeGoAnthropicFamily(bareOpenCodeModel);
         const catalogFormat = await this.resolveOpencodeGoFormat(bareOpenCodeModel);
-        if (catalogFormat === 'anthropic' || (!catalogFormat && knownAnthropicFamily)) {
-          resolved = 'opencode-go-anthropic';
+        if (catalogFormat === 'responses') {
+          resolved = 'opencode-go-responses';
+        } else {
+          const knownAnthropicFamily = this.isKnownOpencodeGoAnthropicFamily(bareOpenCodeModel);
+          if (catalogFormat === 'anthropic' || (!catalogFormat && knownAnthropicFamily)) {
+            resolved = 'opencode-go-anthropic';
+          }
         }
+      }
+    }
+    if (resolved === 'commandcode') {
+      const bareCommandCodeModel = model.startsWith('commandcode/')
+        ? model.slice('commandcode/'.length).toLowerCase()
+        : model.toLowerCase();
+      if (bareCommandCodeModel.startsWith('claude-')) {
+        resolved = 'commandcode-anthropic';
       }
     }
     if (
@@ -574,7 +732,9 @@ export class ProviderClient {
     return { endpoint: PROVIDER_ENDPOINTS[resolved], endpointKey: resolved };
   }
 
-  private async resolveOpencodeGoFormat(bareModel: string): Promise<'openai' | 'anthropic' | null> {
+  private async resolveOpencodeGoFormat(
+    bareModel: string,
+  ): Promise<'openai' | 'anthropic' | 'responses' | null> {
     if (!this.opencodeGoCatalog) return null;
     try {
       return await this.opencodeGoCatalog.resolveFormat(bareModel);
@@ -642,6 +802,7 @@ export class ProviderClient {
     signatureLookup?: ForwardOptions['signatureLookup'];
     thinkingLookup?: ForwardOptions['thinkingLookup'];
     thinkingRouteContext?: ForwardOptions['thinkingRouteContext'];
+    clientAnthropicBeta?: ForwardOptions['clientAnthropicBeta'];
     providerResource?: string;
     sessionKey?: string;
     providerCacheKey?: string;
@@ -698,7 +859,6 @@ export class ProviderClient {
               injectSubscriptionIdentity,
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
-              targetModel: bareModel,
             })
           : toAnthropicRequest(requestSource, bareModel, {
               injectSubscriptionIdentity,
@@ -716,7 +876,24 @@ export class ProviderClient {
       }
       return {
         url: `${endpoint.baseUrl}${endpoint.buildPath(bareModel)}`,
-        headers: endpoint.buildHeaders(apiKey, authType),
+        headers: withClientAnthropicBeta(
+          endpoint.buildHeaders(apiKey, authType),
+          // Native Messages traffic to Anthropic itself, and nothing else.
+          //
+          // Host, not the registry key: a tenant can reach Anthropic through a
+          // custom provider row (endpointKey `custom`) and needs the flags just
+          // as much, while the Anthropic-compatible third parties stay out.
+          //
+          // `messages` only: a translated request reaches Anthropic through the
+          // OpenAI->Anthropic converters, which understand just the content
+          // blocks they were written for. A beta that introduces a new block
+          // type would have its output silently dropped on the way back, which
+          // is worse than the 400 we are fixing. Native Messages responses pass
+          // through byte-for-byte, so unknown blocks survive there.
+          ctx.apiMode === 'messages' && isAnthropicHost(endpoint.baseUrl)
+            ? ctx.clientAnthropicBeta
+            : undefined,
+        ),
         requestBody,
         structuredOutputToolName: syntheticToolName,
       };
@@ -768,13 +945,34 @@ export class ProviderClient {
       if (endpointKey === 'xai-responses') {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
       }
+      if (endpointKey === 'openai-responses' && ctx.apiMode === 'messages') {
+        applyAnthropicUserIdForOpenAi(requestBody, requestSource);
+      }
+      // Anthropic Messages carry `thinking`, which the Responses shape has no
+      // field for. Translate a disabled request to an explicit no-reasoning
+      // effort so the caller's intent survives the cross-protocol route. The
+      // same reasoning-support and endpoint gates as the chat path apply:
+      // only OpenAI infrastructure accepts `reasoning`, and only a reasoning
+      // model accepts the effort tier.
+      if (
+        (endpointKey === 'openai-responses' || endpointKey === 'openai-subscription') &&
+        ctx.apiMode === 'messages'
+      ) {
+        const effort = anthropicThinkingEffort(
+          requestSource,
+          this.modelSupportsReasoning('openai', ctx.model),
+        );
+        if (effort !== undefined && requestBody.reasoning === undefined) {
+          requestBody.reasoning = { effort };
+        }
+      }
       if (endpointKey === 'openai-responses' || endpointKey === 'openai-subscription') {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
       }
       // Force upstream streaming for copilot-responses so the SSE collector in
       // handleNonStreamResponse stays the single source of truth. Without this,
       // an explicit `stream: false` from the caller could hand us a plain JSON
-      // body that our SSE parser would silently drop (mnfst/manifest#1849).
+      // body that our SSE parser would silently drop (mnfst/llm-gateway#1849).
       if (endpointKey === 'copilot-responses') {
         requestBody.stream = true;
       }
@@ -786,12 +984,7 @@ export class ProviderClient {
     }
 
     // OpenAI-compatible path (default)
-    const sanitized = sanitizeOpenAiBody(
-      requestSource,
-      endpointKey,
-      ctx.model,
-      this.reasoningCatalog,
-    );
+    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model);
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =
         typeof sanitized.stream_options === 'object' && sanitized.stream_options !== null
@@ -801,6 +994,13 @@ export class ProviderClient {
     }
     const requestBody = { ...sanitized, model: bareModel, stream };
     if (endpointKey === 'openai') {
+      if (ctx.apiMode === 'messages') {
+        applyAnthropicUserIdForOpenAi(requestBody);
+        applyAnthropicThinkingForOpenAi(
+          requestBody,
+          this.modelSupportsReasoning(endpointKey, ctx.model),
+        );
+      }
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'mistral') {
@@ -845,6 +1045,7 @@ export class ProviderClient {
       isCodeAssist?: boolean;
       structuredOutputToolName?: string;
       responsesTextFormat?: Record<string, unknown>;
+      responsesToolNames?: ResponsesToolNames;
     },
   ): Promise<ForwardResult> {
     let fetchSignal: AbortSignal;

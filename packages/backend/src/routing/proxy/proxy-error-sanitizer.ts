@@ -64,12 +64,42 @@ function normalizeErrorMessage(message: string): string {
   return sanitizeSensitivePatterns(message).replace(/\s+/g, ' ').trim().slice(0, 1000);
 }
 
+/**
+ * FastAPI-style `detail`: either one string or a validation array whose entries
+ * carry `msg`. ChatGPT Codex rejects an unsupported model this way, with no
+ * `error` envelope at all, so ignoring it drops the only useful sentence.
+ */
+export function providerDetailMessage(detail: unknown): string | null {
+  if (typeof detail === 'string') return detail.trim().length > 0 ? detail : null;
+  if (!Array.isArray(detail)) return null;
+  const messages = detail.flatMap((entry) => {
+    const msg =
+      entry && typeof entry === 'object' ? (entry as Record<string, unknown>).msg : undefined;
+    return typeof msg === 'string' && msg.trim().length > 0 ? [msg] : [];
+  });
+  return messages.length > 0 ? messages.join('; ') : null;
+}
+
+/**
+ * The human-readable message of a parsed provider error body, whatever the
+ * envelope: `{error:{message}}`, `{error:"…"}`, `{message}`, or `{detail}`.
+ */
+function providerMessageOf(root: Record<string, unknown>): unknown {
+  const nested = root.error;
+  if (typeof nested === 'string') return nested;
+  const error =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : root;
+  return error.message ?? root.message ?? providerDetailMessage(root.detail);
+}
+
 function extractProviderMessage(rawBody: string): string | null {
   try {
-    const parsed = JSON.parse(rawBody) as Record<string, unknown>;
-    const error = parsed.error as Record<string, unknown> | undefined;
-    const message = error?.message ?? parsed.message;
-    return typeof message === 'string' && message.length > 0 ? message : null;
+    const parsed = JSON.parse(rawBody) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const message = providerMessageOf(parsed as Record<string, unknown>);
+    return typeof message === 'string' && message.trim().length > 0 ? message : null;
   } catch {
     return null;
   }
@@ -100,7 +130,7 @@ export function parseStructuredProviderError(
       nested && typeof nested === 'object' && !Array.isArray(nested)
         ? (nested as Record<string, unknown>)
         : root;
-    const message = errorField(error.message ?? root.message);
+    const message = errorField(providerMessageOf(root));
     if (!message) return null;
 
     return {

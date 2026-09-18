@@ -94,6 +94,13 @@ import { AutofixModule } from '../routing/autofix/autofix.module';
     AutofixStatsService,
     RequestVolumeService,
   ],
-  exports: [SpecificityFeedbackService, ProviderUsageService],
+  exports: [
+    SpecificityFeedbackService,
+    ProviderUsageService,
+    AgentLifecycleService,
+    TimeseriesQueriesService,
+    MessagesQueryService,
+    AutofixStatsService,
+  ],
 })
 export class AnalyticsModule {}

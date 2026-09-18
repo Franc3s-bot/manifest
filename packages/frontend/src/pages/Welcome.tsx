@@ -32,6 +32,7 @@ import { createRoutingActions } from './RoutingActions.js';
 import { providerIcon } from '../components/ProviderIcon.jsx';
 import { PROVIDERS } from '../services/providers.js';
 import { authClient } from '../services/auth-client.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import {
   createAgent,
   deleteModelParams,
@@ -291,9 +292,7 @@ const Welcome: Component = () => {
   };
 
   const baseUrl = () => {
-    const host = window.location.hostname;
-    if (host === 'app.manifest.build') return 'https://app.manifest.build/v1';
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const createHarness = async () => {

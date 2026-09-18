@@ -51,14 +51,13 @@ vi.mock('../../src/services/formatters.js', async (importOriginal) => ({
   customProviderColor: () => '#000',
 }));
 
-const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } = vi.hoisted(
-  () => ({
+const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } =
+  vi.hoisted(() => ({
     mockRefreshModels: vi.fn(),
     mockRefreshProviderModels: vi.fn(),
     mockToastSuccess: vi.fn(),
     mockToastError: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock('../../src/services/api.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -1127,6 +1126,100 @@ describe('ModelPickerModal', () => {
     expect(letter?.textContent).toBe('G');
   });
 
+  it('surfaces a local custom provider (llama.cpp tile) that has no API key or cached count', () => {
+    // Custom providers keep their models on the custom_providers row, so
+    // /providers reports cached_model_count = 0 and has_api_key = false for
+    // them. The Local tab must still appear, otherwise the connection's
+    // models are unreachable from the picker.
+    const customProviders: CustomProviderData[] = [
+      {
+        id: 'cp-llamacpp',
+        name: 'llama.cpp',
+        base_url: 'http://100.68.118.38:9931/v1',
+        api_kind: 'openai',
+        has_api_key: false,
+        models: [{ model_name: 'Bonsai 27b' }],
+        created_at: '2025-01-01',
+      },
+    ];
+    const customModels: AvailableModel[] = [
+      {
+        ...baseModels[0],
+        model_name: 'custom:cp-llamacpp/Bonsai 27b',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        provider_display_name: 'llama.cpp',
+        display_name: 'Bonsai 27b',
+      },
+    ];
+    const localCustom: RoutingProvider[] = [
+      {
+        id: 'p11',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        is_active: true,
+        has_api_key: false,
+        cached_model_count: 0,
+        connected_at: '2025-01-01',
+      },
+    ];
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="simple"
+        models={[...baseModels, ...customModels]}
+        tiers={[]}
+        customProviders={customProviders}
+        connectedProviders={[...apiKeyOnly, ...localCustom]}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    const localTab = Array.from(container.querySelectorAll('[role="tab"]')).find((t) =>
+      t.textContent?.includes('Local'),
+    ) as HTMLButtonElement;
+    expect(localTab).toBeTruthy();
+    fireEvent.click(localTab);
+    expect(container.textContent).toContain('Bonsai 27b');
+  });
+
+  it('lists models of a lone local custom provider even without a tab strip', () => {
+    // Single auth category: no tab strip renders, and the model must still be
+    // listed. Without the custom-provider escape hatch the picker would fall
+    // back to the api_key tab and filter the local model out entirely.
+    const customModels: AvailableModel[] = [
+      {
+        ...baseModels[0],
+        model_name: 'custom:cp-llamacpp/Bonsai 27b',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        provider_display_name: 'llama.cpp',
+        display_name: 'Bonsai 27b',
+      },
+    ];
+    const localCustom: RoutingProvider[] = [
+      {
+        id: 'p12',
+        provider: 'custom:cp-llamacpp',
+        auth_type: 'local',
+        is_active: true,
+        has_api_key: false,
+        cached_model_count: 0,
+        connected_at: '2025-01-01',
+      },
+    ];
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="simple"
+        models={customModels}
+        tiers={[]}
+        connectedProviders={localCustom}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    expect(container.textContent).toContain('Bonsai 27b');
+  });
+
   it('keeps Bedrock grouped by route provider while cleaning dotted model labels', () => {
     const bedrockModels: AvailableModel[] = [
       {
@@ -1449,4 +1542,93 @@ describe('ModelPickerModal', () => {
     fireEvent.click(localTab);
     expect(localTab.getAttribute('aria-selected')).toBe('true');
   });
+
+  describe('large catalogs', () => {
+    const manyModels: AvailableModel[] = Array.from({ length: 200 }, (_, i) => ({
+      ...baseModels[0]!,
+      model_name: `gpt-4o-${i}`,
+      display_name: `GPT-4o ${String(i).padStart(3, '0')}`,
+    }));
+
+    it('does not mount every model row when the catalog is large', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+
+      const rows = container.querySelectorAll('.routing-modal__model');
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(80);
+      expect(container.textContent).not.toContain('GPT-4o 199');
+    });
+
+    it('reveals a late model after the list is scrolled', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const list = container.querySelector('.routing-modal__list') as HTMLElement;
+      Object.defineProperty(list, 'scrollTop', { configurable: true, writable: true, value: 7800 });
+      fireEvent.scroll(list);
+
+      expect(container.textContent).toContain('GPT-4o 199');
+      expect(container.textContent).not.toContain('GPT-4o 000');
+    });
+
+    it('search still brings a late model into the window', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const search = container.querySelector('.routing-modal__search') as HTMLInputElement;
+      fireEvent.input(search, { target: { value: 'GPT-4o 199' } });
+
+      expect(container.textContent).toContain('GPT-4o 199');
+      expect(container.querySelectorAll('.routing-modal__model').length).toBe(1);
+    });
+
+    it('resets to the top of the filtered list after the user had scrolled', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const list = container.querySelector('.routing-modal__list') as HTMLElement;
+      Object.defineProperty(list, 'scrollTop', { configurable: true, writable: true, value: 7800 });
+      fireEvent.scroll(list);
+
+      expect(container.textContent).not.toContain('GPT-4o 000');
+
+      const search = container.querySelector('.routing-modal__search') as HTMLInputElement;
+      // Matches every row, so shrink-clamp cannot explain a jump back to the top.
+      fireEvent.input(search, { target: { value: 'GPT-4o' } });
+
+      expect(container.textContent).toContain('GPT-4o 000');
+      expect(container.textContent).not.toContain('GPT-4o 199');
+    });
+  });
+
 });

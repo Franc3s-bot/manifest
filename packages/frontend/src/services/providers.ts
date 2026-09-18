@@ -168,6 +168,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subscriptionAuthMode: 'popup_paste',
     models: [],
   },
+  vertex: {
+    initial: 'GV',
+    subtitle: 'Gemini via Google Cloud Vertex AI',
+    models: [],
+  },
   bedrock: {
     initial: 'AWS',
     subtitle: 'Claude, GPT, Kimi, MiniMax, Nova via Amazon Bedrock',
@@ -274,7 +279,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   gemini: {
     initial: 'G',
-    subtitle: 'Gemini 3.6 Flash, 3.1 Pro, Gemini 2.5',
+    subtitle: 'Gemini 3.5 Flash, 3.1 Flash-Lite, Gemini 2.5',
     supportsSubscription: true,
     subscriptionLabel: 'Sign in with Google',
     subscriptionAuthMode: 'popup_oauth',
@@ -327,6 +332,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   unsloth: {
     initial: 'U',
     subtitle: 'Run local and remote fine-tuned models with Unsloth Studio',
+    noKeyRequired: true,
     models: [],
     defaultLocalPort: 8888,
   },
@@ -527,6 +533,7 @@ const PROVIDER_ORDER = [
   'gemini-free',
   'copilot',
   'gemini',
+  'vertex',
   'groq',
   'huggingface',
   'kilo',

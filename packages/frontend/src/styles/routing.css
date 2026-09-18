@@ -2143,6 +2143,40 @@
   .routing-card__reset-btn {
     min-height: 32px;
   }
+
+  /* ── Upstream additions ─────────────────────────── */
+  .routing-cards:not(.routing-cards--wide),
+  .routing-cards--centered,
+  .routing-cards--unified-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] > div {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .routing-providers-info {
+    flex-shrink: 0;
+  }
+
+  .routing-providers-info__label {
+    white-space: nowrap;
+  }
+
+  .routing-footer {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .routing-footer .btn {
+    white-space: nowrap;
+  }
 }
 
 @media (max-width: 600px) {

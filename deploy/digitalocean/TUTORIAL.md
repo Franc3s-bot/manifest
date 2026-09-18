@@ -17,7 +17,7 @@ App Platform has no persistent volumes and its deploy template cannot create sco
 Open the DigitalOcean deploy link:
 
 ```text
-https://cloud.digitalocean.com/apps/new?repo=https://github.com/mnfst/manifest/tree/main
+https://cloud.digitalocean.com/apps/new?repo=https://github.com/mnfst/llm-gateway/tree/main
 ```
 
 DigitalOcean prompts for the missing secret values before deployment. Generate and paste separate values for:

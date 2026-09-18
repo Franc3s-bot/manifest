@@ -235,16 +235,30 @@ describe('excludePlaygroundAgents', () => {
     expect(mockAndWhere).toHaveBeenCalledWith(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE);
   });
 
-  it('matches the playground agent by id OR name and never multiplies rows', () => {
-    // The predicate is a pure existence test (cannot duplicate fact rows) and
+  it('matches the playground agent by id OR name, without correlating on agents', () => {
+    // Still a pure existence test that cannot duplicate fact rows, and still
     // matches on either agent_id OR agent_name (so a Playground row carrying
-    // only agent_name, NULL agent_id, is still excluded).
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('NOT EXISTS');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.is_playground = true');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.tenant_id = at.tenant_id');
+    // only agent_name, NULL agent_id, is excluded too).
+    //
+    // Both subqueries must stay UNCORRELATED. Postgres evaluates an
+    // uncorrelated `IN (subquery)` once, as a hashed SubPlan; the previous
+    // correlated NOT EXISTS was re-scanned per row whenever the planner
+    // declined to materialize it, costing 24.7s on the Overview.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('is_playground = true');
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('at.agent_id IN (SELECT plg.id');
     expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain(
-      'playag.id = at.agent_id OR playag.name = at.agent_name',
+      '(at.tenant_id, at.agent_name) IN (SELECT plg.tenant_id, plg.name',
     );
+    // No reference to the outer alias inside either subquery.
+    const subqueries = EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/\(SELECT plg[^)]*\)/g) ?? [];
+    expect(subqueries).toHaveLength(2);
+    for (const sub of subqueries) expect(sub).not.toContain('at.');
+    // The name arm compares the (tenant_id, name) PAIR. Agent names are unique
+    // only per tenant, so a bare name match would drop other tenants' traffic.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).not.toMatch(/[^,]agent_name IN \(SELECT plg\.name/);
+    // COALESCE is required: `x IN (subquery)` is NULL, not false, when x is
+    // NULL and nothing matches, and NOT NULL is NULL — the row would vanish.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/COALESCE\(/g)).toHaveLength(2);
   });
 
   it('returns the query builder for chaining', () => {

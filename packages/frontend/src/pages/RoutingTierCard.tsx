@@ -343,24 +343,17 @@ const RoutingTierCard: Component<RoutingTierCardProps> = (props) => {
     }
     const fallbackRoutes = tier.fallback_routes ?? null;
     const fbRoute = fallbackRoutes?.[fbIndex] ?? null;
-    // Insert: dragged fallback becomes primary, old primary moves to second position
-    // (top of the fallback chain); remaining fallbacks shift down preserving order.
+    // Swap: fallback model goes to primary, current primary takes its place.
     // Carry routes alongside model names so same-name-different-auth swaps
     // don't collapse to a single auth on persist. The route shape carries
     // `keyLabel`, so the multi-key pin rides along with this swap too —
     // SebConejo flagged that drag-drop should preserve the API key, and the
     // ModelRoute structure makes this happen naturally.
     const newFallbacks = [...fallbacks];
-    newFallbacks.splice(fbIndex, 1);
-    newFallbacks.splice(0, 0, currentModel);
+    newFallbacks[fbIndex] = currentModel;
     const newRoutes =
       fallbackRoutes && currentRoute && fallbackRoutes.length === fallbacks.length
-        ? (() => {
-            const rs = [...fallbackRoutes];
-            rs.splice(fbIndex, 1);
-            rs.splice(0, 0, currentRoute);
-            return rs;
-          })()
+        ? fallbackRoutes.map((r, i) => (i === fbIndex ? currentRoute : r))
         : null;
     props.onFallbackUpdate(props.stage.id, newFallbacks, newRoutes);
     try {

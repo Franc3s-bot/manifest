@@ -61,12 +61,13 @@ import type {
 } from './proxy-types';
 import { ResponsesSseError } from './chatgpt-adapter';
 import { redactInlineImageDataUrls } from './inline-image-redaction';
-import { openAiModelId } from './openai-model-id';
+import { scrubSecrets } from '../../common/utils/secret-scrub';
+import { openAiModelId, subscriptionOpenAiModelId } from './openai-model-id';
 import { openAiModelCapabilities, type OpenAiModelCapabilities } from './openai-model-capabilities';
 import { buildSyntheticTierProfile } from './synthetic-model-profile';
 import { PlanService } from '../../billing/plan.service';
 import { StreamFailure } from './stream-writer';
-import { AgentRecordingCacheService } from '../../common/services/agent-recording-cache.service';
+import { AgentRecordingConfigService } from '../../common/services/agent-recording-config.service';
 import { AttemptRecordingService } from './attempt-recording.service';
 import { HeaderTierService } from '../header-tiers/header-tier.service';
 import {
@@ -83,6 +84,8 @@ interface OpenAiModelObject {
   object: 'model';
   created: number;
   owned_by: string;
+  provider_model_id?: string;
+  auth_type?: string;
   capabilities?: OpenAiModelCapabilities;
   cost?: OpenAiModelCost;
 }
@@ -141,7 +144,7 @@ export class ProxyController {
     private readonly providerParamSpecs: ProviderParamSpecService,
     private readonly modelsDevSync: ModelsDevSyncService,
     @Optional()
-    private readonly recordingCache?: AgentRecordingCacheService,
+    private readonly recordingConfig?: AgentRecordingConfigService,
     @Optional()
     private readonly attemptRecording?: AttemptRecordingService,
     @Optional()
@@ -153,9 +156,11 @@ export class ProxyController {
     @Req() req: Request & { ingestionContext: IngestionContext },
     @Query('capabilities') capabilities?: string,
     @Query('cost') cost?: string,
+    @Query('route_metadata') routeMetadata?: string,
   ): Promise<OpenAiModelList> {
     const includeCapabilities = capabilities === 'true';
     const includeCost = cost === 'true';
+    const includeRouteMetadata = routeMetadata === 'true';
     const models = await this.modelDiscovery.getModelsForAgent(
       req.ingestionContext.tenantId,
       req.ingestionContext.agentId,
@@ -180,8 +185,14 @@ export class ProxyController {
         id,
         object: 'model',
         created: MODEL_CREATED_UNKNOWN,
-        owned_by: model.provider,
+        // Custom providers own their models under the name the user gave
+        // them, not the internal `custom:<uuid>` key.
+        owned_by: model.providerName ?? model.provider,
       };
+      if (includeRouteMetadata) {
+        entry.provider_model_id = model.id;
+        entry.auth_type = model.authType;
+      }
       if (includeCapabilities) {
         // Same resolution as the dashboard's model picker, so agents and the
         // routing UI report identical capability facts.
@@ -313,11 +324,11 @@ export class ProxyController {
       })
       .catch((e) => this.logger.warn(`Failed to record pending Request: ${e}`));
 
-    if (this.recordingCache && this.attemptRecording) {
+    if (this.recordingConfig && this.attemptRecording) {
       try {
         recordingEnabled =
           this.attemptRecording.available &&
-          (await this.recordingCache.isRecording(req.ingestionContext.agentId));
+          (await this.recordingConfig.isRecording(req.ingestionContext.agentId));
       } catch (e) {
         recordingEnabled = false;
         this.logger.warn(`Failed to resolve attempt recording config: ${e}`);
@@ -425,26 +436,27 @@ export class ProxyController {
       this.rateLimiter.checkIpLimit(req.ip ?? '');
       this.rateLimiter.acquireSlot(tenantId);
       slotAcquired = true;
-      routingBody = redactInlineImageDataUrls(body);
+      routingBody = redactInlineImageDataUrls(this.routingBody(body, req));
       const specificityOverride = req.headers['x-manifest-specificity'] as string | undefined;
-      const { forward, meta, failedFallbacks, autofix } = await this.proxyService.proxyRequest({
-        agentId: req.ingestionContext.agentId,
-        tenantId,
-        // Attribution only — the recorder writes it to agent_messages.user_id.
-        userId: req.ingestionContext.userId,
-        body,
-        routingBody,
-        sessionKey,
-        sessionCacheKey: sessionScope.cacheKey,
-        providerCacheKey: sessionScope.providerCacheKey,
-        sessionMomentumKey: sessionScope.momentumKey,
-        agentName: req.ingestionContext.agentName,
-        signal: clientAbort.signal,
-        specificityOverride,
-        headers: req.headers,
-        apiMode,
-        startProviderAttempt,
-      });
+      const { forward, meta, failedFallbacks, autofix, fallbackAutofix } =
+        await this.proxyService.proxyRequest({
+          agentId: req.ingestionContext.agentId,
+          tenantId,
+          // Attribution only — the recorder writes it to agent_messages.user_id.
+          userId: req.ingestionContext.userId,
+          body,
+          routingBody,
+          sessionKey,
+          sessionCacheKey: sessionScope.cacheKey,
+          providerCacheKey: sessionScope.providerCacheKey,
+          sessionMomentumKey: sessionScope.momentumKey,
+          agentName: req.ingestionContext.agentName,
+          signal: clientAbort.signal,
+          specificityOverride,
+          headers: req.headers,
+          apiMode,
+          startProviderAttempt,
+        });
       currentMeta = meta;
 
       this.trackFirstProxyRequest(tenantId);
@@ -597,6 +609,7 @@ export class ProxyController {
           currentPrimaryAttemptNumber(autofix) +
             (meta.fallbackFromModel ? (failedFallbacks?.length ?? 0) + 1 : 0),
           apiMode,
+          fallbackAutofix,
         );
       }
     } catch (err: unknown) {
@@ -620,6 +633,24 @@ export class ProxyController {
     } finally {
       if (slotAcquired) this.rateLimiter.releaseSlot(tenantId);
     }
+  }
+
+  /**
+   * Phoenix replays a provider-native model while naming the original route in
+   * headers. Keep Manifest's public `-subscription` syntax inside Manifest: the
+   * original body remains provider-native and only the routing view is encoded.
+   */
+  private routingBody(
+    body: Record<string, unknown>,
+    req: Request & { ingestionContext: IngestionContext },
+  ): Record<string, unknown> {
+    const provider = req.headers['x-manifest-provider'];
+    const authType = req.headers['x-manifest-auth-type'];
+    const model = body.model;
+    if (typeof provider !== 'string' || authType !== 'subscription' || typeof model !== 'string') {
+      return body;
+    }
+    return { ...body, model: subscriptionOpenAiModelId(provider, model) };
   }
 
   /**
@@ -704,7 +735,9 @@ export class ProxyController {
             ? err.getStatus()
             : 500;
     const providerErrorBody = err instanceof ResponsesSseError ? err.body : message;
-    this.logger.error(`Proxy error: ${message}`);
+    // `message` is the raw upstream body for a ResponsesSseError, so scrub it
+    // before it reaches stdout (the recorded/returned copies already are).
+    this.logger.error(`Proxy error: ${scrubSecrets(message)}`);
 
     // Who failed? A ManifestError says so explicitly. Pre-response dead sockets
     // and timeouts become synthetic 503/504 responses in proxy-transport. A

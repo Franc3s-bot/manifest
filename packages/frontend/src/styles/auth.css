@@ -148,6 +148,17 @@
   cursor: not-allowed;
 }
 
+.auth-form__submit--secondary {
+  background: transparent;
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.auth-form__submit--secondary:hover:not(:disabled) {
+  background: hsl(var(--muted));
+  opacity: 1;
+}
+
 .auth-form__error {
   padding: var(--gap-sm) var(--gap-md);
   background: hsl(var(--destructive) / 0.1);

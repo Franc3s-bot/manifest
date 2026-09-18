@@ -38,7 +38,6 @@ import { AGENT_COLORS } from '../components/MultiAgentTokenChart.jsx';
 import InfoTooltip from '../components/InfoTooltip.jsx';
 import UnifiedChartCard from '../components/UnifiedChartCard.jsx';
 import AutofixKpiCards from '../components/AutofixKpiCards.jsx';
-
 import Sparkline from '../components/Sparkline.jsx';
 import FilterSelect from '../components/FilterSelect.jsx';
 import Select from '../components/Select.jsx';
@@ -1154,6 +1153,7 @@ const GlobalOverview: Component = () => {
                                 alt=""
                                 width="20"
                                 height="20"
+                                class="platform-icon"
                                 style="flex-shrink: 0;"
                               />
                             </Show>

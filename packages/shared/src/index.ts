@@ -7,8 +7,18 @@ export {
   PLATFORM_ICONS,
   coerceAgentPlatform,
   platformIcon,
+  API_SURFACES,
+  PLATFORM_API_SURFACES,
 } from './agent-type';
-export type { AgentCategory, AgentPlatform } from './agent-type';
+export type { AgentCategory, AgentPlatform, ApiSurface } from './agent-type';
+export {
+  getOpenClawSnippet,
+  getClaudeCodeSettingsSnippet,
+  getNanobotConfigSnippet,
+  getCodexConfigSnippet,
+  getCodexKeyExportSnippet,
+  PLATFORM_SETUP_SNIPPETS,
+} from './setup-snippets';
 export {
   TIERS,
   TIER_SLOTS,
@@ -192,3 +202,11 @@ export {
   normalizeRole,
 } from './chat-message';
 export type { ChatMessage, ChatTool, RecordedResponseBody, Role, ToolCall } from './chat-message';
+export {
+  CUSTOM_PROVIDER_ALIAS_MAX_LENGTH,
+  CUSTOM_PROVIDER_ALIAS_MESSAGE,
+  CUSTOM_PROVIDER_ALIAS_PATTERN,
+  deriveCustomProviderAlias,
+  isReservedCustomProviderAlias,
+  normalizeCustomProviderAlias,
+} from './custom-provider-alias';

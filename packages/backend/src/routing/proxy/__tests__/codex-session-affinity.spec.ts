@@ -27,16 +27,32 @@ describe('CodexSessionAffinity', () => {
       expect(headers['session-id']).not.toBe(headers['thread-id']);
     });
 
-    it('reuses the same ids for the same token + cache key, distinct otherwise', () => {
+    it('reuses the same ids for the same cache key, distinct per conversation', () => {
       const a = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
       const b = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
       const otherConversation = affinity.prepare('token', { prompt_cache_key: 'conv-2' });
-      const otherToken = affinity.prepare('token-2', { prompt_cache_key: 'conv-1' });
-
       expect(a.headers).toEqual(b.headers);
       expect(a.storeKey).toBe(b.storeKey);
       expect(otherConversation.headers['session-id']).not.toBe(a.headers['session-id']);
-      expect(otherToken.headers['session-id']).not.toBe(a.headers['session-id']);
+      expect(otherConversation.headers['thread-id']).not.toBe(a.headers['thread-id']);
+    });
+    it('derives the same ids on separate instances so replicas and restarts share a shard', () => {
+      const replicaA = new CodexSessionAffinity();
+      const replicaB = new CodexSessionAffinity();
+      const a = replicaA.prepare('token', { prompt_cache_key: 'conv-1' });
+      const b = replicaB.prepare('token-rotated', { prompt_cache_key: 'conv-1' });
+      expect(b.headers['session-id']).toBe(a.headers['session-id']);
+      expect(b.headers['thread-id']).toBe(a.headers['thread-id']);
+      // Turn-state stays per-instance: a replica that never saw a response has none to replay.
+      replicaA.capture(a.storeKey, okResponseWithTurnState('turn-a'));
+      expect(
+        replicaA.prepare('token', { prompt_cache_key: 'conv-1' }).headers['x-codex-turn-state'],
+      ).toBe('turn-a');
+      expect(
+        replicaB.prepare('token-rotated', { prompt_cache_key: 'conv-1' }).headers[
+          'x-codex-turn-state'
+        ],
+      ).toBeUndefined();
     });
 
     it('keeps a caller-supplied prompt_cache_key untouched', () => {
@@ -98,41 +114,39 @@ describe('CodexSessionAffinity', () => {
       expect(storeKey).toContain(maxKey);
     });
 
-    it('rotates session ids after the TTL', () => {
+    it('keeps session ids stable across the TTL but drops the stale turn-state', () => {
       const before = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
+      affinity.capture(before.storeKey, okResponseWithTurnState('turn-1'));
       jest.advanceTimersByTime(5 * 60 * 1000 + 1);
       const after = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
-      expect(after.headers['session-id']).not.toBe(before.headers['session-id']);
+      expect(after.headers['session-id']).toBe(before.headers['session-id']);
+      expect(after.headers['thread-id']).toBe(before.headers['thread-id']);
+      expect(after.headers['x-codex-turn-state']).toBeUndefined();
     });
 
-    it('rotates an expired session in place when no sweep has run yet', () => {
+    it('replaces an expired session in place when no sweep has run yet', () => {
       const before = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
+      affinity.capture(before.storeKey, okResponseWithTurnState('turn-1'));
       // A sweep 4m30s in leaves conv-1 alive and resets the cleanup clock…
       jest.advanceTimersByTime(4 * 60 * 1000 + 30 * 1000);
       affinity.prepare('token', { prompt_cache_key: 'conv-other' });
-
       // …so 40s later conv-1 is expired but still in the map, and prepare()
-      // must replace it rather than reuse it.
+      // must replace it rather than replay its stale token.
       jest.advanceTimersByTime(40 * 1000);
       const after = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
-      expect(after.headers['session-id']).not.toBe(before.headers['session-id']);
+      expect(after.headers['session-id']).toBe(before.headers['session-id']);
+      expect(after.headers['x-codex-turn-state']).toBeUndefined();
     });
 
     it('slides the TTL while the session stays active', () => {
       const before = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
+      affinity.capture(before.storeKey, okResponseWithTurnState('turn-1'));
       jest.advanceTimersByTime(4 * 60 * 1000);
       affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
-      // 8 minutes after creation — would have rotated without the refresh above.
+      // 8 minutes after creation — the token would have expired without the refresh above.
       jest.advanceTimersByTime(4 * 60 * 1000);
       const after = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
-
-      expect(after.headers['session-id']).toBe(before.headers['session-id']);
+      expect(after.headers['x-codex-turn-state']).toBe('turn-1');
     });
   });
 
@@ -219,29 +233,62 @@ describe('CodexSessionAffinity', () => {
     });
   });
 
+  describe('capture after replacement', () => {
+    it('ignores a capture from a request whose entry expired and was replaced', () => {
+      const stale = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
+      jest.advanceTimersByTime(5 * 60 * 1000 + 1);
+      const fresh = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
+      expect(fresh.headers['session-id']).toBe(stale.headers['session-id']);
+      // The old request completes late: its token must not land on the new entry.
+      affinity.capture(stale.storeKey, okResponseWithTurnState('turn-stale'), stale.incarnation);
+      expect(
+        affinity.prepare('token', { prompt_cache_key: 'conv-1' }).headers['x-codex-turn-state'],
+      ).toBeUndefined();
+      affinity.capture(fresh.storeKey, okResponseWithTurnState('turn-fresh'), fresh.incarnation);
+      expect(
+        affinity.prepare('token', { prompt_cache_key: 'conv-1' }).headers['x-codex-turn-state'],
+      ).toBe('turn-fresh');
+    });
+    it('ignores a capture from a request whose entry was evicted and recreated', () => {
+      const stale = affinity.prepare('token', { prompt_cache_key: 'conv-0' });
+      for (let i = 1; i <= 10_000; i++) {
+        affinity.prepare('token', { prompt_cache_key: `conv-${i}` });
+      }
+      const fresh = affinity.prepare('token', { prompt_cache_key: 'conv-0' });
+      expect(fresh.incarnation).not.toBe(stale.incarnation);
+      affinity.capture(stale.storeKey, okResponseWithTurnState('turn-stale'), stale.incarnation);
+      expect(
+        affinity.prepare('token', { prompt_cache_key: 'conv-0' }).headers['x-codex-turn-state'],
+      ).toBeUndefined();
+    });
+  });
+
   describe('capacity', () => {
     it('evicts the oldest session at capacity, preserving recently used ones', () => {
       const first = affinity.prepare('token', { prompt_cache_key: 'conv-0' });
       const second = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
+      affinity.capture(first.storeKey, okResponseWithTurnState('turn-0'));
+      affinity.capture(second.storeKey, okResponseWithTurnState('turn-1'));
       for (let i = 2; i < 10_000; i++) {
         affinity.prepare('token', { prompt_cache_key: `conv-${i}` });
       }
 
       // Touching conv-0 at capacity must not evict anything, and moves it to
       // the back of the recency order…
-      expect(affinity.prepare('token', { prompt_cache_key: 'conv-0' }).headers).toEqual(
-        first.headers,
-      );
+      expect(
+        affinity.prepare('token', { prompt_cache_key: 'conv-0' }).headers['x-codex-turn-state'],
+      ).toBe('turn-0');
 
       // …so a brand-new session evicts conv-1 (now the oldest), not conv-0.
+      // Ids are deterministic, so eviction shows up as the lost turn-state.
       affinity.prepare('token', { prompt_cache_key: 'conv-overflow' });
 
-      expect(affinity.prepare('token', { prompt_cache_key: 'conv-1' }).headers).not.toEqual(
-        second.headers,
-      );
-      expect(affinity.prepare('token', { prompt_cache_key: 'conv-0' }).headers).toEqual(
-        first.headers,
-      );
+      const evicted = affinity.prepare('token', { prompt_cache_key: 'conv-1' });
+      expect(evicted.headers['session-id']).toBe(second.headers['session-id']);
+      expect(evicted.headers['x-codex-turn-state']).toBeUndefined();
+      expect(
+        affinity.prepare('token', { prompt_cache_key: 'conv-0' }).headers['x-codex-turn-state'],
+      ).toBe('turn-0');
     });
   });
 });

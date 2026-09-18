@@ -72,16 +72,18 @@ import { peekStream, STREAM_WARMUP_MS } from './stream-warmup';
 import { toChatCompletionsRequest } from './responses-adapter';
 import { messagesToChatCompletionsRequest } from './anthropic-messages-adapter';
 import { effectiveRoutesForResponseMode } from '../routing-core/response-mode-guard';
+import { subscriptionPreferredRoute } from '../routing-core/route-helpers';
 import {
   explicitModelRouteCandidate,
   OPENAI_MODEL_ID_AUTO,
   routeForOpenAiModelId,
   SUBSCRIPTION_MODEL_SUFFIX,
+  subscriptionOpenAiModelId,
 } from './openai-model-id';
 import { AutofixService } from '../autofix/autofix.service';
 import type { ReforwardOptions } from '../autofix/autofix.service';
 import type { AutofixRecord } from '../autofix/autofix.types';
-import { hasRotateKeyOperation, type PhoenixOperation } from '../autofix/phoenix.types';
+import { hasRotateKeyOperation } from '../autofix/phoenix.types';
 import { ReasoningContentCache } from './reasoning-content-cache';
 import { recordingResponseFromText } from './attempt-recording-capture';
 import { detectProactiveAutofix } from './provider-client-converters';
@@ -200,6 +202,12 @@ export interface ProxyResult {
   failedFallbacks?: FailedFallback[];
   /** Autofix audit when a repairable failure was sent to the healing service. */
   autofix?: AutofixRecord;
+  /**
+   * Autofix audit for the winning fallback hop. Separate from {@link autofix}
+   * (which is the primary's) so a recovered fallback's Phoenix metadata is
+   * recorded without overwriting the primary's attribution.
+   */
+  fallbackAutofix?: AutofixRecord;
 }
 
 /** Everything Autofix's reforward needs to re-send a healed body to a provider. */
@@ -208,6 +216,7 @@ interface HealedReforwardContext {
   tenantId: string;
   apiMode: ProxyApiMode;
   sessionKey: string;
+  sessionCacheKey?: string;
   providerCacheKey?: string;
   sessionMomentumKey?: string;
   signal?: AbortSignal;
@@ -283,6 +292,9 @@ export class ProxyService {
       headers,
       startProviderAttempt,
     } = opts;
+    const rawUa = headers?.['user-agent'];
+    const clientUserAgent =
+      typeof rawUa === 'string' ? rawUa : Array.isArray(rawUa) ? rawUa[0] : undefined;
     const apiMode = opts.apiMode ?? 'chat_completions';
     const routingSource = opts.routingBody ?? body;
     const resolveChatBody = this.createChatBodyResolver(apiMode, body);
@@ -315,12 +327,10 @@ export class ProxyService {
         `No route available for agent=${agentId}: ` +
           `tier=${resolved.tier} confidence=${resolved.confidence} reason=${resolved.reason}`,
       );
-      if (resolved.explicit_model_unavailable) {
-        return this.buildModelUnavailableResult(
-          stream,
-          agentName,
-          resolved.explicit_model_unavailable,
-        );
+      const unavailableModel =
+        resolved.explicit_model_unavailable ?? resolved.override_model_unavailable;
+      if (unavailableModel) {
+        return this.buildModelUnavailableResult(stream, agentName, unavailableModel);
       }
       return this.buildNoProviderResult(stream, agentName);
     }
@@ -487,6 +497,7 @@ export class ProxyService {
           paramMergeContext,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientUserAgent,
         });
         if (rotation) {
           currentForward = rotation.forward;
@@ -548,6 +559,8 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
+          clientAnthropicBeta: headers?.['anthropic-beta'],
         });
         if (fallbackResult) return fallbackResult;
       }
@@ -576,7 +589,7 @@ export class ProxyService {
       resolveChatBody,
       stream,
       sessionKey,
-      sessionCacheKey,
+      reasoningCacheKey: sessionCacheKey,
       providerCacheKey,
       signal,
       agentId,
@@ -591,9 +604,11 @@ export class ProxyService {
       providerRegion: credentials.providerRegion,
       signatureLookup,
       thinkingLookup,
+      clientAnthropicBeta: headers?.['anthropic-beta'],
       paramMergeContext,
       tenantProviderId: credentials.tenantProviderId,
       startProviderAttempt,
+      clientUserAgent,
     });
     const autofixOriginalAttempt = forward.attempt;
     const autofixOriginalProviderCallStarted = forward.providerCallStarted;
@@ -633,6 +648,7 @@ export class ProxyService {
                   tenantId,
                   apiMode: autofixApiMode,
                   sessionKey,
+                  sessionCacheKey,
                   providerCacheKey,
                   sessionMomentumKey,
                   signal,
@@ -702,6 +718,7 @@ export class ProxyService {
           paramMergeContext,
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
+          clientUserAgent,
         });
         if (rotation) {
           forward = rotation.forward;
@@ -743,6 +760,7 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
         });
         if (fallbackResult) {
           return {
@@ -778,6 +796,7 @@ export class ProxyService {
           isCodeAssist: forward.isCodeAssist,
           structuredOutputToolName: forward.structuredOutputToolName,
           responsesTextFormat: forward.responsesTextFormat,
+          responsesToolNames: forward.responsesToolNames,
           wireRequestBody: forward.wireRequestBody,
           wireRequestUrl: forward.wireRequestUrl,
           wireFormat: forward.wireFormat,
@@ -821,6 +840,7 @@ export class ProxyService {
         isCodeAssist: forward.isCodeAssist,
         structuredOutputToolName: forward.structuredOutputToolName,
         responsesTextFormat: forward.responsesTextFormat,
+        responsesToolNames: forward.responsesToolNames,
         wireRequestBody: forward.wireRequestBody,
         wireRequestUrl: forward.wireRequestUrl,
         wireFormat: forward.wireFormat,
@@ -852,6 +872,8 @@ export class ProxyService {
           startProviderAttempt,
           credentialDashboardUrl: dashboardUrl,
           keyRotationState,
+          clientUserAgent,
+          clientAnthropicBeta: headers?.['anthropic-beta'],
         });
         if (fallbackResult) {
           return {
@@ -956,13 +978,25 @@ export class ProxyService {
     const originalModel = originalForward.wireRequestBody?.model;
     const healedModel = typeof healedBody.model === 'string' ? healedBody.model : undefined;
     if (healedModel && healedModel !== originalModel) {
-      return this.forwardResolvedHealed(healedBody, originalForward, ctx);
+      // Phoenix speaks in provider-native model ids. Manifest owns the public
+      // `-subscription` route syntax, so add it only while resolving the healed
+      // retry. The helper is idempotent for older Phoenix patches that already
+      // carry the legacy route id.
+      const routingBody =
+        ctx.authType === 'subscription'
+          ? {
+              ...healedBody,
+              model: subscriptionOpenAiModelId(ctx.provider, healedModel),
+            }
+          : healedBody;
+      return this.forwardResolvedHealed(routingBody, healedBody, originalForward, ctx);
     }
     return this.fallbackService.retryWireBody(originalForward, healedBody, {
       provider: ctx.provider,
       model: ctx.model,
       signal: ctx.signal,
       authType: ctx.authType,
+      agentId: ctx.agentId,
       tenantProviderId: ctx.tenantProviderId,
       providerKeyLabel: ctx.keyLabel,
       startProviderAttempt: ctx.startProviderAttempt,
@@ -1027,16 +1061,21 @@ export class ProxyService {
   }
 
   private async forwardResolvedHealed(
+    routingBody: Record<string, unknown>,
     healedBody: Record<string, unknown>,
     originalForward: ForwardResult,
     ctx: HealedReforwardContext,
   ): Promise<ForwardResult> {
     const resolveChatBody = this.createChatBodyResolver(ctx.apiMode, healedBody);
+    const resolveRoutingChatBody =
+      routingBody === healedBody
+        ? resolveChatBody
+        : this.createChatBodyResolver(ctx.apiMode, routingBody);
     const resolved = await this.resolveRouting(
       ctx.agentId,
       ctx.tenantId,
-      healedBody,
-      resolveChatBody,
+      routingBody,
+      resolveRoutingChatBody,
       ctx.sessionMomentumKey,
       ctx.specificityOverride,
       ctx.headers,
@@ -1084,6 +1123,7 @@ export class ProxyService {
       resolveChatBody,
       stream: ctx.stream,
       sessionKey: ctx.sessionKey,
+      reasoningCacheKey: ctx.sessionCacheKey,
       providerCacheKey: ctx.providerCacheKey,
       signal: ctx.signal,
       agentId: ctx.agentId,
@@ -1098,6 +1138,7 @@ export class ProxyService {
       providerRegion: credentials.providerRegion,
       signatureLookup: ctx.signatureLookup,
       thinkingLookup: ctx.thinkingLookup,
+      clientAnthropicBeta: ctx.headers?.['anthropic-beta'],
       paramMergeContext: explicitModelOverride ? undefined : { agentId: ctx.agentId, scopeKey },
       tenantProviderId: credentials.tenantProviderId,
       startProviderAttempt: ctx.startProviderAttempt,
@@ -1296,6 +1337,14 @@ export class ProxyService {
     const catalogRoute = routeForOpenAiModelId(requestedModel, models);
     if (catalogRoute) return this.explicitRouting(agentId, tenantId, catalogRoute);
 
+    // A bare ID served by both the subscription and api_key connections of
+    // one provider is not ambiguous: the flat-fee subscription already covers
+    // the request, so route it there instead of silently metering the key.
+    if (!requestedModel.includes('/')) {
+      const preferred = subscriptionPreferredRoute(requestedModel, models);
+      if (preferred) return this.explicitRouting(agentId, tenantId, preferred);
+    }
+
     // A bare ID already present under multiple connections is ambiguous, not
     // undiscovered. Preserve M302 instead of silently picking an auth type.
     const hasAmbiguousCatalogMatch =
@@ -1450,6 +1499,7 @@ export class ProxyService {
     paramMergeContext: ParamMergeContext | undefined;
     startProviderAttempt?: StartProviderAttempt;
     credentialDashboardUrl: string;
+    clientUserAgent?: string;
   }): Promise<PrimaryRotationResult | null> {
     const {
       agentId,
@@ -1472,6 +1522,7 @@ export class ProxyService {
       paramMergeContext,
       startProviderAttempt,
       credentialDashboardUrl,
+      clientUserAgent,
     } = opts;
     if (rule.provider.toLowerCase() !== provider.toLowerCase()) return null;
     if (!nextUnusedKeyLabel(rule, state, model)) return null;
@@ -1545,6 +1596,7 @@ export class ProxyService {
         paramMergeContext,
         tenantProviderId: credentials.tenantProviderId,
         startProviderAttempt,
+        clientUserAgent,
       });
 
       if (forward.response.ok) {
@@ -1667,6 +1719,9 @@ export class ProxyService {
     credentialDashboardUrl?: string;
     /** Per-request key rotation state (see tryFallbacks). */
     keyRotationState?: KeyRotationState;
+    clientUserAgent?: string;
+    /** The caller's raw `anthropic-beta` header, forwarded on an Anthropic hop. */
+    clientAnthropicBeta?: string | string[];
   }): Promise<ProxyResult | null> {
     const {
       agentId,
@@ -1683,10 +1738,14 @@ export class ProxyService {
       sessionMomentumKey,
       signal,
       apiMode,
+      clientUserAgent,
     } = args;
-    // The resolver owns the effective route chain. Null is a definitive
-    // "nothing remains", including when the only configured fallback was
-    // promoted to primary. Reloading the persisted tier here would retry that
+    // The chain evaluates structural fallback routes directly — it never
+    // infers candidate providers from model names, so an agent with an
+    // explicit fallback list cannot accidentally try a provider it didn't
+    // configure. When fallback_routes is empty or omitted, no fallback occurs.
+    //
+    // Use the effective list so streaming requests don't skip the
     // promoted route as its own fallback and could resurrect routes the
     // resolver deliberately skipped.
     const fallbackRoutes = this.effectiveFallbackRoutes(resolved);
@@ -1720,6 +1779,8 @@ export class ProxyService {
       providerCacheKey,
       args.keyRotationState,
       sessionCacheKey,
+      clientUserAgent,
+      args.clientAnthropicBeta,
     );
 
     this.recordTierIfScoring(sessionMomentumKey, resolved.tier);
@@ -1775,6 +1836,7 @@ export class ProxyService {
           request_params: fallbackRequestParams,
         }),
         failedFallbacks: failures,
+        fallbackAutofix: success.autofix,
       };
     }
 

@@ -40,6 +40,42 @@ describe('AuthGuard', () => {
     mockLocation = { pathname: '/', search: '' };
   });
 
+  it('redirects to the discovery step when it is still pending for the user', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+    await vi.waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/discovery?next=%2Fwelcome', { replace: true });
+    });
+  });
+
+  it('does not redirect away from the discovery page itself while pending', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    mockLocation = { pathname: '/discovery', search: '?next=%2Fwelcome' };
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+    expect(await screen.findByText('Protected content')).toBeDefined();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('lets the MCP consent page through even while onboarding is pending', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    mockLocation = { pathname: '/consent', search: '?client_id=c' };
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+    expect(await screen.findByText('Protected content')).toBeDefined();
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   it('renders children when session exists', async () => {
     render(() => (
       <AuthGuard>

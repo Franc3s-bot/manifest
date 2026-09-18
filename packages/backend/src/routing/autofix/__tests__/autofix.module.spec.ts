@@ -8,6 +8,7 @@ import { InstallMetadata } from '../../../entities/install-metadata.entity';
 import { InstallIdService } from '../../../telemetry/install-id.service';
 import { RoutingCoreModule } from '../../routing-core/routing-core.module';
 import { KeyRotationRuleService } from '../../routing-core/key-rotation-rule.service';
+import { ApiKey } from '../../../entities/api-key.entity';
 import { AutofixModule } from '../autofix.module';
 import { HEALING_CLIENT } from '../healing-client';
 import { HttpHealingClient } from '../http-healing-client';
@@ -52,6 +53,10 @@ async function resolveHealingClient(configValues: Record<string, string>) {
         providers: [{ provide: KeyRotationRuleService, useValue: { getRule: jest.fn() } }],
         exports: [KeyRotationRuleService],
       })
+      // The telemetry payload builder also reads api_keys (and the raw OAuth
+      // tables through that repo's manager); stub it too.
+      .overrideProvider(getRepositoryToken(ApiKey))
+      .useValue({})
       .compile();
 
     const client = moduleRef.get(HEALING_CLIENT);
@@ -195,6 +200,8 @@ describe('AutofixModule HEALING_CLIENT factory', () => {
         .overrideProvider(getRepositoryToken(ManifestRequest))
         .useValue({})
         .overrideProvider(getRepositoryToken(InstallMetadata))
+        .useValue({})
+        .overrideProvider(getRepositoryToken(ApiKey))
         .useValue({})
         .overrideProvider(InstallIdService)
         .useValue({ getOrCreate })
