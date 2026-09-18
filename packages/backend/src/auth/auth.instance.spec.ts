@@ -665,6 +665,43 @@ describe('auth.instance', () => {
       expect(mockStripePlugin).not.toHaveBeenCalled();
     });
 
+    it('disables the MCP plugins on a plain-HTTP non-loopback origin instead of crashing', () => {
+      process.env['MANIFEST_MODE'] = 'cloud';
+      process.env['BETTER_AUTH_URL'] = 'http://100.69.158.7:2099';
+      delete process.env['STRIPE_SECRET_KEY'];
+      delete process.env['STRIPE_WEBHOOK_SECRET'];
+      delete process.env['STRIPE_PRO_PRICE_ID'];
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      const { cimd } = jest.requireMock('@better-auth/cimd') as { cimd: jest.Mock };
+      expect(mcp).not.toHaveBeenCalled();
+      expect(cimd).not.toHaveBeenCalled();
+      expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([{ id: 'jwt' }]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Remote MCP disabled'));
+      warn.mockRestore();
+    });
+
+    it('keeps the MCP plugins on a loopback HTTP origin', () => {
+      process.env['MANIFEST_MODE'] = 'cloud';
+      process.env['BETTER_AUTH_URL'] = 'http://127.0.0.1:2099';
+      delete process.env['STRIPE_SECRET_KEY'];
+      delete process.env['STRIPE_WEBHOOK_SECRET'];
+      delete process.env['STRIPE_PRO_PRICE_ID'];
+
+      loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      expect(mcp).toHaveBeenCalledTimes(1);
+      expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([
+        { id: 'jwt' },
+        { id: 'mcp' },
+        { id: 'cimd' },
+      ]);
+    });
+
     it('registers the stripe plugin after the MCP/OAuth plugins when billing is enabled', () => {
       process.env['MANIFEST_MODE'] = 'cloud';
       process.env['STRIPE_SECRET_KEY'] = 'sk_test_x';
