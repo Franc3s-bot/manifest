@@ -332,6 +332,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   unsloth: {
     initial: 'U',
     subtitle: 'Run local and remote fine-tuned models with Unsloth Studio',
+    noKeyRequired: true,
     models: [],
     defaultLocalPort: 8888,
   },

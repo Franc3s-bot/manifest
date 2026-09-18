@@ -783,8 +783,6 @@ describe('PlaygroundService.runStream', () => {
     }
   });
 
-  });
-
   it('unwraps OpenAI OAuth blobs before forwarding subscription Playground requests', async () => {
     const oauthBlob = JSON.stringify({
       t: 'stored-access-token',

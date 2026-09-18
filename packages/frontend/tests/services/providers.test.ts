@@ -571,8 +571,12 @@ describe('PROVIDERS', () => {
     expect(commandcode.subscriptionAuthMode).toBe('token');
     expect(commandcode.subscriptionCredentialKind).toBe('api-key');
     expect(commandcode.subscriptionLabel).toBe('Command Code subscription');
-    expect(commandcode.subscriptionKeyPlaceholder).toBe('Paste your Command Code API key');
-    expect(commandcode.subscriptionRequirementNote).toBe('Requires Command Code Pro or higher.');
+    expect(commandcode.subscriptionKeyPlaceholder).toBe(
+      'Paste your Command Code session token or API key',
+    );
+    expect(commandcode.subscriptionRequirementNote).toBe(
+      'Requires Command Code Go, Goat, or Pro plan.',
+    );
     expect(commandcode.subscriptionSignInUrl).toBeUndefined();
     expect(commandcode.subscriptionSignInLabel).toBeUndefined();
     expect(commandcode.subscriptionSignInHint).toBeUndefined();

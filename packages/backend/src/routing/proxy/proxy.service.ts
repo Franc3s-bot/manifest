@@ -83,7 +83,7 @@ import {
 import { AutofixService } from '../autofix/autofix.service';
 import type { ReforwardOptions } from '../autofix/autofix.service';
 import type { AutofixRecord } from '../autofix/autofix.types';
-import { hasRotateKeyOperation, type PhoenixOperation } from '../autofix/phoenix.types';
+import { hasRotateKeyOperation } from '../autofix/phoenix.types';
 import { ReasoningContentCache } from './reasoning-content-cache';
 import { recordingResponseFromText } from './attempt-recording-capture';
 import { detectProactiveAutofix } from './provider-client-converters';
@@ -294,11 +294,7 @@ export class ProxyService {
     } = opts;
     const rawUa = headers?.['user-agent'];
     const clientUserAgent =
-      typeof rawUa === 'string'
-        ? rawUa
-        : Array.isArray(rawUa)
-          ? rawUa[0]
-          : undefined;
+      typeof rawUa === 'string' ? rawUa : Array.isArray(rawUa) ? rawUa[0] : undefined;
     const apiMode = opts.apiMode ?? 'chat_completions';
     const routingSource = opts.routingBody ?? body;
     const resolveChatBody = this.createChatBodyResolver(apiMode, body);

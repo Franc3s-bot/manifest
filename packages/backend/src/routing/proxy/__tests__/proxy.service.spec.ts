@@ -2411,7 +2411,7 @@ describe('ProxyService — orchestration', () => {
       await svc.proxyRequest(baseOpts());
       expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
         expect.objectContaining({
-          sessionCacheKey: 'cache-sess-1',
+          reasoningCacheKey: 'cache-sess-1',
           sessionKey: 'sess-1',
         }),
       );
@@ -3559,7 +3559,7 @@ describe('ProxyService — orchestration', () => {
       expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(2);
       expect(fallbackService.tryFallbacks).toHaveBeenCalledTimes(1);
       const state = fallbackService.tryFallbacks.mock.calls[0][19] as Map<string, Set<string>>;
-      expect([...(state.get('model:gpt-4o') ?? [])].sort()).toEqual(['Personal', 'Work']);
+      expect([...(state.get('openai:gpt-4o') ?? [])].sort()).toEqual(['Personal', 'Work']);
       expect(primaryAttempt.completeFailure).toHaveBeenCalledWith(
         expect.objectContaining({ status: 401, superseded: true }),
       );
@@ -3703,7 +3703,7 @@ describe('ProxyService — orchestration', () => {
       // The per-request state rides along: the fallback chain can apply the
       // rule to its own slots and never re-tries the burned 'Work' label.
       const state = fallbackService.tryFallbacks.mock.calls[0][19] as Map<string, Set<string>>;
-      expect([...(state.get('model:gpt-4o') ?? [])]).toEqual(['Work']);
+      expect([...(state.get('openai:gpt-4o') ?? [])]).toEqual(['Work']);
       expect(result.meta.fallbackFromModel).toBe('gpt-4o');
     });
 

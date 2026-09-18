@@ -349,8 +349,6 @@ export class ProxyFallbackService {
         }
         let providerKeyLabel = label;
 
-        let providerKeyLabel = label;
-
         // Same credential resolution as primary (select key + OAuth unwrap).
         const credentials = await resolveRouteCredentials(this.routeCredentialDeps(), {
           agentId,
@@ -450,6 +448,7 @@ export class ProxyFallbackService {
             providerKeyLabel,
             signal,
             startProviderAttempt,
+            keyRotationState,
           });
         }
         const finalForward = autofixAttempt?.forward ?? forward;
@@ -578,6 +577,11 @@ export class ProxyFallbackService {
     providerKeyLabel?: string;
     signal?: AbortSignal;
     startProviderAttempt?: StartProviderAttempt;
+    /**
+     * Request-scoped key-rotation state, threaded so a `rotate_key` heal on a
+     * fallback hop marks the same labels the chain's own rotation would skip.
+     */
+    keyRotationState?: KeyRotationState;
   }): Promise<AutofixAttempt | null> {
     return this.autofixService.maybeHeal({
       forward: input.forward,
@@ -588,6 +592,7 @@ export class ProxyFallbackService {
       authType: input.authType,
       apiMode: input.apiMode,
       requestBody: input.requestBody,
+      keyRotationState: input.keyRotationState,
       reforward: (healedBody) =>
         this.retryWireBody(input.forward, healedBody, {
           provider: input.provider,

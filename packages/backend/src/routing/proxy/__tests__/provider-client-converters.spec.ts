@@ -1325,16 +1325,15 @@ describe('sanitizeOpenAiBody provider-specific fields', () => {
     expect(messages[0].reasoning_content).toBe('upstream thinking');
   });
 
-  it('still strips reasoning_content for a Zen slug nothing vouches for', () => {
+  it('keeps reasoning_content for a Zen slug nothing vouches for (the provider error settles it)', () => {
     const result = sanitizeOpenAiBody(
       bodyWithReasoning(),
       'opencode-zen',
       'opencode-zen/mystery-slug',
-      zenCatalog,
     );
 
     const messages = result.messages as Array<Record<string, unknown>>;
-    expect(messages[0].reasoning_content).toBeUndefined();
+    expect(messages[0].reasoning_content).toBe('upstream thinking');
   });
 
   it.each([

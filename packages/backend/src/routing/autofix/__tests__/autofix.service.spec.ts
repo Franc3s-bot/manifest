@@ -655,7 +655,7 @@ describe('AutofixService', () => {
       });
       // The rotated label is marked used in the request's shared state, so a
       // failed rotated retry is never re-tried by the later fallback loop.
-      expect(state.get('model:gpt')).toEqual(new Set(['Work', 'Personal']));
+      expect(state.get('anthropic:gpt')).toEqual(new Set(['Work', 'Personal']));
     });
 
     it('rotate_key with no rule degrades to the same-key retry (logged)', async () => {

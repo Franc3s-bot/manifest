@@ -16,6 +16,7 @@ import { ModelPricingCacheService } from '../../../model-prices/model-pricing-ca
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
 import { KeyRotationRuleService } from '../../routing-core/key-rotation-rule.service';
+import { AutofixService } from '../../autofix/autofix.service';
 import {
   createKeyRotationState,
   markKeyLabelUsed,
@@ -165,6 +166,10 @@ describe('ProxyFallbackService.tryFallbacks — key rotation', () => {
       } as unknown as ProviderParamSpecService,
       new ReasoningContentCache(),
       keyRotationRules as unknown as KeyRotationRuleService,
+      {
+        isRepairable: jest.fn().mockReturnValue(false),
+        maybeHeal: jest.fn(),
+      } as unknown as AutofixService,
     );
   });
 
@@ -466,13 +471,21 @@ describe('ProxyFallbackService.tryFallbacks — key rotation', () => {
     keyRotationRules.getRule.mockResolvedValue(
       rule(null, ['Work', 'Personal'], 'openai', 'provider'),
     );
-    providerClient.forward
-      .mockResolvedValueOnce(forward(401))
-      .mockResolvedValueOnce(forward(200));
+    providerClient.forward.mockResolvedValueOnce(forward(401)).mockResolvedValueOnce(forward(200));
     const state = createKeyRotationState();
     // Primary gpt-4o burned both labels under the provider rule
-    markKeyLabelUsed(state, rule(null, ['Work', 'Personal'], 'openai', 'provider'), 'gpt-4o', 'Work');
-    markKeyLabelUsed(state, rule(null, ['Work', 'Personal'], 'openai', 'provider'), 'gpt-4o', 'Personal');
+    markKeyLabelUsed(
+      state,
+      rule(null, ['Work', 'Personal'], 'openai', 'provider'),
+      'gpt-4o',
+      'Work',
+    );
+    markKeyLabelUsed(
+      state,
+      rule(null, ['Work', 'Personal'], 'openai', 'provider'),
+      'gpt-4o',
+      'Personal',
+    );
 
     const result = await runFallbacks(
       ['gpt-4o-mini'],

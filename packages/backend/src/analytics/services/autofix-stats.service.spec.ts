@@ -218,7 +218,7 @@ describe('AutofixStatsService', () => {
     // ONE terminal-CTE scan yields both windows; getStats derives the KPI
     // counts from that single result instead of scanning twice.
     requestVolume.getDispositionTotalsForWindows.mockResolvedValue({
-      current: { total: 10, success: 5, healed: 2, keyRotation: 1, fallback: 1, error: 2 },
+      current: { total: 10, success: 4, healed: 2, keyRotation: 1, fallback: 1, error: 2 },
       previous: { total: 0, success: 0, healed: 0, keyRotation: 0, fallback: 0, error: 0 },
     });
     internals.queryNeedsAttention = jest.fn().mockResolvedValue([{ error_message: 'bad' }]);

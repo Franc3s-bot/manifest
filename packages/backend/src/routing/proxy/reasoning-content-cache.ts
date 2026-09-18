@@ -136,6 +136,13 @@ export class ReasoningContentCache {
     const messages = body.messages;
     if (!Array.isArray(messages)) return body;
 
+    // Strict providers must not even read the cache: their API rejects the
+    // echoed `reasoning_content`, so a lookup would be pure waste (and, on a
+    // shared cache, an extra round-trip per request).
+    if (!supportsReasoningContent(endpointKey, model, this.modelCatalog)) {
+      return body;
+    }
+
     // Only tool conversations enforce the echo; a plain chat thread keeps its
     // exact turn shape.
     const includeNonToolTurns = messages.some(
@@ -157,12 +164,6 @@ export class ReasoningContentCache {
     );
     const repeatedKeys = repeatedReplayKeys(keys);
     const cached = keys.length > 0 ? await this.retrieveMany(sessionKey, keys) : new Map();
-
-    const isSupported = supportsReasoningContent(endpointKey, model, this.modelCatalog);
-    const hasCachedHits = keys.some((k) => cached.has(k) && Boolean(cached.get(k)));
-    if (!isSupported && !hasCachedHits) {
-      return body;
-    }
 
     let changed = false;
     const nextMessages = messages.map((message, index) => {
@@ -194,7 +195,7 @@ export class ReasoningContentCache {
   ): Promise<Record<string, string>> {
     if (!sessionKey || !body || !Array.isArray(body.messages)) return {};
 
-    const candidates = body.messages.map(reasoningReplayCandidate);
+    const candidates = body.messages.map((message) => reasoningReplayCandidate(message, false));
     const keys = candidates.flatMap((candidate) =>
       candidate?.cacheKey ? [candidate.cacheKey] : [],
     );

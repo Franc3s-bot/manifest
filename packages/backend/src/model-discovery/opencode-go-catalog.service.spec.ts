@@ -106,7 +106,7 @@ describe('OpencodeGoCatalogService', () => {
       expect(byId['qwen3.7-max']).toBe('anthropic');
       expect(byId['minimax-m2.5']).toBe('anthropic');
       expect(byId['minimax-m2.7']).toBe('anthropic');
-      expect(byId['muse-spark-1.2-contributor']).toBe('openai');
+      expect(byId['muse-spark-1.2-contributor']).toBe('responses');
     });
 
     it('never matches the header row (uppercase model ID column fails regex)', () => {
@@ -418,7 +418,7 @@ describe('OpencodeGoCatalogService', () => {
       } as Response);
 
       const first = await service.list();
-      expect(first).toHaveLength(9);
+      expect(first).toHaveLength(10);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
 
       const second = await service.list();
@@ -433,7 +433,7 @@ describe('OpencodeGoCatalogService', () => {
         text: async () => SAMPLE_MDX,
       } as Response);
       const good = await service.list();
-      expect(good).toHaveLength(9);
+      expect(good).toHaveLength(10);
 
       // Force the success cache to look expired, but keep lastGood populated.
       (service as unknown as { cache: unknown }).cache = null;

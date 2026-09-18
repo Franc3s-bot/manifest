@@ -207,6 +207,8 @@ describe('ProxyFallbackService.tryFallbacks — route-aware path', () => {
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
       'structured-outputs-2025-11-13',
     );
 

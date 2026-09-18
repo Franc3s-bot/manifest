@@ -401,21 +401,6 @@ function normalizeOpenAiMessages(messages: unknown, endpointKey: string): unknow
   });
 }
 
-function normalizeDeepSeekMaxTokens(body: Record<string, unknown>): void {
-  if (!('max_tokens' in body)) return;
-
-  const raw = body.max_tokens;
-  const parsed = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : Number.NaN;
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    delete body.max_tokens;
-    return;
-  }
-
-  body.max_tokens = Math.min(Math.trunc(parsed), DEEPSEEK_MAX_TOKENS_LIMIT);
-  if ((body.max_tokens as number) < 1) delete body.max_tokens;
-}
-
 function sanitizeToolSchemaParameters(parameters: unknown): Record<string, unknown> {
   if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) {
     return { type: 'object', properties: {} };
@@ -480,8 +465,6 @@ export function sanitizeOpenAiBody(
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
   const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
-  const convertMaxTokens =
-    needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
   // NVIDIA Nemotron hosts (reached through the OpenRouter passthrough) reject the
   // Anthropic-style top-level `thinking` param; scope the strip to that family so
   // the general OpenRouter passthrough stays untouched (mnfst/llm-gateway#2464).
@@ -517,8 +500,10 @@ export function sanitizeOpenAiBody(
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that
     // require it (native OpenAI + Copilot for o-series / GPT-5+). Applies in both
     // passthrough and non-passthrough branches.
-    if (convertMaxTokens && key === 'max_tokens') {
-      cleaned['max_completion_tokens'] = value;
+    if (needsMaxCompletionTokens && key === 'max_tokens') {
+      if (!('max_completion_tokens' in body)) {
+        cleaned['max_completion_tokens'] = value;
+      }
       continue;
     }
     if (passthroughTopLevel) {
@@ -553,7 +538,6 @@ export function sanitizeOpenAiBody(
     }
     cleaned[key] = value;
   }
-  if (endpointKey === 'deepseek') normalizeDeepSeekMaxTokens(cleaned);
   return cleaned;
 }
 

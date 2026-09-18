@@ -55,8 +55,11 @@ export interface MaybeHealParams {
   /**
    * The request's shared key-rotation state. rotate_key heal operations mark
    * the rotated label used here so the later fallback loop never re-tries it.
+   * Optional: hops healed outside the primary key-rotation flow (e.g. a
+   * fallback hop) may have no state, in which case a rotate_key operation
+   * degrades to a same-key retry.
    */
-  keyRotationState: KeyRotationState;
+  keyRotationState?: KeyRotationState;
   /** Re-send a patched body to the provider and return the fresh forward. */
   reforward: (
     healedBody: Record<string, unknown>,
@@ -551,7 +554,16 @@ export class AutofixService {
       return undefined;
     }
 
-    const label = nextUnusedKeyLabel(rule, params.keyRotationState, params.model);
+    const state = params.keyRotationState;
+    if (!state) {
+      this.logger.warn(
+        `autofix: rotate_key requested without key rotation state for model=${params.model} ` +
+          `provider=${params.provider} — same-key retry`,
+      );
+      return undefined;
+    }
+
+    const label = nextUnusedKeyLabel(rule, state, params.model);
     if (!label) {
       this.logger.warn(
         `autofix: rotate_key requested but all key labels already used for ` +
@@ -560,7 +572,7 @@ export class AutofixService {
       return undefined;
     }
 
-    markKeyLabelUsed(params.keyRotationState, rule, params.model, label);
+    markKeyLabelUsed(state, rule, params.model, label);
     this.logger.log(
       `autofix: rotate_key — retrying model=${params.model} provider=${params.provider} ` +
         `with key label=${label}`,
