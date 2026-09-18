@@ -30,11 +30,10 @@ import {
   getMessages,
   getMessageFilterOptions,
   getRoutingStatus,
-  listHeaderTiers,
 } from '../services/api.js';
 import { createCursorPagination } from '../services/cursor-pagination.js';
 import { usePlanRangeLock } from '../services/plan-range-lock.js';
-import { preloadModelDisplayNames } from '../services/model-display.js';
+import { getModelDisplayName, preloadModelDisplayNames } from '../services/model-display.js';
 import { PROVIDERS, SPECIFICITY_STAGES } from '../services/providers.js';
 import { providerIcon } from '../components/ProviderIcon.jsx';
 import { platformIcon } from 'manifest-shared';
@@ -55,9 +54,18 @@ interface MessagesData {
   provider_labels?: Record<string, string>;
 }
 
+interface HeaderTierFilterOption {
+  name: string;
+  /** Every custom-tier id this option covers — same name on several harnesses. */
+  ids: string[];
+}
+
 interface MessageFilterOptionsData {
   providers: string[];
   provider_labels?: Record<string, string>;
+  header_tiers?: HeaderTierFilterOption[];
+  /** Every model this tenant has used in range — the Model filter's options. */
+  models?: string[];
 }
 
 interface AgentFilterOption {
@@ -68,7 +76,7 @@ interface AgentFilterOption {
 
 const SPECIFICITY_FILTER_PREFIX = 'specificity:';
 const HEADER_TIER_FILTER_PREFIX = 'header:';
-const MESSAGE_STATUS_FILTERS = ['ok', 'failed'] as const;
+const MESSAGE_STATUS_FILTERS = ['ok', 'failed', 'cancelled'] as const;
 type MessageStatusFilter = (typeof MESSAGE_STATUS_FILTERS)[number];
 type MessageStatusFilterValue = '' | MessageStatusFilter;
 const MESSAGE_TRIGGER_FILTERS = ['none', 'fallback', 'key_rotation', 'autofix'] as const;
@@ -126,6 +134,7 @@ const MessageLog: Component = () => {
     connections?: string;
     trigger?: string;
     attempts?: string;
+    model?: string;
     range?: string;
   }>();
   const navigate = useNavigate();
@@ -182,7 +191,14 @@ const MessageLog: Component = () => {
         label: a,
         value: a,
         icon: iconPath ? (
-          <img src={iconPath} alt="" width="14" height="14" style="border-radius: 3px;" />
+          <img
+            src={iconPath}
+            alt=""
+            width="14"
+            height="14"
+            class="platform-icon"
+            style="border-radius: 3px;"
+          />
         ) : (
           <span style="display: inline-block; width: 14px; height: 14px;" />
         ),
@@ -248,9 +264,10 @@ const MessageLog: Component = () => {
     triggerListToChoice(normalizeTriggerFilters(searchParams.trigger)),
   );
   // Attempt-status facet: a plain select (all / with a failed attempt / with
-  // a succeeded attempt). The API accepts a comma list, but combining the two
-  // reads poorly in a dropdown, so the UI keeps one value; deep links carrying
-  // several still work.
+  // a succeeded attempt). NOT derivable from Status + Recovery — "has a failed
+  // attempt" is Status=Failed UNION Recovery!=none, and those two AND together.
+  // The connection cards on GlobalOverview and ConnectionDetail deep-link here
+  // with ?attempts=, so this is also what keeps those drill-downs honest.
   const [attemptStatusFilter, setAttemptStatusFilterValue] = createSignal<'' | AttemptStatusFilter>(
     normalizeAttemptStatusFilters(searchParams.attempts)[0] ?? '',
   );
@@ -258,6 +275,25 @@ const MessageLog: Component = () => {
     const next = isAttemptStatusFilter(value) ? value : '';
     setAttemptStatusFilterValue(next);
     setSearchParams({ attempts: next || undefined }, { replace: true });
+  };
+  // `?model=` narrows the log to requests that touched one of these models.
+  const [modelsFilter, setModelsFilterValue] = createSignal<string[]>(
+    typeof searchParams.model === 'string' ? searchParams.model.split(',').filter(Boolean) : [],
+  );
+  // Navigation can change ?model= while this page stays mounted, so the signal
+  // follows the URL the way status and range do — otherwise the log would keep
+  // querying the selection from before the navigation.
+  createEffect(
+    on(
+      () => searchParams.model,
+      (model) =>
+        setModelsFilterValue(typeof model === 'string' ? model.split(',').filter(Boolean) : []),
+      { defer: true },
+    ),
+  );
+  const setModelsFilter = (values: string[]) => {
+    setModelsFilterValue(values);
+    setSearchParams({ model: values.length ? values.join(',') : undefined }, { replace: true });
   };
   // `?range=` scopes the log to a rolling window; deep links from dashboard
   // cards carry it so the list total can match the card that sent us here.
@@ -271,8 +307,6 @@ const MessageLog: Component = () => {
   const [statusFilterValue, setStatusFilterValue] = createSignal<MessageStatusFilterValue>(
     normalizeStatusFilter(searchParams.status),
   );
-  const [costMin, setCostMin] = createSignal('');
-  const [costMax, setCostMax] = createSignal('');
   const [setupOpen, setSetupOpen] = createSignal(false);
   const [setupCompleted] = createSignal(
     !!localStorage.getItem(`setup_completed_${params.agentName}`),
@@ -292,29 +326,10 @@ const MessageLog: Component = () => {
     ({ agentName }) => (agentName ? getSpecificityAssignments(agentName) : Promise.resolve([])),
   );
 
-  const [headerTiers] = createResource(
-    () => ({ agentName: tierMetadataAgentName() }),
-    ({ agentName }) => (agentName ? listHeaderTiers(agentName) : Promise.resolve([])),
-  );
-
   const hasProviders = () => routingStatus()?.enabled === true;
 
   const pager = createCursorPagination(50);
 
-  let costMinTimer: ReturnType<typeof setTimeout>;
-  let costMaxTimer: ReturnType<typeof setTimeout>;
-  onCleanup(() => {
-    clearTimeout(costMinTimer);
-    clearTimeout(costMaxTimer);
-  });
-  const debouncedSetCostMin = (val: string) => {
-    clearTimeout(costMinTimer);
-    costMinTimer = setTimeout(() => setCostMin(val), 400);
-  };
-  const debouncedSetCostMax = (val: string) => {
-    clearTimeout(costMaxTimer);
-    costMaxTimer = setTimeout(() => setCostMax(val), 400);
-  };
   const setStatusFilter = (value: string) => {
     const next = normalizeStatusFilter(value);
     setStatusFilterValue(next);
@@ -359,12 +374,11 @@ const MessageLog: Component = () => {
         connectionsFilter,
         triggerFilter,
         attemptStatusFilter,
+        modelsFilter,
         tierFilter,
         originFilter,
         statusFilterValue,
         rangeFilter,
-        costMin,
-        costMax,
       ],
       () => pager.resetPage(),
       {
@@ -381,6 +395,8 @@ const MessageLog: Component = () => {
     if (triggerParam) q.trigger = triggerParam;
     const attempts = attemptStatusFilter();
     if (attempts) q.attempts = attempts;
+    const models = modelsFilter();
+    if (models.length) q.model = models.join(',');
     const tier = tierFilter();
     if (tier) {
       if (tier.startsWith(SPECIFICITY_FILTER_PREFIX)) {
@@ -397,10 +413,6 @@ const MessageLog: Component = () => {
     if (range) q.range = range;
     const origin = originFilter();
     if (origin) q.origin = origin;
-    const minCost = costMin();
-    if (minCost) q.cost_min = minCost;
-    const maxCost = costMax();
-    if (maxCost) q.cost_max = maxCost;
     const agentName = agentFilter() || params.agentName;
     if (agentName) q.agent_name = agentName;
     return q;
@@ -464,6 +476,15 @@ const MessageLog: Component = () => {
     },
   );
 
+  // Models the tenant has actually used in range, labelled the way the Model
+  // column renders them. A model already picked stays listed even if it drops
+  // out of the window, so an active filter never loses its own option.
+  const modelOptions = createMemo<MultiSelectOption[]>(() => {
+    const available = messageFilterOptions()?.models ?? [];
+    const merged = [...new Set([...available, ...modelsFilter()])].sort();
+    return merged.map((model) => ({ value: model, label: getModelDisplayName(model) }));
+  });
+
   const displayedItems = createMemo<MessageRow[]>(() => {
     return data()?.items ?? [];
   });
@@ -482,12 +503,11 @@ const MessageLog: Component = () => {
     connectionsFilter().length > 0 ||
     triggerFilter() !== '' ||
     attemptStatusFilter() !== '' ||
+    modelsFilter().length > 0 ||
     tierFilter() !== '' ||
     originFilter() !== '' ||
     statusFilterValue() !== '' ||
-    rangeFilter() !== '' ||
-    costMin() !== '' ||
-    costMax() !== '';
+    rangeFilter() !== '';
 
   const exactTotal = () => {
     const count = messageCount();
@@ -517,12 +537,11 @@ const MessageLog: Component = () => {
     setConnectionsFilter([]);
     setTriggerFilterValue('');
     setAttemptStatusFilter('');
+    setModelsFilter([]);
     setTierFilter('');
     setOriginFilter('');
     setStatusFilter('');
     setRangeFilter('');
-    setCostMin('');
-    setCostMax('');
   };
 
   const activeSpecificityCategories = createMemo(
@@ -543,9 +562,9 @@ const MessageLog: Component = () => {
         value: `${SPECIFICITY_FILTER_PREFIX}${stage.id}`,
       }),
     ),
-    ...(headerTiers() ?? []).map((tier) => ({
+    ...(messageFilterOptions()?.header_tiers ?? []).map((tier) => ({
       label: tier.name,
-      value: `${HEADER_TIER_FILTER_PREFIX}${tier.id}`,
+      value: `${HEADER_TIER_FILTER_PREFIX}${tier.ids.join(',')}`,
     })),
   ]);
 
@@ -598,10 +617,19 @@ const MessageLog: Component = () => {
     ),
   ]);
 
+  const attemptStatusOptions = [
+    { label: 'All attempt statuses', value: '' },
+    { label: 'With a failed attempt', value: 'has_failed' },
+    { label: 'With a succeeded attempt', value: 'has_succeeded' },
+  ];
+
   const statusOptions = [
     { label: 'All statuses', value: '' },
     { label: 'Success', value: 'ok' },
     { label: 'Failed', value: 'failed' },
+    // The caller hung up — not a Manifest or provider failure, so it is no
+    // longer folded into Failed and needs its own way in.
+    { label: 'Cancelled', value: 'cancelled' },
   ];
 
   const noRecoveryIcon = () => (
@@ -664,12 +692,6 @@ const MessageLog: Component = () => {
       ),
     },
     { label: 'No recovery attempt', value: 'none', icon: noRecoveryIcon() },
-  ];
-
-  const attemptStatusOptions = [
-    { label: 'All attempt statuses', value: '' },
-    { label: 'With a failed attempt', value: 'has_failed' },
-    { label: 'With a succeeded attempt', value: 'has_succeeded' },
   ];
 
   // Who failed. `manifest` collapses every Manifest-authored origin (setup,
@@ -759,13 +781,20 @@ const MessageLog: Component = () => {
               value={triggerFilter()}
               onChange={setTriggerFilterValue}
               options={triggerOptions}
-              label="Recovery attempts filter"
+              label="Recovery filter"
             />
             <Select
               value={attemptStatusFilter()}
               onChange={setAttemptStatusFilter}
               options={attemptStatusOptions}
               label="Attempt status filter"
+            />
+            <MultiSelect
+              values={modelsFilter()}
+              onChange={setModelsFilter}
+              options={modelOptions()}
+              placeholder="All models"
+              label="Model filter"
             />
             <Select
               value={statusFilterValue()}
@@ -786,29 +815,6 @@ const MessageLog: Component = () => {
               options={rangeOptions()}
               label="Period filter"
             />
-            <div class="cost-range-filter">
-              <input
-                type="number"
-                class="cost-range-filter__input"
-                placeholder="Min $"
-                aria-label="Minimum cost filter"
-                min="0"
-                step="0.01"
-                value={costMin()}
-                onInput={(e) => debouncedSetCostMin(e.currentTarget.value)}
-              />
-              <span class="cost-range-filter__sep">&ndash;</span>
-              <input
-                type="number"
-                class="cost-range-filter__input"
-                placeholder="Max $"
-                aria-label="Maximum cost filter"
-                min="0"
-                step="0.01"
-                value={costMax()}
-                onInput={(e) => debouncedSetCostMax(e.currentTarget.value)}
-              />
-            </div>
           </Show>
           <Show when={showEmptyState() && !!params.agentName && !setupCompleted()}>
             <button class="btn btn--primary btn--sm" onClick={() => setSetupOpen(true)}>

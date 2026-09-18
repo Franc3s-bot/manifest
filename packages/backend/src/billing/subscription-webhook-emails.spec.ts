@@ -1,7 +1,7 @@
 jest.mock('./billing-email-sender', () => ({
   formatPlanName: (plan: string | null | undefined) =>
     plan === 'pro' ? 'Pro' : plan === 'free' ? 'Free' : plan,
-  getBillingAppUrl: () => 'https://app.manifest.build',
+  getBillingAppUrl: () => 'https://gateway.manifest.build',
   getBillingEmailFrom: () => 'noreply@manifest.build',
   sendSubscriptionPlanEmail: jest.fn().mockResolvedValue(true),
 }));

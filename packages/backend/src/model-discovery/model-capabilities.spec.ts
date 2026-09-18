@@ -53,16 +53,16 @@ describe('inputModalitiesFromCapabilities', () => {
 
 describe('resolveModelCapabilityMetadata', () => {
   const paramSpecs = { getCapabilities: jest.fn() };
-  const modelsDevSync = { lookupModel: jest.fn() };
+  const modelsDevSync = { lookupModelCapabilities: jest.fn() };
 
   beforeEach(() => {
     paramSpecs.getCapabilities.mockReset().mockResolvedValue(null);
-    modelsDevSync.lookupModel.mockReset().mockReturnValue(null);
+    modelsDevSync.lookupModelCapabilities.mockReset().mockReturnValue(null);
   });
 
   it('merges discovery, models.dev, param-spec, and streaming-heuristic capabilities', async () => {
     paramSpecs.getCapabilities.mockResolvedValue(['tools']);
-    modelsDevSync.lookupModel.mockReturnValue(makeModelsDevEntry());
+    modelsDevSync.lookupModelCapabilities.mockReturnValue(makeModelsDevEntry());
 
     const resolved = await resolveModelCapabilityMetadata(
       makeModel({ capabilities: ['audio'], authType: 'subscription' }),
@@ -91,6 +91,16 @@ describe('resolveModelCapabilityMetadata', () => {
       outputModalities: undefined,
       modelsDevEntry: null,
     });
+  });
+
+  it('marks custom provider models as stream-capable', async () => {
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({ id: 'custom:cp-1/local-model', provider: 'custom:cp-1' }),
+      paramSpecs,
+      modelsDevSync,
+    );
+
+    expect(resolved.capabilities).toEqual(['stream']);
   });
 
   it('keeps discovery-time modalities when models.dev has no entry', async () => {
@@ -137,6 +147,22 @@ describe('resolveModelCapabilityMetadata', () => {
     expect(resolved.outputModalities).toEqual(['text']);
   });
 
+  it('keeps the vendor prefix on OpenRouter ids so the OpenRouter catalog answers', async () => {
+    // OpenRouter is not a transparent gateway: it resells a vendor's model
+    // under its own catalog entry, so `openai/gpt-4o-mini` must be looked up
+    // whole rather than split into ('openai', 'gpt-4o-mini') (#2737).
+    await resolveModelCapabilityMetadata(
+      makeModel({ id: 'openai/gpt-4o-mini', provider: 'openrouter' }),
+      paramSpecs,
+      modelsDevSync,
+    );
+
+    expect(modelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith(
+      'openrouter',
+      'openai/gpt-4o-mini',
+    );
+  });
+
   it('looks up metadata under the underlying provider for vendor-prefixed ids', async () => {
     await resolveModelCapabilityMetadata(
       makeModel({ id: 'anthropic.claude-sonnet-5-v1:0', provider: 'bedrock' }),
@@ -144,6 +170,72 @@ describe('resolveModelCapabilityMetadata', () => {
       modelsDevSync,
     );
 
-    expect(modelsDevSync.lookupModel).toHaveBeenCalledWith('anthropic', 'claude-sonnet-5-v1:0');
+    expect(modelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith(
+      'anthropic',
+      'claude-sonnet-5-v1:0',
+    );
+  });
+});
+
+describe('resolveModelCapabilityMetadata — gateway ids', () => {
+  const paramSpecs = { getCapabilities: jest.fn() };
+
+  beforeEach(() => {
+    paramSpecs.getCapabilities.mockReset().mockResolvedValue(null);
+  });
+
+  /** models.dev knows the gateway's own catalog but not the vendor's. */
+  const gatewayOnlySync = {
+    lookupModelCapabilities: (providerId: string, modelId: string) =>
+      providerId === 'opencode-go' && modelId === 'deepseek-v4.1-flash'
+        ? makeModelsDevEntry({
+            id: 'deepseek-v4.1-flash',
+            name: 'DeepSeek V4.1 Flash',
+            capabilities: ['text', 'tools'],
+            inputModalities: ['text'],
+          })
+        : null,
+  };
+
+  it('falls back to the gateway catalog when the vendor has no entry', async () => {
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({
+        id: 'opencode-go/deepseek-v4.1-flash',
+        displayName: 'opencode-go/deepseek-v4.1-flash',
+        provider: 'opencode-go',
+        authType: 'subscription',
+      }),
+      paramSpecs,
+      gatewayOnlySync,
+    );
+
+    expect(resolved.modelsDevEntry?.name).toBe('DeepSeek V4.1 Flash');
+    expect(resolved.capabilities).toContain('tools');
+  });
+
+  it('still prefers the underlying vendor entry when it exists', async () => {
+    const bothSync = {
+      lookupModelCapabilities: (providerId: string, modelId: string) => {
+        if (providerId === 'deepseek' && modelId === 'deepseek-v4-pro') {
+          return makeModelsDevEntry({ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' });
+        }
+        if (providerId === 'opencode-go' && modelId === 'deepseek-v4-pro') {
+          return makeModelsDevEntry({ id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro (New)' });
+        }
+        return null;
+      },
+    };
+
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({
+        id: 'opencode-go/deepseek-v4-pro',
+        provider: 'opencode-go',
+        authType: 'subscription',
+      }),
+      paramSpecs,
+      bothSync,
+    );
+
+    expect(resolved.modelsDevEntry?.name).toBe('DeepSeek V4 Pro');
   });
 });

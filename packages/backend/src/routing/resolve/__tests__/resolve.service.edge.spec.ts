@@ -138,7 +138,10 @@ describe('ResolveService — edge cases', () => {
       penaltyService as unknown as SpecificityPenaltyService,
       headerTierService as unknown as HeaderTierService,
       agentRepo as unknown as Repository<Agent>,
-      { addInvalidationListener: jest.fn() } as unknown as RoutingCacheService,
+      {
+        addInvalidationListener: jest.fn(),
+        addTenantInvalidationListener: jest.fn(),
+      } as unknown as RoutingCacheService,
       {
         getRule: jest.fn().mockResolvedValue(null),
         list: jest.fn().mockResolvedValue([]),

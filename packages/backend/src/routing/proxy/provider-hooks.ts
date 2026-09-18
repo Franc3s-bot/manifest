@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { PROVIDER_BY_ID_OR_ALIAS } from '../../common/constants/providers';
 
 /**
  * Provider-specific hooks — data-driven lookups that replace scattered
@@ -33,31 +34,60 @@ export function resolveSubscriptionEndpointKey(endpointKey: string): string | un
 }
 
 /**
+ * Keys available to an extra-header builder, both already hashed into
+ * opaque `manifest-*` identifiers.
+ */
+interface ExtraHeaderKeys {
+  /** Per-conversation key; absent when the caller sent no x-session-key. */
+  sessionKey?: string;
+  /** Per-agent key; absent when the forward carries no tenant/agent identity. */
+  agentKey?: string;
+}
+
+// OpenCode Go/Zen pin a session to one upstream provider via
+// x-opencode-session and reject some models without it, so unlike the
+// observability-only hints above the header must ride on every request:
+// fall back to the per-agent key when the caller sent no x-session-key.
+const opencodeSessionHeader = ({ sessionKey, agentKey }: ExtraHeaderKeys) => {
+  const id = sessionKey ?? agentKey;
+  return id ? { 'x-opencode-session': id } : undefined;
+};
+
+/**
  * Extra HTTP headers that must be attached at forward-time for specific
  * providers (typically for observability on the provider side).
  */
 const PROVIDER_EXTRA_HEADER_BUILDERS: Record<
   string,
-  (sessionKey: string) => Record<string, string> | undefined
+  (keys: ExtraHeaderKeys) => Record<string, string> | undefined
 > = {
-  xai: (sessionKey) => ({ 'x-grok-conv-id': sessionKey }),
-  openrouter: (sessionKey) =>
-    sessionKey === 'default' ? undefined : { 'x-session-id': sessionKey },
-  'opencode-go': (sessionKey) => ({ 'x-opencode-session': sessionKey }),
-  'opencode-zen': (sessionKey) => ({ 'x-opencode-session': sessionKey }),
-  opencode: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
-  opencodego: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
-  opencodezen: (sessionKey) => ({ 'x-opencode-session': sessionKey }),
+  xai: ({ sessionKey }) => (sessionKey ? { 'x-grok-conv-id': sessionKey } : undefined),
+  openrouter: ({ sessionKey }) =>
+    !sessionKey || sessionKey === 'default' ? undefined : { 'x-session-id': sessionKey },
+  'opencode-go': opencodeSessionHeader,
+  'opencode-zen': opencodeSessionHeader,
+  // Bare `opencode` is not a registry alias, so keep an explicit entry for
+  // callers that pass the raw name.
+  opencode: opencodeSessionHeader,
+  opencodego: opencodeSessionHeader,
+  opencodezen: opencodeSessionHeader,
 };
 
 export function buildProviderExtraHeaders(
   provider: string,
   providerCacheKey?: string,
+  agentScopeKey?: string,
 ): Record<string, string> | undefined {
-  if (!providerCacheKey) return undefined;
-  const builder = PROVIDER_EXTRA_HEADER_BUILDERS[provider.toLowerCase()];
+  // Canonicalize through the registry so alias-keyed providers (e.g.
+  // `opencodego` → `opencode-go`) hit the same builder as their canonical id.
+  const lower = provider.toLowerCase();
+  const canonical = PROVIDER_BY_ID_OR_ALIAS.get(lower)?.id ?? lower;
+  const builder = PROVIDER_EXTRA_HEADER_BUILDERS[canonical];
   if (!builder) return undefined;
-  return builder(buildProviderPromptCacheKey(providerCacheKey));
+  return builder({
+    sessionKey: providerCacheKey ? buildProviderPromptCacheKey(providerCacheKey) : undefined,
+    agentKey: agentScopeKey ? buildProviderPromptCacheKey(agentScopeKey) : undefined,
+  });
 }
 
 function buildProviderPromptCacheKey(providerCacheKey: string): string {

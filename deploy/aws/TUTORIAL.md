@@ -17,8 +17,8 @@ The default template exposes Manifest over HTTP on the generated load balancer D
 Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home), choose the region you want to deploy into, then run:
 
 ```bash
-git clone https://github.com/mnfst/manifest.git
-cd manifest
+git clone https://github.com/mnfst/llm-gateway.git
+cd llm-gateway
 AWS_REGION=us-east-1 ./deploy/aws/deploy.sh
 ```
 

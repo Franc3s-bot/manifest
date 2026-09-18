@@ -35,7 +35,7 @@ coverage/
 .gstack/
 scripts/.env.verify
 scripts/verify-free-model-ids.sh
-# Superpowers-generated markdown (plans, brainstorms, specs)
+# Superpowers-generated markdown (plans, brainstorms, specs, reports)
 docs/superpowers/
 docs/plans/
 
@@ -46,3 +46,5 @@ db_backup/
 # Worktree stacks (generated per-stack files; docker/.env.wt-* already covered by .env*)
 docker/docker-compose.wt-*.yml
 docker/.worktree-stacks.json
+
+.superpowers/

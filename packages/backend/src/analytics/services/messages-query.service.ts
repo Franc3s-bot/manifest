@@ -29,6 +29,7 @@ import { computeCutoff, sqlCastFloat, sqlSanitizeCost } from '../../common/utils
 import { inferProviderFromModel } from '../../common/utils/provider-inference';
 import { TtlCache } from '../../common/utils/ttl-cache';
 import { ManifestRequest } from '../../entities/request.entity';
+import { HeaderTier } from '../../entities/header-tier.entity';
 
 // The Messages-log "failed"/"errors" filters and every "messages" KPI count
 // share one definition of an error status (see query-helpers.sqlCountMessages).
@@ -84,6 +85,12 @@ interface MessageQueryParams extends MessageFilterParams {
   provider?: string;
   /** tenant_providers ids; requests must have touched one of these connections. */
   connections?: string[];
+  /**
+   * Model names, OR'd together. Matches any attempt's model — the same "any
+   * attempt" rule the provider filter uses — or, for a request that never
+   * reached a provider, its `requested_model`.
+   */
+  models?: string[];
   service_type?: string;
   cost_min?: number;
   cost_max?: number;
@@ -151,9 +158,46 @@ function connectionAttemptPredicate(
   );
 }
 
+/** A custom (header) tier as the Requests Tier filter offers it. */
+export interface HeaderTierFilterOption {
+  name: string;
+  /** Every tier id the option covers — same name on several harnesses. */
+  ids: string[];
+}
+
+/**
+ * One Tier-filter option can cover the same custom tier defined on several
+ * harnesses, so `header_tier_id` accepts a comma-separated list of ids. A
+ * single id (what older clients send) parses to a one-element list.
+ */
+function parseHeaderTierIds(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** Filter metadata for a caller that opted out of computing it. */
+function emptyFilterOptions(): {
+  providers: string[];
+  provider_labels: Record<string, string>;
+  header_tiers: HeaderTierFilterOption[];
+  models: string[];
+} {
+  return { providers: [], provider_labels: {}, header_tiers: [], models: [] };
+}
+
 @Injectable()
 export class MessagesQueryService {
   private readonly modelsCache = new TtlCache<string, { models: string[]; providers: string[] }>({
+    maxSize: MAX_CACHE_ENTRIES,
+    ttlMs: MODELS_CACHE_TTL_MS,
+  });
+  private readonly attemptlessModelsCache = new TtlCache<string, string[]>({
     maxSize: MAX_CACHE_ENTRIES,
     ttlMs: MODELS_CACHE_TTL_MS,
   });
@@ -176,6 +220,9 @@ export class MessagesQueryService {
     @Optional()
     @InjectDataSource()
     private readonly dataSource?: DataSource,
+    @Optional()
+    @InjectRepository(HeaderTier)
+    private readonly headerTierRepo?: Repository<HeaderTier>,
   ) {}
 
   async getMessages(params: MessageQueryParams) {
@@ -215,7 +262,7 @@ export class MessagesQueryService {
         .getRawMany(),
       includeFilterOptions
         ? this.getMessageFilterOptions(params)
-        : Promise.resolve({ providers: [] as string[], provider_labels: {} }),
+        : Promise.resolve(emptyFilterOptions()),
     ]);
 
     const hasMore = rows.length > params.limit;
@@ -239,6 +286,8 @@ export class MessagesQueryService {
       total_count_exact: includeTotal,
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
+      header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
@@ -269,7 +318,10 @@ export class MessagesQueryService {
     if (params.status === 'failed' || params.status === 'errors') {
       // "Not a success" across both vocabularies: a normalized `success` row must
       // never leak into the failed filter just because it is not literally `ok`.
-      qb.andWhere(`r.status NOT IN (${SUCCESS_STATUS_SQL_LIST})`);
+      // `cancelled` and `pending` are excluded on purpose — a hung-up caller and
+      // an in-flight request are not failures, which is the same line
+      // `sqlIsFailedStatus` draws. `cancelled` has its own filter value.
+      qb.andWhere(sqlIsFailedStatus('r.status'));
     } else if (params.status === 'ok' || params.status === 'success') {
       qb.andWhere(`r.status IN (${SUCCESS_STATUS_SQL_LIST})`);
     } else if (params.status) {
@@ -284,6 +336,25 @@ export class MessagesQueryService {
       qb.andWhere('r.error_class = :requestErrorClass', {
         requestErrorClass: params.error_class,
       });
+    }
+    if (params.models?.length) {
+      // Kept outside `attemptPredicates` on purpose: those AND together on ONE
+      // attempt row, while a model match is about the request as a whole. The
+      // requested_model arm catches Manifest-blocked requests, which carry no
+      // attempt but still render a model in the log.
+      qb.andWhere(
+        `(EXISTS (
+            SELECT 1 FROM agent_messages model_attempt
+            WHERE model_attempt.request_id = r.id AND model_attempt.model IN (:...requestModels)
+          )
+          OR (
+            r.requested_model IN (:...requestModels)
+            AND NOT EXISTS (
+              SELECT 1 FROM agent_messages any_attempt WHERE any_attempt.request_id = r.id
+            )
+          ))`,
+        { requestModels: params.models },
+      );
     }
     const attemptPredicates: string[] = [];
     const attemptParameters: Record<string, unknown> = {};
@@ -320,9 +391,12 @@ export class MessagesQueryService {
       attemptPredicates.push('filtered_attempt.specificity_category = :requestSpecificity');
       attemptParameters['requestSpecificity'] = params.specificity_category;
     }
-    if (params.header_tier_id) {
-      attemptPredicates.push('filtered_attempt.header_tier_id = :requestHeaderTier');
-      attemptParameters['requestHeaderTier'] = params.header_tier_id;
+    const requestHeaderTierIds = params.header_tier_id
+      ? parseHeaderTierIds(params.header_tier_id)
+      : [];
+    if (requestHeaderTierIds.length) {
+      attemptPredicates.push('filtered_attempt.header_tier_id IN (:...requestHeaderTiers)');
+      attemptParameters['requestHeaderTiers'] = requestHeaderTierIds;
     }
     if (params.triggers?.length) {
       // Several recovery-attempt kinds OR together (a multiselect facet). When
@@ -598,7 +672,7 @@ export class MessagesQueryService {
         this.withCompatibilitySnapshot(readRows),
         params.include_filter_options !== false
           ? this.getMessageFilterOptions(params)
-          : Promise.resolve({ providers: [] as string[], provider_labels: {} }),
+          : Promise.resolve(emptyFilterOptions()),
       ]);
     const rows = [...requestRows, ...legacyRows].sort((a, b) => {
       const byTime = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
@@ -620,6 +694,8 @@ export class MessagesQueryService {
       total_count_exact: includeTotal,
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
+      header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
@@ -677,15 +753,70 @@ export class MessagesQueryService {
   async getMessageFilterOptions(params: MessageFilterParams): Promise<{
     providers: string[];
     provider_labels: Record<string, string>;
+    header_tiers: HeaderTierFilterOption[];
+    models: string[];
   }> {
-    const distinctRows = await this.getDistinctModels(
-      params.tenantId,
-      params.range,
-      params.agent_name,
-    );
+    const [distinctRows, headerTiers] = await Promise.all([
+      this.getDistinctModels(params.tenantId, params.range, params.agent_name),
+      this.getHeaderTierOptions(params.tenantId, params.agent_name),
+    ]);
     const providers = this.deriveProviders(distinctRows.models, distinctRows.providers);
     const providerLabels = await this.resolveCustomProviderLabels(providers, params.tenantId);
-    return { providers, provider_labels: providerLabels };
+    // The distinct-model scan already ran to derive providers, so the Model
+    // filter reuses it. It only sees `agent_messages`, though: a request Manifest
+    // blocked before any provider call has no attempt, and the log renders its
+    // `requested_model` in the Model column. Those models must be selectable too,
+    // or the column shows a value the dropdown cannot offer.
+    const blockedModels = await this.getAttemptlessRequestedModels(params);
+    const models = [...new Set([...distinctRows.models, ...blockedModels])].sort();
+    return {
+      providers,
+      provider_labels: providerLabels,
+      header_tiers: headerTiers,
+      models,
+    };
+  }
+
+  /**
+   * Custom (header) tiers the Tier filter can offer. The Requests log spans the
+   * whole tenant unless a harness is picked, so with no `agent_name` this lists
+   * every harness's tiers — otherwise the filter would be empty exactly where
+   * the log shows every harness's requests. Same-named tiers on different
+   * harnesses collapse into one option carrying all their ids, because there
+   * "Premium" can only mean "any harness's Premium tier".
+   *
+   * Disabled tiers stay listed: requests routed through them before they were
+   * turned off are still in the log.
+   */
+  private async getHeaderTierOptions(
+    tenantId: string | null,
+    agentName?: string,
+  ): Promise<HeaderTierFilterOption[]> {
+    if (!tenantId || !this.headerTierRepo) return [];
+    const qb = this.headerTierRepo
+      .createQueryBuilder('ht')
+      .select('ht.id', 'id')
+      .addSelect('ht.name', 'name')
+      .where('ht.tenant_id = :headerTierTenant', { headerTierTenant: tenantId })
+      .orderBy('LOWER(ht.name)', 'ASC');
+    if (agentName) {
+      qb.andWhere(
+        `ht.agent_id = (
+          SELECT id FROM agents
+          WHERE tenant_id = ht.tenant_id AND name = :headerTierAgent AND deleted_at IS NULL
+          LIMIT 1
+        )`,
+        { headerTierAgent: agentName },
+      );
+    }
+    const rows = await qb.getRawMany<{ id: string; name: string }>();
+    const byName = new Map<string, HeaderTierFilterOption>();
+    for (const row of rows) {
+      const existing = byName.get(row.name.toLowerCase());
+      if (existing) existing.ids.push(row.id);
+      else byName.set(row.name.toLowerCase(), { name: row.name, ids: [row.id] });
+    }
+    return [...byName.values()];
   }
 
   /**
@@ -713,6 +844,7 @@ export class MessagesQueryService {
     range?: string;
     tenantId: string | null;
     provider?: string;
+    models?: string[];
     service_type?: string;
     cost_min?: number;
     cost_max?: number;
@@ -731,6 +863,8 @@ export class MessagesQueryService {
 
     addTenantFilter(qb, params.tenantId);
 
+    if (params.models?.length)
+      qb.andWhere('at.model IN (:...legacyModels)', { legacyModels: params.models });
     if (params.service_type)
       qb.andWhere('at.service_type = :serviceType', { serviceType: params.service_type });
     if (params.cost_min !== undefined)
@@ -786,9 +920,10 @@ export class MessagesQueryService {
       });
     }
 
-    if (params.header_tier_id) {
-      qb.andWhere('at.header_tier_id = :headerTierFilter', {
-        headerTierFilter: params.header_tier_id,
+    const headerTierIds = params.header_tier_id ? parseHeaderTierIds(params.header_tier_id) : [];
+    if (headerTierIds.length) {
+      qb.andWhere('at.header_tier_id IN (:...headerTierFilter)', {
+        headerTierFilter: headerTierIds,
       });
     }
 
@@ -923,6 +1058,48 @@ export class MessagesQueryService {
     return [...seen].sort();
   }
 
+  /**
+   * Models named only by requests that never reached a provider. Cached on the
+   * same key shape and TTL as the distinct-model scan, so a tenant pays for it
+   * once per window rather than on every log load.
+   */
+  private async getAttemptlessRequestedModels(params: MessageFilterParams): Promise<string[]> {
+    // No tenant resolves to no rows, matching addTenantFilter's own contract.
+    if (!this.requestRepo || params.tenantId === null) return [];
+    const cacheKey = `blocked:${params.tenantId ?? 'no-tenant'}:${params.agent_name ?? ''}:${params.range ?? 'all'}`;
+    const cached = this.attemptlessModelsCache.get(cacheKey);
+    if (cached) return cached;
+
+    const cutoff = params.range
+      ? computeCutoff(rangeToInterval(params.range))
+      : computeCutoff(DISTINCT_MODELS_DEFAULT_INTERVAL);
+    const qb = this.requestRepo
+      .createQueryBuilder('r')
+      .select('DISTINCT r.requested_model', 'model')
+      .where('r.timestamp >= :cutoff', { cutoff })
+      .andWhere("r.requested_model IS NOT NULL AND r.requested_model <> ''")
+      .andWhere(
+        'NOT EXISTS (SELECT 1 FROM agent_messages blocked_attempt WHERE blocked_attempt.request_id = r.id)',
+      )
+      // Scoped on `r` by hand: addTenantFilter hardcodes the `at` alias of the
+      // attempt-first queries and would emit SQL with no such FROM entry here.
+      .andWhere('r.tenant_id = :blockedTenantId', { blockedTenantId: params.tenantId });
+    if (params.agent_name) {
+      qb.andWhere(
+        `r.agent_id = (
+          SELECT id FROM agents
+          WHERE tenant_id = r.tenant_id AND name = :blockedAgentName AND deleted_at IS NULL
+          LIMIT 1
+        )`,
+        { blockedAgentName: params.agent_name },
+      );
+    }
+    const rows = (await qb.getRawMany()) as { model: string }[];
+    const models = rows.map((row) => String(row.model)).filter(Boolean);
+    this.attemptlessModelsCache.set(cacheKey, models);
+    return models;
+  }
+
   private async getDistinctModels(
     tenantId: string | null,
     range?: string,
@@ -1005,6 +1182,7 @@ export class MessagesQueryService {
     range?: string;
     provider?: string;
     connections?: string[];
+    models?: string[];
     attemptStatus?: ('has_failed' | 'has_succeeded')[];
     service_type?: string;
     agent_name?: string;
@@ -1025,6 +1203,7 @@ export class MessagesQueryService {
       params.range ?? '',
       params.provider ?? '',
       params.connections?.join(',') ?? '',
+      params.models?.join(',') ?? '',
       params.attemptStatus?.join(',') ?? '',
       params.service_type ?? '',
       params.agent_name ?? '',

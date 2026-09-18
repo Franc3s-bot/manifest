@@ -4,6 +4,7 @@ import { Brackets, In } from 'typeorm';
 import { MessagesQueryService } from './messages-query.service';
 import { AgentMessage } from '../../entities/agent-message.entity';
 import { CustomProvider } from '../../entities/custom-provider.entity';
+import { HeaderTier } from '../../entities/header-tier.entity';
 import { MANIFEST_ORIGIN_PREDICATE } from './query-helpers';
 import type { MessageStatusFilter, MessageTriggerFilter } from '../dto/messages-query.dto';
 
@@ -13,6 +14,9 @@ describe('MessagesQueryService', () => {
   let mockGetRawMany: jest.Mock;
   let mockQuery: jest.Mock;
   let mockCustomProviderFind: jest.Mock;
+  let mockHeaderTierRows: jest.Mock;
+  let mockHeaderTierQb: Record<string, jest.Mock>;
+  let mockQbRef: Record<string, jest.Mock>;
 
   // The tenant-global distinct-models/providers path runs two raw recursive
   // skip-scans via turnRepo.query (models first, providers second). This helper
@@ -28,6 +32,18 @@ describe('MessagesQueryService', () => {
     mockGetRawMany = jest.fn().mockResolvedValue([]);
     mockQuery = jest.fn().mockResolvedValue([]);
     mockCustomProviderFind = jest.fn().mockResolvedValue([]);
+    mockHeaderTierRows = jest.fn().mockResolvedValue([]);
+    mockHeaderTierQb = {
+      select: jest.fn(),
+      addSelect: jest.fn(),
+      where: jest.fn(),
+      andWhere: jest.fn(),
+      orderBy: jest.fn(),
+      getRawMany: mockHeaderTierRows,
+    };
+    for (const method of ['select', 'addSelect', 'where', 'andWhere', 'orderBy']) {
+      mockHeaderTierQb[method].mockImplementation(() => mockHeaderTierQb);
+    }
 
     const mockQb: Record<string, jest.Mock> = {
       select: jest.fn(),
@@ -70,6 +86,8 @@ describe('MessagesQueryService', () => {
       });
     }
 
+    mockQbRef = mockQb;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagesQueryService,
@@ -80,6 +98,10 @@ describe('MessagesQueryService', () => {
         {
           provide: getRepositoryToken(CustomProvider),
           useValue: { find: mockCustomProviderFind },
+        },
+        {
+          provide: getRepositoryToken(HeaderTier),
+          useValue: { createQueryBuilder: jest.fn().mockReturnValue(mockHeaderTierQb) },
         },
       ],
     }).compile();
@@ -145,6 +167,68 @@ describe('MessagesQueryService', () => {
 
     expect(result.providers).toEqual(['custom', 'custom:u-1', 'openai']);
     expect(result.provider_labels).toEqual({ 'custom:u-1': 'MyLLM' });
+  });
+
+  it('offers every harness custom tier when the log is not scoped to one', async () => {
+    skipScan(['gpt-4o'], ['openai']);
+    // Two harnesses each define a "Premium" tier; a third name stands alone.
+    mockHeaderTierRows.mockResolvedValueOnce([
+      { id: 'ht-a', name: 'Premium' },
+      { id: 'ht-b', name: 'premium' },
+      { id: 'ht-c', name: 'Batch' },
+    ]);
+
+    const result = await service.getMessageFilterOptions({ range: '24h', tenantId: 'tenant-1' });
+
+    // One option per name, carrying every id it covers, so picking "Premium"
+    // on the tenant-wide log means "any harness's Premium tier".
+    expect(result.header_tiers).toEqual([
+      { name: 'Premium', ids: ['ht-a', 'ht-b'] },
+      { name: 'Batch', ids: ['ht-c'] },
+    ]);
+    expect(mockHeaderTierQb.where).toHaveBeenCalledWith('ht.tenant_id = :headerTierTenant', {
+      headerTierTenant: 'tenant-1',
+    });
+    expect(mockHeaderTierQb.andWhere).not.toHaveBeenCalled();
+  });
+
+  it('offers only the selected harness custom tiers when one is picked', async () => {
+    skipScan(['gpt-4o'], ['openai']);
+    mockHeaderTierRows.mockResolvedValueOnce([{ id: 'ht-a', name: 'Premium' }]);
+
+    const result = await service.getMessageFilterOptions({
+      range: '24h',
+      tenantId: 'tenant-1',
+      agent_name: 'agent-alpha',
+    });
+
+    expect(result.header_tiers).toEqual([{ name: 'Premium', ids: ['ht-a'] }]);
+    const agentScope = mockHeaderTierQb.andWhere.mock.calls[0];
+    expect(String(agentScope[0])).toContain('ht.agent_id = (');
+    expect(agentScope[1]).toEqual({ headerTierAgent: 'agent-alpha' });
+  });
+
+  it('offers no custom tiers to a caller without a tenant', async () => {
+    skipScan([], []);
+
+    const result = await service.getMessageFilterOptions({ range: '24h', tenantId: null });
+
+    expect(result.header_tiers).toEqual([]);
+    expect(mockHeaderTierRows).not.toHaveBeenCalled();
+  });
+
+  it('offers no custom tiers when the header-tier repository is not wired', async () => {
+    const bare = new MessagesQueryService(
+      {
+        createQueryBuilder: jest.fn(() => mockQbRef),
+        query: jest.fn().mockResolvedValue([]),
+      } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
+    );
+
+    const result = await bare.getMessageFilterOptions({ range: '24h', tenantId: 'tenant-1' });
+
+    expect(result.header_tiers).toEqual([]);
   });
 
   it('returns empty provider_labels without querying when no custom providers appear', async () => {
@@ -937,7 +1021,35 @@ describe('MessagesQueryService', () => {
       ([clause]) => typeof clause === 'string' && clause.includes('header_tier_id'),
     );
     expect(headerTierCall).toBeDefined();
-    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: 'ht-premium' });
+    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: ['ht-premium'] });
+  });
+
+  it('matches every id when one filter option covers a custom tier on several harnesses', async () => {
+    mockGetRawOne.mockResolvedValueOnce({ total: 1 });
+    mockGetRawMany
+      .mockResolvedValueOnce([
+        { id: 'msg-1', timestamp: '2026-04-24 10:00:00', model: 'gpt-4o-mini', cost: 0 },
+      ])
+      .mockResolvedValueOnce([{ model: 'gpt-4o-mini' }]);
+
+    const mockQb = (
+      service as unknown as { turnRepo: { createQueryBuilder: jest.Mock } }
+    ).turnRepo.createQueryBuilder();
+    const andWhereSpy = mockQb.andWhere as jest.Mock;
+    andWhereSpy.mockClear();
+
+    await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      header_tier_id: 'ht-alpha, ht-beta,ht-alpha,',
+    });
+
+    const headerTierCall = andWhereSpy.mock.calls.find(
+      ([clause]) => typeof clause === 'string' && clause.includes('header_tier_id'),
+    );
+    expect(headerTierCall?.[0]).toContain('IN (:...headerTierFilter)');
+    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: ['ht-alpha', 'ht-beta'] });
   });
 
   it('different routing_tier values produce different count cache keys', async () => {
