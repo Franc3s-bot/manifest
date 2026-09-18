@@ -501,7 +501,9 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                                     <span>{att().auth_type}</span>
                                   </div>
                                 </Show>
-                                <Show when={att().provider_key_label || att().auth_type === 'api_key'}>
+                                <Show
+                                  when={att().provider_key_label || att().auth_type === 'api_key'}
+                                >
                                   <div class="drawer-kv">
                                     <span class="drawer-kv__key">API Key</span>
                                     <span>{att().provider_key_label ?? 'Default'}</span>
