@@ -165,43 +165,85 @@ function buildTrustedOrigins(): string[] {
   return origins;
 }
 
+/**
+ * Whether the MCP/OAuth plugins can boot for this origin.
+ *
+ * `@better-auth/mcp` rejects a protected-resource URL that is not HTTPS
+ * (loopback excepted), and it validates at import time — an unsupported origin
+ * would take the whole API down instead of disabling one feature. Self-hosted
+ * installs reached over plain HTTP on a LAN, Tailscale or docker address are
+ * common, so MCP is skipped there and everything else keeps serving.
+ */
+function isMcpOriginSupported(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.protocol === 'https:') return true;
+    if (url.protocol !== 'http:') return false;
+    if (url.hostname === 'localhost' || url.hostname === '[::1]') return true;
+    const octets = url.hostname.split('.');
+    return (
+      octets.length === 4 &&
+      octets[0] === '127' &&
+      octets.every((octet) => /^\d+$/.test(octet) && Number(octet) <= 255)
+    );
+  } catch {
+    return false;
+  }
+}
+
+const mcpSupported = isMcpOriginSupported(authOrigin);
+
+/** True when the remote-MCP OAuth plugins are registered for this origin. */
+export const mcpEnabled = mcpSupported;
+
 function buildPlugins() {
   // JWT access tokens are what the MCP resource route verifies: signature,
   // issuer, audience, and expiry, all against the plugin's JWKS. The MCP plugin
   // is the OAuth 2.1 authorization server behind the remote MCP endpoint, and
   // CIMD gives modern MCP clients a verified identity document instead of
-  // anonymous dynamic registration. These are always on — unlike billing.
+  // anonymous dynamic registration. These are always on — unlike billing —
+  // except on an origin the plugin refuses to boot for (plain HTTP, non-loopback).
+  if (!mcpSupported) {
+    console.warn(
+      `[Auth] Remote MCP disabled: ${authOrigin} is not HTTPS. ` +
+        'Put Manifest behind TLS to enable it.',
+    );
+  }
   const base = [
     jwt(),
-    mcp({
-      loginPage: '/login',
-      consentPage: '/consent',
-      resource: mcpResource,
-      scopes: [...MCP_SCOPES, 'offline_access'],
-      resources: mcpResources.map((identifier) => ({
-        identifier,
-        name: 'Manifest MCP',
-        // Short-lived bearer tokens; the refresh token (offline_access) is
-        // how an editor stays connected across a session.
-        accessTokenTtl: 15 * 60,
-        allowedScopes: [...MCP_SCOPES, 'offline_access'],
-      })),
-      clientRegistrationDefaultResources: mcpResources,
-      resourceSeedMode: 'overwrite',
-      clientRegistrationDefaultScopes: [MCP_READ_SCOPE],
-      clientRegistrationAllowedScopes: [MCP_WRITE_SCOPE, 'offline_access'],
-      // DCR stays available to signed-in users, but anonymous registration is
-      // off: a client that can point a URL at a verified metadata document
-      // (CIMD) identifies itself, and everyone else must be added by an
-      // operator. This is the MCP 2026-07-28 posture.
-      allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: false,
-      clientRegistrationRequirePKCE: true,
-    }),
-    cimd({
-      fetchClientMetadataResource,
-      metadataProfile: 'mcp-2026-07-28',
-    }),
+    ...(mcpSupported
+      ? [
+          mcp({
+            loginPage: '/login',
+            consentPage: '/consent',
+            resource: mcpResource,
+            scopes: [...MCP_SCOPES, 'offline_access'],
+            resources: mcpResources.map((identifier) => ({
+              identifier,
+              name: 'Manifest MCP',
+              // Short-lived bearer tokens; the refresh token (offline_access) is
+              // how an editor stays connected across a session.
+              accessTokenTtl: 15 * 60,
+              allowedScopes: [...MCP_SCOPES, 'offline_access'],
+            })),
+            clientRegistrationDefaultResources: mcpResources,
+            resourceSeedMode: 'overwrite',
+            clientRegistrationDefaultScopes: [MCP_READ_SCOPE],
+            clientRegistrationAllowedScopes: [MCP_WRITE_SCOPE, 'offline_access'],
+            // DCR stays available to signed-in users, but anonymous registration is
+            // off: a client that can point a URL at a verified metadata document
+            // (CIMD) identifies itself, and everyone else must be added by an
+            // operator. This is the MCP 2026-07-28 posture.
+            allowDynamicClientRegistration: true,
+            allowUnauthenticatedClientRegistration: false,
+            clientRegistrationRequirePKCE: true,
+          }),
+          cimd({
+            fetchClientMetadataResource,
+            metadataProfile: 'mcp-2026-07-28',
+          }),
+        ]
+      : []),
   ];
   if (!isBillingEnabled()) return base;
   const plans = [{ name: 'pro', priceId: process.env['STRIPE_PRO_PRICE_ID']! }];

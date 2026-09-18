@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
-import { auth } from './auth/auth.instance';
+import { auth, mcpEnabled } from './auth/auth.instance';
 import { mcpOAuthResponse } from './auth/mcp-oauth-response';
 import { mountMcpDiscovery } from './mcp/mcp-discovery';
 import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
@@ -233,7 +233,10 @@ export async function bootstrap() {
   expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
   expressApp.use(bodyParserErrorHandler);
 
-  mountMcpDiscovery(app);
+  // Only advertise MCP discovery when the MCP/OAuth plugins are registered:
+  // on a plain-HTTP origin they are skipped, and publishing resource metadata
+  // for an endpoint that cannot verify tokens would mislead clients.
+  if (mcpEnabled) mountMcpDiscovery(app);
 
   const port = Number(process.env['PORT'] ?? 3001);
   const host = process.env['BIND_ADDRESS'] ?? '127.0.0.1';
