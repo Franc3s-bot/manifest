@@ -206,6 +206,15 @@ re-fetch when they want current facts. When the chain cannot be resolved to
 any known model metadata, the fallback is the discovery default window
 (128k) with text-only modalities — a stable, conservative claim.
 
+Custom providers (`custom:<uuid>`) are the exception to "stored facts": their
+model list is hand-edited, so the facts that change on every server launch — a
+local engine's context window, whether its chat template can emit tool calls —
+are read from the provider itself (`GET {base}/models`, plus llama.cpp's
+`GET {base}/props`) on every model-list read, with a 15-second cache and a
+hard timeout. A probe that fails, times out, or reports nothing leaves the
+stored values untouched; `packages/backend/src/model-discovery/custom-provider-metadata.service.ts`
+owns that overlay.
+
 The bare `auto` model never carries metadata: it resolves to a different
 concrete model per request based on scoring, so no single claim would be
 honest.

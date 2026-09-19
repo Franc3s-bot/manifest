@@ -31,6 +31,7 @@ import { isSelfHosted } from '../../common/utils/detect-self-hosted';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { ModelsDevSyncService } from '../../database/models-dev-sync.service';
 import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
+import { buildLiveProviderFacts } from '../../model-discovery/custom-provider-live-metadata';
 import { classifyProbeError } from './probe-error';
 
 const PROBE_TIMEOUT_MS = 5000;
@@ -499,6 +500,12 @@ export class CustomProviderService {
    * `GET {base}/models` and Anthropic's `GET {base}/v1/models` return a
    * `{ data: [{ id }] }` shape — we only need to vary the path and the
    * auth header scheme.
+   *
+   * Anything else the catalog reports about a model is captured too, so the
+   * stored row is not a guess: the context window a local server reports here
+   * is the one it is running with right now. It is still a snapshot — the
+   * live value for the current session comes from
+   * custom-provider-metadata.service.ts.
    */
   async probeModels(
     baseUrl: string,
@@ -548,6 +555,7 @@ export class CustomProviderService {
         throw new BadRequestException(classifyProbeError({ url, contentType }).message);
       }
       const body = (await res.json()) as { data?: { id?: string }[] };
+      const liveFacts = buildLiveProviderFacts(body, null);
       const items = body?.data ?? [];
       const filtered = items.filter(
         (m): m is { id: string } =>
@@ -555,7 +563,13 @@ export class CustomProviderService {
       );
       return this.enrichCustomProviderModels(
         providerName,
-        filtered.map((m) => ({ model_name: m.id })),
+        filtered.map((m) => {
+          const contextWindow = liveFacts?.byName.get(m.id.toLowerCase())?.contextWindow;
+          return {
+            model_name: m.id,
+            ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
+          };
+        }),
         { defaultContextWindow: false },
       );
     } catch (err) {

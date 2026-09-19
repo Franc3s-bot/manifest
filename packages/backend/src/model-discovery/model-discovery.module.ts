@@ -6,6 +6,7 @@ import { CustomProvider } from '../entities/custom-provider.entity';
 import { ModelPricesModule } from '../model-prices/model-prices.module';
 import { ProviderModelFetcherService } from './provider-model-fetcher.service';
 import { ModelDiscoveryService } from './model-discovery.service';
+import { CustomProviderMetadataService } from './custom-provider-metadata.service';
 import { OpencodeGoCatalogService } from './opencode-go-catalog.service';
 import { CopilotTokenService } from '../routing/proxy/copilot-token.service';
 
@@ -17,9 +18,15 @@ import { CopilotTokenService } from '../routing/proxy/copilot-token.service';
   providers: [
     ProviderModelFetcherService,
     ModelDiscoveryService,
+    CustomProviderMetadataService,
     OpencodeGoCatalogService,
     CopilotTokenService,
   ],
-  exports: [ModelDiscoveryService, ProviderModelFetcherService, OpencodeGoCatalogService],
+  exports: [
+    ModelDiscoveryService,
+    ProviderModelFetcherService,
+    OpencodeGoCatalogService,
+    CustomProviderMetadataService,
+  ],
 })
 export class ModelDiscoveryModule {}

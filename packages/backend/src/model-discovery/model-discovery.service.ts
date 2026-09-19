@@ -42,6 +42,8 @@ import {
   supplementWithKnownModels,
 } from './model-fallback';
 import { resolveMetadataEntry } from './metadata-identity';
+import { CustomProviderMetadataService } from './custom-provider-metadata.service';
+import type { LiveProbeTarget } from './custom-provider-live-metadata';
 import { lookupKnownPrice } from './known-model-prices';
 import { lookupKnownModalities } from './known-model-modalities';
 import { mergeModelCapabilities, modelSupportsStreaming } from './model-capabilities';
@@ -86,6 +88,13 @@ const MODELS_CACHE_TTL_MS = 120_000;
 interface ModelsCacheEntry {
   tenantId: string;
   data: DiscoveredModel[];
+  /**
+   * Custom providers referenced by `data`, with their (decrypted) credentials,
+   * so the live-metadata overlay can probe them without re-reading the DB on
+   * every request. Decrypted keys are already cached the same way by
+   * RoutingCacheService. Empty for the common no-custom-provider case.
+   */
+  targets: LiveProbeTarget[];
   expiresAt: number;
 }
 
@@ -129,6 +138,9 @@ export class ModelDiscoveryService {
     @Optional()
     @InjectRepository(AgentEnabledProvider)
     private readonly enabledProviderRepo: Repository<AgentEnabledProvider> | null = null,
+    // Optional so positional construction (unit tests, tooling) stays valid.
+    @Optional()
+    private readonly customMetadata: CustomProviderMetadataService | null = null,
   ) {}
 
   async discoverModels(
@@ -503,27 +515,43 @@ export class ModelDiscoveryService {
    * caches the result. Invalidated on any provider mutation (see invalidate()).
    */
   async getModelsForAgent(tenantId: string, agentId?: string): Promise<DiscoveredModel[]> {
-    if (!agentId) return this.fetchModelsForAgent(tenantId);
+    if (!agentId) {
+      const { models, targets } = await this.fetchModelsForAgent(tenantId);
+      return this.applyLiveCustomFacts(models, targets);
+    }
 
     const cached = this.modelsCache.get(agentId);
     if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
+      return this.applyLiveCustomFacts(cached.data, cached.targets);
     }
     if (cached) this.modelsCache.delete(agentId);
 
-    const models = await this.fetchModelsForAgent(tenantId, agentId);
+    const { models, targets } = await this.fetchModelsForAgent(tenantId, agentId);
     const now = Date.now();
     // Sweep expired entries on populate so the cache can't grow unbounded as
     // agents come and go (entries are otherwise only dropped on miss/invalidate).
     for (const [key, entry] of this.modelsCache) {
       if (entry.expiresAt <= now) this.modelsCache.delete(key);
     }
+    // The stored list is cached for 2 minutes; the custom-provider overlay is
+    // applied on every read with its own short TTL, because a local server's
+    // context window changes on relaunch and the harness reads it at session
+    // start (see custom-provider-metadata.service.ts).
     this.modelsCache.set(agentId, {
       tenantId,
       data: models,
+      targets,
       expiresAt: now + MODELS_CACHE_TTL_MS,
     });
-    return models;
+    return this.applyLiveCustomFacts(models, targets);
+  }
+
+  private async applyLiveCustomFacts(
+    models: DiscoveredModel[],
+    targets: LiveProbeTarget[],
+  ): Promise<DiscoveredModel[]> {
+    if (!this.customMetadata) return models;
+    return this.customMetadata.applyLiveFacts(models, targets);
   }
 
   /**
@@ -560,7 +588,7 @@ export class ModelDiscoveryService {
   private async fetchModelsForAgent(
     tenantId: string,
     agentId?: string,
-  ): Promise<DiscoveredModel[]> {
+  ): Promise<{ models: DiscoveredModel[]; targets: LiveProbeTarget[] }> {
     const allProviders = filterProvidersForDeployment(
       await this.providerRepo.find({
         where: { tenant_id: tenantId, is_active: true },
@@ -596,11 +624,13 @@ export class ModelDiscoveryService {
       }
     }
 
-    // Build auth_type lookup for custom providers from their tenant_providers rows
-    const customAuthTypes = new Map<string, AuthType>();
+    // Custom providers carry no provider-native catalog of their own: the model
+    // list is hand-edited on the custom_providers row, and the `tenant_providers`
+    // row holds the connection (auth type + credential) that the live probe needs.
+    const customConnections = new Map<string, TenantProvider>();
     for (const p of providers) {
       if (p.provider.startsWith('custom:')) {
-        customAuthTypes.set(p.provider, p.auth_type);
+        customConnections.set(p.provider, p);
       }
     }
 
@@ -610,10 +640,20 @@ export class ModelDiscoveryService {
     const customProviders: CustomProvider[] = await this.customProviderRepo.find({
       where: { tenant_id: tenantId },
     });
+    const targets: LiveProbeTarget[] = [];
     for (const cp of customProviders) {
       if (!Array.isArray(cp.models)) continue;
       const cpKey = customProviderKey(cp.id);
-      if (agentId && !customAuthTypes.has(cpKey)) continue;
+      const connection = customConnections.get(cpKey);
+      if (agentId && !connection) continue;
+      if (connection) {
+        targets.push({
+          providerKey: cpKey,
+          baseUrl: cp.base_url,
+          apiKind: cp.api_kind,
+          apiKey: this.decryptProviderKey(connection),
+        });
+      }
       for (const m of cp.models) {
         const modelKey = customModelKey(cp.id, m.model_name);
         if (seen.has(modelKey)) continue;
@@ -630,7 +670,9 @@ export class ModelDiscoveryService {
           id: modelKey,
           displayName: m.model_name,
           provider: cpKey,
-          authType: customAuthTypes.get(cpKey) ?? 'api_key',
+          authType: connection?.auth_type ?? 'api_key',
+          // Stored value is what the operator last saw; the live probe in
+          // custom-provider-metadata.service.ts overrides it per session.
           contextWindow: m.context_window ?? DEFAULT_CONTEXT_WINDOW,
           inputPricePerToken: inputPerToken,
           outputPricePerToken: outputPerToken,
@@ -643,7 +685,18 @@ export class ModelDiscoveryService {
       }
     }
 
-    return models;
+    return { models, targets };
+  }
+
+  /** Decrypt a connection's credential; a local endpoint may legitimately have none. */
+  private decryptProviderKey(provider: TenantProvider): string | null {
+    if (!provider.api_key_encrypted) return null;
+    try {
+      return decryptWithAny(provider.api_key_encrypted, getDecryptionSecrets()).plaintext;
+    } catch {
+      this.logger.warn(`Failed to decrypt key for provider ${provider.provider}`);
+      return null;
+    }
   }
 
   private async filterProvidersForAgent(
