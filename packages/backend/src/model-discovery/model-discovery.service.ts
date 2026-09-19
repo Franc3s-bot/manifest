@@ -138,8 +138,12 @@ export class ModelDiscoveryService {
     @Optional()
     @InjectRepository(AgentEnabledProvider)
     private readonly enabledProviderRepo: Repository<AgentEnabledProvider> | null = null,
-    // Optional so positional construction (unit tests, tooling) stays valid.
+    // The explicit token is load-bearing: `emitDecoratorMetadata` types a
+    // `T | null` parameter as `Object`, so Nest cannot resolve this by type and
+    // would hand over `undefined` without complaining (the parameter is
+    // optional). See model-discovery-di.spec.ts.
     @Optional()
+    @Inject(CustomProviderMetadataService)
     private readonly customMetadata: CustomProviderMetadataService | null = null,
   ) {}
 
