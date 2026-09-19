@@ -1176,6 +1176,27 @@ describe('CustomProviderService', () => {
       expect(result).toEqual([{ model_name: 'm1' }]);
     });
 
+    it('captures the context window the server is running with right now', async () => {
+      const { svc } = makeDeps({});
+      global.fetch = jest.fn().mockResolvedValue(
+        jsonResponse({
+          data: [
+            { id: 'bonsai', context_length: 176128, max_context_length: 262144 },
+            { id: 'tiny', max_context_length: 32768 },
+          ],
+        }),
+      ) as unknown as typeof fetch;
+
+      const result = await svc.probeModels('http://host.docker.internal:9931/v1');
+
+      // The loaded window wins over the trained maximum, and a model the server
+      // does not describe keeps no window at all — nothing is invented here.
+      expect(result).toEqual([
+        { model_name: 'bonsai', context_window: 176128 },
+        { model_name: 'tiny', context_window: 32768 },
+      ]);
+    });
+
     it('filters out embedding / reranker / moderation models (they cannot serve chat)', async () => {
       const { svc } = makeDeps({});
       global.fetch = jest.fn().mockResolvedValue(

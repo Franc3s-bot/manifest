@@ -3406,3 +3406,111 @@ describe('ModelDiscoveryService', () => {
     });
   });
 });
+
+describe('ModelDiscoveryService — live custom-provider metadata', () => {
+  const previousMode = process.env['MANIFEST_MODE'];
+  let providerRepo: ReturnType<typeof makeMockRepo>;
+  let customProviderRepo: ReturnType<typeof makeMockRepo>;
+  let customMetadata: {
+    applyLiveFacts: jest.Mock;
+    getFacts: jest.Mock;
+    invalidate: jest.Mock;
+    invalidateAll: jest.Mock;
+  };
+  let service: ModelDiscoveryService;
+
+  beforeEach(() => {
+    process.env['MANIFEST_MODE'] = 'selfhosted';
+    mockDecrypt.mockReturnValue('decrypted-key');
+    providerRepo = makeMockRepo();
+    customProviderRepo = makeMockRepo();
+    customMetadata = {
+      // Identity by default: the overlay's own behaviour is covered by
+      // custom-provider-metadata.service.spec.ts — here we only prove the wiring.
+      applyLiveFacts: jest.fn((models: DiscoveredModel[]) => Promise.resolve(models)),
+      getFacts: jest.fn().mockResolvedValue(null),
+      invalidate: jest.fn(),
+      invalidateAll: jest.fn(),
+    };
+    service = new ModelDiscoveryService(
+      providerRepo as never,
+      customProviderRepo as never,
+      { fetch: jest.fn().mockResolvedValue([]) } as unknown as ProviderModelFetcherService,
+      null,
+      null,
+      null,
+      null,
+      null,
+      customMetadata as never,
+    );
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
+    else process.env['MANIFEST_MODE'] = previousMode;
+  });
+
+  it('overlays live facts on a cached read, passing the provider connection to probe', async () => {
+    providerRepo.find.mockResolvedValue([
+      makeProvider({ id: 'custom-row', provider: 'custom:cp-1', auth_type: 'local' }),
+    ]);
+    customProviderRepo.find.mockResolvedValue([
+      makeCustomProvider({ api_kind: 'openai', base_url: 'http://localhost:8000/v1' }),
+    ]);
+
+    await service.getModelsForAgent('tenant-1', 'agent-1');
+    await service.getModelsForAgent('tenant-1', 'agent-1'); // served from the 2-minute cache
+
+    expect(customMetadata.applyLiveFacts).toHaveBeenCalledTimes(2);
+    const [models, targets] = customMetadata.applyLiveFacts.mock.calls[1];
+    expect(models.map((m: DiscoveredModel) => m.id)).toEqual(['custom:cp-1/custom-llm']);
+    expect(targets).toEqual([
+      {
+        providerKey: 'custom:cp-1',
+        baseUrl: 'http://localhost:8000/v1',
+        apiKind: 'openai',
+        apiKey: 'decrypted-key',
+      },
+    ]);
+  });
+
+  it('passes an empty target list when the agent has no custom provider', async () => {
+    providerRepo.find.mockResolvedValue([makeProvider()]);
+    customProviderRepo.find.mockResolvedValue([]);
+
+    await service.getModelsForAgent('tenant-1', 'agent-1');
+
+    expect(customMetadata.applyLiveFacts).toHaveBeenCalledWith(expect.any(Array), []);
+  });
+
+  it('does not probe a custom provider the agent has not enabled', async () => {
+    providerRepo.find.mockResolvedValue([]);
+    customProviderRepo.find.mockResolvedValue([makeCustomProvider()]);
+
+    await service.getModelsForAgent('tenant-1', 'agent-1');
+
+    const [models, targets] = customMetadata.applyLiveFacts.mock.calls[0];
+    expect(models).toEqual([]);
+    expect(targets).toEqual([]);
+  });
+
+  it('still publishes the stored context window when no live service is wired', async () => {
+    const bare = new ModelDiscoveryService(
+      providerRepo as never,
+      customProviderRepo as never,
+      { fetch: jest.fn().mockResolvedValue([]) } as unknown as ProviderModelFetcherService,
+      null,
+      null,
+      null,
+      null,
+    );
+    providerRepo.find.mockResolvedValue([]);
+    customProviderRepo.find.mockResolvedValue([
+      makeCustomProvider({ models: [{ model_name: 'custom-llm', context_window: 32000 }] }),
+    ]);
+
+    const models = await bare.getModelsForAgent('tenant-1');
+
+    expect(models[0].contextWindow).toBe(32000);
+  });
+});
