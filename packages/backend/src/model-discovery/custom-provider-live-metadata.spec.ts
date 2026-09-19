@@ -2,6 +2,7 @@ import {
   buildLiveProviderFacts,
   fetchLiveProviderFacts,
   parseLlamaCppProps,
+  propsUrlFor,
   trimBaseUrl,
   type LiveProbeTarget,
 } from './custom-provider-live-metadata';
@@ -56,6 +57,24 @@ describe('trimBaseUrl', () => {
   it('strips trailing slashes', () => {
     expect(trimBaseUrl('http://host:9931/v1///')).toBe('http://host:9931/v1');
     expect(trimBaseUrl('http://host:9931/v1')).toBe('http://host:9931/v1');
+  });
+});
+
+describe('propsUrlFor', () => {
+  it('drops the OpenAI-compatible /v1 prefix (llama.cpp serves /props at the root)', () => {
+    expect(propsUrlFor('http://host:9931/v1')).toBe('http://host:9931/props');
+    expect(propsUrlFor('http://host:9931/v1/')).toBe('http://host:9931/props');
+  });
+
+  it('keeps a reverse-proxy path prefix', () => {
+    expect(propsUrlFor('https://gw.example.com/llama/v1')).toBe(
+      'https://gw.example.com/llama/props',
+    );
+    expect(propsUrlFor('http://host:9931')).toBe('http://host:9931/props');
+  });
+
+  it('has nothing to probe without a base url', () => {
+    expect(propsUrlFor('//')).toBeNull();
   });
 });
 
@@ -181,8 +200,8 @@ describe('fetchLiveProviderFacts', () => {
     const facts = await fetchLiveProviderFacts(target);
 
     expect(calls.map((c) => c.url).sort()).toEqual([
+      'http://host:9931/props',
       'http://host:9931/v1/models',
-      'http://host:9931/v1/props',
     ]);
     for (const call of calls) expect(call.headers['Authorization']).toBe('Bearer local-key');
     expect(facts?.byName.get('bonsai')?.contextWindow).toBe(176128);
