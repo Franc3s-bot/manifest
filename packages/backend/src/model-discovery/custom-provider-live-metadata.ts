@@ -94,6 +94,21 @@ export function trimBaseUrl(baseUrl: string): string {
   return baseUrl.slice(0, end);
 }
 
+/**
+ * Where llama.cpp serves `GET /props`.
+ *
+ * `base_url` is the OpenAI-compatible prefix (`http://host:9931/v1`), but props
+ * lives at the server root — `/v1/props` answers 404. Strip a trailing `/v1`
+ * and keep any other path prefix, so a reverse-proxied engine
+ * (`https://gw/llama/v1`) is still probed at `https://gw/llama/props`.
+ */
+export function propsUrlFor(baseUrl: string): string | null {
+  const base = trimBaseUrl(baseUrl);
+  if (!base) return null;
+  const root = /\/v1$/i.test(base) ? base.slice(0, -3) : base;
+  return `${root}/props`;
+}
+
 interface OpenAiModelEntry {
   id?: unknown;
   aliases?: unknown;
@@ -336,6 +351,7 @@ export async function fetchLiveProviderFacts(
 ): Promise<LiveProviderFacts | null> {
   const base = trimBaseUrl(target.baseUrl);
   if (!base) return null;
+  const propsUrl = propsUrlFor(base);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LIVE_PROBE_TIMEOUT_MS);
   try {
@@ -343,7 +359,7 @@ export async function fetchLiveProviderFacts(
     const catalogPath = target.apiKind === 'anthropic' ? '/v1/models' : '/models';
     const [catalogBody, propsBody] = await Promise.all([
       readJson(`${base}${catalogPath}`, headers, controller.signal),
-      readJson(`${base}/props`, headers, controller.signal),
+      propsUrl ? readJson(propsUrl, headers, controller.signal) : Promise.resolve(null),
     ]);
     return buildLiveProviderFacts(catalogBody, propsBody);
   } finally {
