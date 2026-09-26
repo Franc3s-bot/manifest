@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource, QueryRunner } from 'typeorm';
 import { isBillingEnabled } from '../billing/billing.config';
+import { PAID_SUBSCRIPTION_STATUS_SQL_LIST } from '../billing/subscription-status';
 import { RequestRecordingStorageService } from '../common/services/request-recording-storage.service';
 
 const FREE_RETENTION_DAYS = 7;
@@ -48,7 +49,7 @@ const SELECT_PLAN_EXPIRED_SQL = `
           ON subscription."referenceId" = tenant.owner_user_id
         WHERE tenant.id = request.tenant_id
           AND subscription.plan = 'pro'
-          AND subscription.status IN ('active', 'trialing')
+          AND subscription.status IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
       )
     )
     OR (
@@ -60,7 +61,7 @@ const SELECT_PLAN_EXPIRED_SQL = `
           ON subscription."referenceId" = tenant.owner_user_id
         WHERE tenant.id = request.tenant_id
           AND subscription.plan = 'pro'
-          AND subscription.status IN ('active', 'trialing')
+          AND subscription.status IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
       )
     )
   )

@@ -65,7 +65,7 @@ describe('RequestRecordingRetentionService', () => {
     expect(planQuery).toBeDefined();
     expect(planQuery![0]).toContain('AND NOT EXISTS');
     expect(planQuery![0]).toContain('AND EXISTS');
-    expect(planQuery![0]).toContain("subscription.status IN ('active', 'trialing')");
+    expect(planQuery![0]).toContain("subscription.status IN ('active', 'trialing', 'past_due')");
     expect(planQuery![0]).toContain(
       "AND attempt.timestamp < CURRENT_TIMESTAMP - (LEAST($1::int, $2::int) * INTERVAL '1 day')",
     );
