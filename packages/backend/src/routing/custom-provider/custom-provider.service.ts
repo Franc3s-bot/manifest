@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   Inject,
+  Logger,
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -28,6 +29,7 @@ import { RoutingCacheService } from '../routing-core/routing-cache.service';
 import { CreateCustomProviderDto, UpdateCustomProviderDto } from '../dto/custom-provider.dto';
 import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
+import { decryptWithAny, getDecryptionSecrets } from '../../common/utils/crypto.util';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { ModelsDevSyncService } from '../../database/models-dev-sync.service';
 import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
@@ -65,6 +67,17 @@ export function isLocalCustomProviderName(name: string): boolean {
   return !!shared && CANONICAL_LOCAL_IDS.has(shared.id);
 }
 
+/**
+ * Trim surrounding whitespace and trailing slashes without a regex, to avoid
+ * polynomial backtracking on adversarial input (CodeQL js/polynomial-redos).
+ */
+function trimBaseUrl(baseUrl: string): string {
+  const s = baseUrl.trim();
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return s.slice(0, end);
+}
+
 function authTypeForCustomProvider(name: string): AuthType {
   return isLocalCustomProviderName(name) ? 'local' : 'api_key';
 }
@@ -85,6 +98,8 @@ function isAliasUniqueViolation(err: unknown): boolean {
 
 @Injectable()
 export class CustomProviderService {
+  private readonly logger = new Logger(CustomProviderService.name);
+
   constructor(
     @InjectRepository(CustomProvider)
     private readonly repo: Repository<CustomProvider>,
@@ -512,11 +527,7 @@ export class CustomProviderService {
       throw new BadRequestException((err as Error).message);
     }
 
-    // Trim trailing slashes without a regex to avoid polynomial backtracking
-    // on adversarial input (CodeQL js/polynomial-redos).
-    let end = baseUrl.length;
-    while (end > 0 && baseUrl.charCodeAt(end - 1) === 47 /* '/' */) end--;
-    const trimmed = baseUrl.slice(0, end);
+    const trimmed = trimBaseUrl(baseUrl);
     const url = apiKind === 'anthropic' ? `${trimmed}/v1/models` : `${trimmed}/models`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
@@ -563,6 +574,43 @@ export class CustomProviderService {
       throw new BadRequestException(classifyProbeError({ url, error: err as Error }).message);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Decrypt the stored API key of an existing custom provider for a single
+   * server-side probe. The edit form never has the plaintext key (list() only
+   * exposes `has_api_key:bool`), so "Fetch models" relies on this when the
+   * user hasn't re-typed one.
+   *
+   * The key is only released for the endpoint it was saved for: the row is
+   * loaded tenant-scoped, and the submitted base URL (after trimming) and
+   * api_kind must match the stored ones. Otherwise any credential holder
+   * could point the probe at their own server and receive the key.
+   * Returns undefined on any miss so the caller probes without a key.
+   */
+  async loadStoredApiKey(
+    tenantId: string,
+    providerId: string,
+    baseUrl: string,
+    apiKind: CustomProviderApiKind = 'openai',
+  ): Promise<string | undefined> {
+    const cp = await this.getById(providerId, tenantId);
+    if (!cp) return undefined;
+    if (trimBaseUrl(cp.base_url) !== trimBaseUrl(baseUrl) || cp.api_kind !== apiKind) {
+      return undefined;
+    }
+    const provKey = CustomProviderService.providerKey(providerId);
+    const tenantProviders = await this.providerService.getProviders(tenantId);
+    const row = tenantProviders.find((p) => p.provider === provKey);
+    if (!row?.api_key_encrypted) return undefined;
+    try {
+      return decryptWithAny(row.api_key_encrypted, getDecryptionSecrets()).plaintext;
+    } catch (err) {
+      this.logger.warn(
+        `Could not decrypt the stored API key of custom provider ${providerId}; probing without it: ${(err as Error).message}`,
+      );
+      return undefined;
     }
   }
 
