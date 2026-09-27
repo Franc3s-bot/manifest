@@ -1234,6 +1234,75 @@ describe('ProviderService — route-only cleanup paths', () => {
     });
   });
 
+  describe('upsertProvider — MiniMax API-key region', () => {
+    let originalSecret: string | undefined;
+    beforeAll(() => {
+      originalSecret = process.env.BETTER_AUTH_SECRET;
+      process.env.BETTER_AUTH_SECRET = 'a'.repeat(48);
+    });
+    afterAll(() => {
+      if (originalSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+      else process.env.BETTER_AUTH_SECRET = originalSecret;
+    });
+
+    it('persists region=cn on a MiniMax API-key row', async () => {
+      providerRepo.findOne.mockResolvedValue(null);
+
+      await svc.upsertProvider(
+        'agent-1',
+        'tenant-1',
+        'minimax',
+        'sk-test-api-key',
+        'api_key',
+        'cn',
+      );
+
+      expect(providerRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'minimax', auth_type: 'api_key', region: 'cn' }),
+      );
+    });
+
+    it('preserves existing MiniMax API-key region when caller omits it', async () => {
+      providerRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'minimax',
+        auth_type: 'api_key',
+        label: 'Default',
+        region: 'cn',
+        is_active: true,
+      });
+
+      await svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-rotated', 'api_key');
+
+      expect(providerRepo.save).toHaveBeenCalledWith(expect.objectContaining({ region: 'cn' }));
+    });
+
+    it('drops a non-MiniMax stored region when caller omits it', async () => {
+      providerRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'minimax',
+        auth_type: 'api_key',
+        label: 'Default',
+        region: 'eu',
+        is_active: true,
+      });
+
+      await svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-rotated', 'api_key');
+
+      expect(providerRepo.save).toHaveBeenCalledWith(expect.objectContaining({ region: null }));
+    });
+
+    it('rejects unsupported MiniMax API-key regions', async () => {
+      providerRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-test-api-key', 'api_key', 'eu'),
+      ).rejects.toThrow('MiniMax API-key region must be one of: global, cn');
+    });
+  });
+
   describe('upsertProvider — Z.ai subscription region', () => {
     let originalSecret: string | undefined;
     beforeAll(() => {

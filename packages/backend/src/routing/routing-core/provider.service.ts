@@ -45,6 +45,10 @@ import {
   getSubscriptionEndpointRegionConfig,
   SubscriptionEndpointRegionConfig,
 } from '../subscription-region';
+import {
+  MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE,
+  isMinimaxRegion,
+} from '../oauth/minimax/minimax-oauth-helpers';
 import { filterProvidersForDeployment } from '../../common/utils/provider-availability';
 import { getManagedFreeProviderConfig } from '../../common/constants/managed-free-providers';
 
@@ -627,6 +631,16 @@ export class ProviderService {
     existing: TenantProvider | null,
   ): Promise<string | null> {
     const lower = provider.toLowerCase();
+
+    if (lower === 'minimax' && authType === 'api_key') {
+      if (requestedRegion === undefined) {
+        return isMinimaxRegion(existing?.region ?? undefined) ? existing!.region : null;
+      }
+      if (!isMinimaxRegion(requestedRegion)) {
+        throw new BadRequestException(MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE);
+      }
+      return requestedRegion;
+    }
 
     const subscriptionRegionConfig = getSubscriptionEndpointRegionConfig(lower, authType);
     if (subscriptionRegionConfig) {
