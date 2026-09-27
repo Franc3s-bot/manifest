@@ -493,6 +493,7 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - `STREAM_IDLE_TIMEOUT_MS` — Max silence (ms) between upstream streaming events before the attempt is failed with HTTP 504. Default: `180000`
 - `CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS` — Timeout (ms) to wait for deliverable ChatGPT Codex text or tool output. Default: `60000`
 - `MANIFEST_CONCURRENCY_MAX` — Per-tenant concurrent in-flight request limit for each backend process. Accepts a plain positive integer; invalid values fall back to `10`.
+- `MANIFEST_RATE_MAX_REQUESTS` / `MANIFEST_IP_RATE_MAX_REQUESTS` — Per-tenant (M201) and per-IP (M202) requests-per-minute caps on `/v1` proxy traffic for each backend process. Accept a plain positive integer; invalid values fall back to `200` / `500`.
 - `EMAIL_PROVIDER` — Unified email provider: `resend` (recommended), `mailgun`, or `sendgrid`. Used for Better Auth transactional emails and threshold alerts.
 - `EMAIL_API_KEY` — API key for the configured `EMAIL_PROVIDER`.
 - `EMAIL_DOMAIN` — Sending domain (required for Mailgun).
