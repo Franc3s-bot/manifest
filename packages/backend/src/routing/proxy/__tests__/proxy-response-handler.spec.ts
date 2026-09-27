@@ -1621,6 +1621,31 @@ describe('proxy-response-handler', () => {
       expect(transformer).toHaveBeenCalledWith('data: in\n\n');
     });
 
+    it('converts a native Responses upstream for a Chat Completions client', async () => {
+      // An Autofix heal that changes the model re-routes the Codex wire body in
+      // `responses` mode, so the forward carries isResponses, not isChatGpt,
+      // while the client still speaks Chat Completions.
+      const { res } = mockResponse();
+      const forward = mockForward({ isResponses: true });
+      const client = mockProviderClient();
+      const transformer = jest.fn().mockReturnValue('data: out\n\n');
+      client.createChatGptStreamTransformer.mockReturnValue(transformer);
+      const meta = makeMeta();
+
+      let captured: ((chunk: string) => string | null) | undefined;
+      pipeStreamSpy.mockImplementation(
+        async (_b: unknown, _r: unknown, transform?: (c: string) => string | null) => {
+          captured = transform;
+          return null;
+        },
+      );
+
+      await handleStreamResponse(res as any, forward as any, meta, {}, client as any);
+
+      expect(captured!('data: in\n\n')).toBe('data: out\n\n');
+      expect(client.createChatGptStreamTransformer).toHaveBeenCalledWith('gpt-4o');
+    });
+
     it('should pipe without transformer for standard OpenAI responses', async () => {
       const { res } = mockResponse();
       const forward = mockForward();
@@ -2283,6 +2308,27 @@ describe('proxy-response-handler', () => {
 
       expect(client.collectChatGptSseResponse).toHaveBeenCalledWith(sseText, meta.model);
       expect(forward.response.text).toHaveBeenCalled();
+    });
+
+    it('collects native Responses SSE for a non-streaming Chat Completions client', async () => {
+      // Regression: an Autofix heal that changed the model re-routed the Codex
+      // wire body in `responses` mode. The forward came back isResponses (not
+      // isChatGpt) and the handler JSON-parsed the SSE body, answering M500
+      // `Unexpected token 'e', "event: res"... is not valid JSON`.
+      const { res } = mockResponse();
+      const client = mockProviderClient();
+      const sseText = 'event: response.created\ndata: {"type":"response.created"}\n\n';
+      const forward = mockForward(sseText, {
+        isResponses: true,
+        contentType: 'text/event-stream',
+      });
+      const meta = makeMeta();
+
+      await handleNonStreamResponse(res as any, forward as any, meta, {}, client as any);
+
+      expect(forward.response.json).not.toHaveBeenCalled();
+      expect(client.collectChatGptSseResponse).toHaveBeenCalledWith(sseText, meta.model);
+      expect(res.json).toHaveBeenCalledWith({ id: 'chatgpt-collected' });
     });
 
     it('should convert a JSON Responses object via providerClient for non-streaming ChatGPT-format upstreams (Bedrock GPT-5.x)', async () => {
