@@ -397,6 +397,30 @@ describe('chatgpt-adapter', () => {
       const choices = out.choices as Array<Record<string, unknown>>;
       expect((choices[0].message as Record<string, unknown>).content).toBeNull();
     });
+
+    it('maps an incomplete response to the same finish_reason as the SSE path', () => {
+      const truncated = fromResponsesResponse(
+        {
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'partial' }] }],
+        },
+        'gpt-5',
+      );
+      const filtered = fromResponsesResponse(
+        {
+          status: 'incomplete',
+          incomplete_details: { reason: 'content_filter' },
+          output: [],
+        },
+        'gpt-5',
+      );
+
+      expect((truncated.choices as Array<Record<string, unknown>>)[0].finish_reason).toBe('length');
+      expect((filtered.choices as Array<Record<string, unknown>>)[0].finish_reason).toBe(
+        'content_filter',
+      );
+    });
   });
 
   describe('transformResponsesStreamChunk', () => {

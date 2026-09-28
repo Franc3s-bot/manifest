@@ -282,7 +282,14 @@ export function fromResponsesResponse(
       {
         index: 0,
         message,
-        finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+        // A truncated or filtered response is `status: "incomplete"`; report it
+        // the way the SSE path does rather than as a complete answer.
+        finish_reason:
+          data.status === 'incomplete'
+            ? incompleteFinishReason(data)
+            : toolCalls.length > 0
+              ? 'tool_calls'
+              : 'stop',
       },
     ],
     usage: {

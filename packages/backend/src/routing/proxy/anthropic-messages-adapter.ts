@@ -306,6 +306,9 @@ const STOP_REASON_MAP: Record<string, string> = {
   stop: 'end_turn',
   length: 'max_tokens',
   tool_calls: 'tool_use',
+  // A provider safety filter cut the reply short; Anthropic reports its own
+  // policy stops as `refusal`, so clients don't treat it as a finished turn.
+  content_filter: 'refusal',
 };
 
 function toAnthropicStopReason(finishReason: unknown): string {

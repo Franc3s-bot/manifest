@@ -748,6 +748,12 @@ describe('Anthropic Messages adapter', () => {
       );
       expect(length.stop_reason).toBe('max_tokens');
 
+      const filtered = chatCompletionsResponseToMessages(
+        { choices: [{ message: { content: 'x' }, finish_reason: 'content_filter' }] },
+        'm',
+      );
+      expect(filtered.stop_reason).toBe('refusal');
+
       const unknown = chatCompletionsResponseToMessages(
         { choices: [{ message: { content: 'x' }, finish_reason: 'mystery' }] },
         'm',
@@ -948,6 +954,17 @@ describe('Anthropic Messages adapter', () => {
         'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q"}}',
       );
       expect(sse).toContain('"stop_reason":"tool_use"');
+    });
+
+    it('streams a content_filter finish_reason as a refusal stop_reason', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"model":"claude","choices":[{"delta":{"content":"Partial"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n',
+      ]);
+
+      expect(sse).toContain('"stop_reason":"refusal"');
+      expect(sse).not.toContain('"stop_reason":"end_turn"');
     });
 
     it('translates DeepSeek-style delta.reasoning_content into a leading thinking block', () => {
