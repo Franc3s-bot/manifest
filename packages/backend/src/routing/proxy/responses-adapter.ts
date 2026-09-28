@@ -396,19 +396,48 @@ function toResponsesUsage(usage: unknown): JsonRecord | null {
     typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
   const totalTokens =
     typeof usage.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens;
+  const promptDetails = isRecord(usage.prompt_tokens_details)
+    ? usage.prompt_tokens_details
+    : undefined;
+  const completionDetails = isRecord(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
+    : undefined;
+  // Raw OpenAI-compatible upstreams report cached input under provider-specific
+  // keys rather than the converted `cache_read_tokens` — same fallbacks as
+  // toAnthropicUsage and parseUsageObject.
   const cachedTokens =
-    typeof usage.cache_read_tokens === 'number' ? usage.cache_read_tokens : undefined;
+    typeof usage.cache_read_tokens === 'number'
+      ? usage.cache_read_tokens
+      : typeof usage.prompt_cache_hit_tokens === 'number'
+        ? usage.prompt_cache_hit_tokens
+        : typeof usage.cached_tokens === 'number'
+          ? usage.cached_tokens
+          : typeof promptDetails?.cached_tokens === 'number'
+            ? promptDetails.cached_tokens
+            : 0;
   const cacheWriteTokens =
-    typeof usage.cache_creation_tokens === 'number' ? usage.cache_creation_tokens : undefined;
+    typeof usage.cache_creation_tokens === 'number'
+      ? usage.cache_creation_tokens
+      : typeof usage.cache_creation_input_tokens === 'number'
+        ? usage.cache_creation_input_tokens
+        : typeof promptDetails?.cache_write_tokens === 'number'
+          ? promptDetails.cache_write_tokens
+          : typeof promptDetails?.cache_creation_input_tokens === 'number'
+            ? promptDetails.cache_creation_input_tokens
+            : 0;
+  const reasoningTokens =
+    typeof completionDetails?.reasoning_tokens === 'number'
+      ? completionDetails.reasoning_tokens
+      : 0;
 
   return {
     input_tokens: promptTokens,
     input_tokens_details: {
-      cached_tokens: cachedTokens ?? 0,
-      cache_write_tokens: cacheWriteTokens ?? 0,
+      cached_tokens: cachedTokens,
+      cache_write_tokens: cacheWriteTokens,
     },
     output_tokens: completionTokens,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: reasoningTokens },
     total_tokens: totalTokens,
   };
 }
