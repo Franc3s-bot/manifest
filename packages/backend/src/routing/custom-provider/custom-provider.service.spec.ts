@@ -7,7 +7,8 @@ jest.mock('../../common/utils/detect-self-hosted', () => ({
 
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CustomProviderService } from './custom-provider.service';
+import { CustomProviderService, primaryCustomConnection } from './custom-provider.service';
+import type { TenantProvider } from '../../entities/tenant-provider.entity';
 import { CustomProvider } from '../../entities/custom-provider.entity';
 import { ProviderService } from '../routing-core/provider.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
@@ -106,6 +107,19 @@ function makeDeps(overrides: {
     txManager,
     transaction,
   };
+}
+
+function connection(over: Partial<TenantProvider>): TenantProvider {
+  return {
+    id: 'tp',
+    provider: 'custom:cp1',
+    auth_type: 'api_key',
+    label: 'Default',
+    priority: 0,
+    is_active: true,
+    api_key_encrypted: null,
+    ...over,
+  } as TenantProvider;
 }
 
 describe('CustomProviderService', () => {
@@ -927,6 +941,75 @@ describe('CustomProviderService', () => {
       // Prices still changed → pricing cache must still be refreshed.
       expect(reloadPricing).toHaveBeenCalledTimes(1);
     });
+
+    it('writes an updated api key to the primary connection, whatever it is named', async () => {
+      const existing = { id: 'cp1', name: 'n' } as CustomProvider;
+      const { svc, upsertProvider, getProviders } = makeDeps({ findOneResults: [existing] });
+      getProviders.mockResolvedValueOnce([
+        connection({ id: 'b', label: 'Account B', priority: 1 }),
+        connection({ id: 'a', label: 'Account A', priority: 0 }),
+      ]);
+      await svc.update('cp1', 'tenant-1', { apiKey: 'sk-new' });
+      expect(upsertProvider).toHaveBeenCalledWith(
+        null,
+        'tenant-1',
+        'custom:cp1',
+        'sk-new',
+        'api_key',
+        undefined,
+        'Account A',
+        undefined,
+      );
+    });
+  });
+
+  it('retags before writing a new key when a rename crosses the local boundary', async () => {
+    const existing = { id: 'cp1', name: 'LM Studio' } as CustomProvider;
+    const { svc, retagAuthType, upsertProvider, getProviders } = makeDeps({
+      findOneResults: [existing, null],
+    });
+    getProviders.mockResolvedValueOnce([connection({ id: 'a', label: 'Main' })]);
+    await svc.update('cp1', 'tenant-1', { name: 'Home Server', apiKey: 'sk-new' });
+    expect(retagAuthType).toHaveBeenCalledWith(null, 'tenant-1', 'custom:cp1', 'api_key');
+    expect(retagAuthType.mock.invocationCallOrder[0]).toBeLessThan(
+      upsertProvider.mock.invocationCallOrder[0],
+    );
+    expect(upsertProvider).toHaveBeenCalledWith(
+      null,
+      'tenant-1',
+      'custom:cp1',
+      'sk-new',
+      'api_key',
+      undefined,
+      'Main',
+      undefined,
+    );
+  });
+
+  describe('primaryCustomConnection', () => {
+    it('picks the active connection with the lowest priority for that provider', () => {
+      const rows = [
+        connection({ id: 'other', provider: 'custom:other', priority: -1 }),
+        connection({ id: 'b', label: 'B', priority: 1 }),
+        connection({ id: 'off', label: 'Off', priority: -1, is_active: false }),
+        connection({ id: 'a', label: 'A', priority: 0 }),
+      ];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('a');
+    });
+
+    it('breaks a priority tie on id, the way the proxy does', () => {
+      const rows = [connection({ id: 'z' }), connection({ id: 'm' })];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('m');
+    });
+
+    it('falls back to an inactive connection when none is active', () => {
+      const rows = [connection({ id: 'off', is_active: false })];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('off');
+    });
+
+    it('returns undefined when the provider has no connection', () => {
+      expect(primaryCustomConnection([], 'custom:cp1')).toBeUndefined();
+    });
   });
 
   describe('remove', () => {
@@ -1425,6 +1508,27 @@ describe('CustomProviderService', () => {
           { provider: 'custom:cp-edit-id', api_key_encrypted: null },
         ]);
         await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+      });
+
+      it('uses the primary connection when the provider has several', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([
+          connection({
+            id: 'second',
+            provider: 'custom:cp-edit-id',
+            priority: 1,
+            api_key_encrypted: encrypt('sk-second', getEncryptionSecret()),
+          }),
+          connection({
+            id: 'first',
+            provider: 'custom:cp-edit-id',
+            priority: 0,
+            api_key_encrypted: encrypt('sk-first', getEncryptionSecret()),
+          }),
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+          'sk-first',
+        );
       });
 
       it('returns undefined when no tenant_providers row exists for the provider', async () => {

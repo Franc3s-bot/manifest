@@ -5,6 +5,10 @@ const mockCreateCustomProvider = vi.fn();
 const mockUpdateCustomProvider = vi.fn();
 const mockDeleteCustomProvider = vi.fn();
 const mockProbeCustomProvider = vi.fn();
+const mockGetProviders = vi.fn().mockResolvedValue([]);
+const mockConnectProvider = vi.fn().mockResolvedValue({});
+const mockDisconnectProvider = vi.fn().mockResolvedValue({ ok: true, notifications: [] });
+const mockRenameProviderKey = vi.fn().mockResolvedValue({});
 const mockCheckIsSelfHosted = vi.fn().mockResolvedValue(false);
 
 vi.mock("../../src/services/api.js", () => ({
@@ -12,6 +16,11 @@ vi.mock("../../src/services/api.js", () => ({
   updateCustomProvider: (...args: unknown[]) => mockUpdateCustomProvider(...args),
   deleteCustomProvider: (...args: unknown[]) => mockDeleteCustomProvider(...args),
   probeCustomProvider: (...args: unknown[]) => mockProbeCustomProvider(...args),
+  getProviders: (...args: unknown[]) => mockGetProviders(...args),
+  connectProvider: (...args: unknown[]) => mockConnectProvider(...args),
+  disconnectProvider: (...args: unknown[]) => mockDisconnectProvider(...args),
+  renameProviderKey: (...args: unknown[]) => mockRenameProviderKey(...args),
+  revokeOpenaiOAuth: vi.fn(),
 }));
 
 vi.mock("../../src/services/setup-status.js", () => ({
@@ -841,7 +850,7 @@ describe("CustomProviderForm — edit mode", () => {
     expect(screen.getByText("Edit custom provider")).toBeDefined();
   });
 
-  it("shows masked API key with Change button", () => {
+  it("shows masked API key with Change button", async () => {
     render(() => (
       <CustomProviderForm
         agentName="test-agent"
@@ -851,11 +860,11 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    expect(screen.getByDisplayValue("••••••••••••")).toBeDefined();
+    expect(await screen.findByDisplayValue("••••••••••••")).toBeDefined();
     expect(screen.getByText("Change")).toBeDefined();
   });
 
-  it("shows 'No key set' when has_api_key is false", () => {
+  it("shows 'No key set' when has_api_key is false", async () => {
     render(() => (
       <CustomProviderForm
         agentName="test-agent"
@@ -865,7 +874,7 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    expect(screen.getByDisplayValue("No key set")).toBeDefined();
+    expect(await screen.findByDisplayValue("No key set")).toBeDefined();
   });
 
   it("reveals API key input when Change is clicked", async () => {
@@ -878,7 +887,7 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    fireEvent.click(screen.getByText("Change"));
+    fireEvent.click(await screen.findByText("Change"));
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("sk-...")).toBeDefined();
@@ -929,7 +938,7 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    fireEvent.click(screen.getByText("Change"));
+    fireEvent.click(await screen.findByText("Change"));
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("sk-...")).toBeDefined();
@@ -1206,7 +1215,7 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    fireEvent.click(screen.getByText("Change"));
+    fireEvent.click(await screen.findByText("Change"));
     fireEvent.input(screen.getByPlaceholderText("sk-..."), {
       target: { value: "sk-new-typed" },
     });
@@ -1238,7 +1247,7 @@ describe("CustomProviderForm — edit mode", () => {
       />
     ));
 
-    fireEvent.click(screen.getByText("Change"));
+    fireEvent.click(await screen.findByText("Change"));
     // User types a key, then clears it — they changed their mind. The probe
     // should still hit /models with the stored key, not unauthenticated.
     const keyInput = screen.getByPlaceholderText("sk-...");
@@ -1545,7 +1554,7 @@ describe("CustomProviderForm — edit mode: extra API key + delete UI branches",
       />
     ));
 
-    fireEvent.click(screen.getByText("Change"));
+    fireEvent.click(await screen.findByText("Change"));
     await waitFor(() => {
       expect(screen.getByPlaceholderText("sk-...")).toBeDefined();
     });
@@ -1750,5 +1759,174 @@ describe("CustomProviderForm — alias", () => {
         expect.objectContaining({ name: "Groq Cloud", alias: "groq-cloud" }),
       );
     });
+  });
+});
+
+describe("CustomProviderForm — edit mode: key connections", () => {
+  const onCreated = vi.fn();
+  const onBack = vi.fn();
+  const initialData = {
+    id: "cp-1",
+    name: "Pooled",
+    alias: null,
+    base_url: "https://pooled.example.com/v1",
+    api_kind: "openai" as const,
+    has_api_key: true,
+    models: [{ model_name: "pooled-model" }],
+    created_at: "2026-03-04T00:00:00Z",
+  };
+  const connection = (over: Record<string, unknown>) => ({
+    id: "tp-1",
+    provider: "custom:cp-1",
+    auth_type: "api_key",
+    is_active: true,
+    has_api_key: true,
+    key_prefix: "sk-accta",
+    label: "Default",
+    priority: 0,
+    region: null,
+    connected_at: "2026-03-04T00:00:00Z",
+    ...over,
+  });
+  const renderForm = () =>
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        initialData={initialData}
+      />
+    ));
+  const KEYS_HINT = "Each key is a separate connection. Changes apply immediately.";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUpdateCustomProvider.mockResolvedValue(initialData);
+  });
+
+  it("manages a single key through the native key form, without a disconnect action", async () => {
+    mockGetProviders.mockResolvedValue([
+      connection({}),
+      connection({ id: "other", provider: "custom:other", label: "Elsewhere" }),
+    ]);
+    renderForm();
+
+    expect(await screen.findByDisplayValue("sk-accta••••••••")).toBeDefined();
+    expect(mockGetProviders).toHaveBeenCalledWith("test-agent");
+    expect(screen.queryByText("No key set")).toBeNull();
+    expect(screen.queryByLabelText("Disconnect provider")).toBeNull();
+    expect(screen.getByText(KEYS_HINT)).toBeDefined();
+  });
+
+  it("adds another key as a labeled connection of the custom provider", async () => {
+    mockGetProviders.mockResolvedValue([connection({})]);
+    renderForm();
+
+    fireEvent.click(await screen.findByText("Add another key"));
+    expect(screen.queryByText("Add another key")).toBeNull();
+    fireEvent.input(screen.getByLabelText("Key name"), { target: { value: "Account B" } });
+    fireEvent.input(screen.getByLabelText("New Pooled API key"), {
+      target: { value: "sk-account-b" },
+    });
+    mockGetProviders.mockResolvedValue([
+      connection({}),
+      connection({ id: "tp-2", label: "Account B", priority: 1, key_prefix: "sk-acctb" }),
+    ]);
+    fireEvent.click(screen.getByText("Add key"));
+
+    await waitFor(() => {
+      expect(mockConnectProvider).toHaveBeenCalledWith("test-agent", {
+        provider: "custom:cp-1",
+        apiKey: "sk-account-b",
+        authType: "api_key",
+        label: "Account B",
+      });
+    });
+    expect(await screen.findByText("Account B")).toBeDefined();
+    expect(mockGetProviders).toHaveBeenCalledTimes(2);
+  });
+
+  it("lists several keys and removes one by label", async () => {
+    mockGetProviders.mockResolvedValue([
+      connection({ id: "tp-2", label: "Account B", priority: 1 }),
+      connection({ label: "Account A" }),
+    ]);
+    renderForm();
+
+    const list = await screen.findByRole("list", { name: "API keys for Pooled" });
+    expect([...list.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+      expect.stringContaining("Account A"),
+      expect.stringContaining("Account B"),
+    ]);
+    fireEvent.click(screen.getByLabelText("Delete key Account B"));
+
+    await waitFor(() => {
+      expect(mockDisconnectProvider).toHaveBeenCalledWith(
+        "test-agent",
+        "custom:cp-1",
+        "api_key",
+        "Account B",
+      );
+    });
+  });
+
+  it("stores the first key of a keyless provider on its existing connection", async () => {
+    mockGetProviders.mockResolvedValue([connection({ has_api_key: false, key_prefix: null })]);
+    renderForm();
+
+    fireEvent.input(await screen.findByLabelText("Pooled API key"), {
+      target: { value: "sk-first" },
+    });
+    fireEvent.click(screen.getByText("Connect"));
+
+    await waitFor(() => {
+      expect(mockConnectProvider).toHaveBeenCalledWith("test-agent", {
+        provider: "custom:cp-1",
+        apiKey: "sk-first",
+        authType: "api_key",
+      });
+    });
+    expect(screen.queryByText("Add another key")).toBeNull();
+  });
+
+  it("keeps the single key field for a local-style provider", async () => {
+    mockGetProviders.mockResolvedValue([connection({ auth_type: "local", has_api_key: false })]);
+    renderForm();
+
+    expect(await screen.findByDisplayValue("••••••••••••")).toBeDefined();
+    expect(screen.queryByText(KEYS_HINT)).toBeNull();
+  });
+
+  it("falls back to the single key field when the connection list fails to load", async () => {
+    mockGetProviders.mockRejectedValue(new Error("boom"));
+    renderForm();
+
+    expect(await screen.findByDisplayValue("••••••••••••")).toBeDefined();
+    expect(screen.queryByText(KEYS_HINT)).toBeNull();
+  });
+
+  it("saves the definition without touching the keys", async () => {
+    mockGetProviders.mockResolvedValue([connection({})]);
+    renderForm();
+    await screen.findByDisplayValue("sk-accta••••••••");
+
+    fireEvent.click(screen.getByText("Save changes"));
+
+    await waitFor(() => expect(mockUpdateCustomProvider).toHaveBeenCalledTimes(1));
+    expect(mockUpdateCustomProvider.mock.calls[0][2]).not.toHaveProperty("apiKey");
+  });
+
+  it("keeps the key list when a refresh after a key change fails", async () => {
+    mockGetProviders.mockResolvedValueOnce([
+      connection({ id: "tp-2", label: "Account B", priority: 1 }),
+      connection({ label: "Account A" }),
+    ]);
+    renderForm();
+    fireEvent.click(await screen.findByLabelText("Delete key Account B"));
+    mockGetProviders.mockRejectedValueOnce(new Error("network"));
+
+    await waitFor(() => expect(mockGetProviders).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("list", { name: "API keys for Pooled" })).toBeDefined();
+    expect(screen.queryByText(KEYS_HINT)).not.toBeNull();
   });
 });

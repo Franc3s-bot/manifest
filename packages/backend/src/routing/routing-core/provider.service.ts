@@ -819,22 +819,26 @@ export class ProviderService {
     const invalidated = await this.providerRepo.manager.transaction(async (manager) => {
       const txRepo = manager.getRepository(TenantProvider);
       const rows = await txRepo.find({ where: { tenant_id: tenantId, provider } });
-      const target = rows.find((r) => r.auth_type !== nextAuthType && r.is_active);
-      if (!target) return false;
+      // A custom provider can hold several connections; all of them move.
+      const targets = rows.filter((r) => r.auth_type !== nextAuthType && r.is_active);
+      if (targets.length === 0) return false;
 
-      // Protect the unique index on (tenant_id, provider, auth_type, LOWER(label)):
-      // if a row already exists for the destination auth_type with the same
-      // label, the UPDATE would fail. Drop the stale destination row first.
-      const collision = rows.find(
-        (r) => r.auth_type === nextAuthType && r.label.toLowerCase() === target.label.toLowerCase(),
-      );
-      if (collision) {
-        await txRepo.remove(collision);
+      for (const target of targets) {
+        // Protect the unique index on (tenant_id, provider, auth_type, LOWER(label)):
+        // if a row already exists for the destination auth_type with the same
+        // label, the UPDATE would fail. Drop the stale destination row first.
+        const collision = rows.find(
+          (r) =>
+            r.auth_type === nextAuthType && r.label.toLowerCase() === target.label.toLowerCase(),
+        );
+        if (collision) {
+          await txRepo.remove(collision);
+        }
+
+        target.auth_type = nextAuthType;
+        target.updated_at = new Date().toISOString();
+        await txRepo.save(target);
       }
-
-      target.auth_type = nextAuthType;
-      target.updated_at = new Date().toISOString();
-      await txRepo.save(target);
       return true;
     });
 
@@ -853,9 +857,7 @@ export class ProviderService {
     manager?: EntityManager,
   ): Promise<{ notifications: string[] }> {
     if (label) {
-      // Labeled key chains only exist for agent-scoped standard providers;
-      // tenant-global custom providers never pass a label, so agentId is set.
-      return this.removeKeyByLabel(agentId as string, tenantId, provider, authType, label, manager);
+      return this.removeKeyByLabel(agentId, tenantId, provider, authType, label, manager);
     }
 
     // Legacy disconnect: deactivate every active key for the (provider,

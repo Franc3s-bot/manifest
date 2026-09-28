@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { TenantCtx, TenantContext } from '../../common/decorators/tenant-context.decorator';
-import { CustomProviderService } from './custom-provider.service';
+import { CustomProviderService, primaryCustomConnection } from './custom-provider.service';
 import { ProviderService } from '../routing-core/provider.service';
 import { ResolveAgentService } from '../routing-core/resolve-agent.service';
 import {
@@ -34,8 +34,7 @@ export class CustomProviderController {
     if (providers.length === 0) return [];
 
     return providers.map((cp) => {
-      const provKey = CustomProviderService.providerKey(cp.id);
-      const up = tenantProviders.find((u) => u.provider === provKey);
+      const up = primaryCustomConnection(tenantProviders, CustomProviderService.providerKey(cp.id));
       return {
         id: cp.id,
         name: cp.name,

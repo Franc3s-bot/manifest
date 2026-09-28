@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Inject,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
 import { ProviderService } from './routing-core/provider.service';
+import { CustomProviderService } from './custom-provider/custom-provider.service';
 import { ResolveAgentService } from './routing-core/resolve-agent.service';
 import { TierService } from './routing-core/tier.service';
 import { ModelDiscoveryService } from '../model-discovery/model-discovery.service';
@@ -50,8 +52,31 @@ export class ProviderController {
     private readonly resolveAgentService: ResolveAgentService,
     private readonly tierService: TierService,
     private readonly pricingSync: PricingSyncService,
+    private readonly customProviderService: CustomProviderService,
     @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
+
+  /**
+   * A custom provider takes connections the way a native one does, but only
+   * API keys, and only once its definition exists in the tenant. Without a
+   * label the write targets the provider's primary connection, whatever it is
+   * named, instead of inserting a second row labeled 'Default'.
+   */
+  private async customConnectionLabel(
+    tenantId: string,
+    provider: string,
+    body: ConnectProviderDto,
+  ): Promise<string | undefined> {
+    if ((body.authType ?? 'api_key') !== 'api_key') {
+      throw new BadRequestException('Custom providers only take API key connections');
+    }
+    const id = provider.slice('custom:'.length);
+    if (!(await this.customProviderService.getById(id, tenantId))) {
+      throw new NotFoundException('Custom provider not found');
+    }
+    if (body.label) return body.label;
+    return (await this.customProviderService.primaryConnection(tenantId, id))?.label;
+  }
 
   @Get(':agentName/status')
   async getStatus(@TenantCtx() ctx: TenantContext, @Param() params: AgentNameParamDto) {
@@ -116,6 +141,10 @@ export class ProviderController {
       allowPlayground: true,
     });
     const lowerProvider = body.provider.toLowerCase();
+    const isCustomProvider = lowerProvider.startsWith('custom:');
+    const label = isCustomProvider
+      ? await this.customConnectionLabel(agent.tenant_id, lowerProvider, body)
+      : body.label;
     if (
       !isProviderAvailableForDeployment(lowerProvider) ||
       (body.authType === 'local' && !isProviderAvailableForDeployment('ollama'))
@@ -179,17 +208,20 @@ export class ProviderController {
       body.apiKey,
       body.authType,
       qwenRegion,
-      body.label,
+      label,
       ctx.userId,
     );
 
     // Discover models before returning so the frontend sees updated model
     // availability immediately (typically ~1-3s). Route choices remain
-    // user-controlled and are not recalculated here.
-    try {
-      await this.discoveryService.discoverModels(result);
-    } catch {
-      // Discovery failure is non-fatal — user can retry via "Refresh models"
+    // user-controlled and are not recalculated here. A custom provider's
+    // models live on its definition, so there is nothing to discover.
+    if (!isCustomProvider) {
+      try {
+        await this.discoveryService.discoverModels(result);
+      } catch {
+        // Discovery failure is non-fatal — user can retry via "Refresh models"
+      }
     }
 
     return {
