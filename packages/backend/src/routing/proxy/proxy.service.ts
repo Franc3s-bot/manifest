@@ -586,7 +586,6 @@ export class ProxyService {
           isChatGpt: forward.isChatGpt,
           isResponses: forward.isResponses,
           isCodeAssist: forward.isCodeAssist,
-          structuredOutputToolName: forward.structuredOutputToolName,
           responsesTextFormat: forward.responsesTextFormat,
           responsesToolNames: forward.responsesToolNames,
           wireRequestBody: forward.wireRequestBody,

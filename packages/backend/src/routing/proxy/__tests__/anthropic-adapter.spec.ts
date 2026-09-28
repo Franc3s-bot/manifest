@@ -869,6 +869,54 @@ describe('Anthropic Adapter', () => {
       expect(result.tools).toBeUndefined();
     });
 
+    describe('tool_choice', () => {
+      const tools = [
+        { type: 'function', function: { name: 'get_weather', parameters: { type: 'object' } } },
+      ];
+      const convert = (extra: Record<string, unknown>) =>
+        toAnthropicRequest(
+          { messages: [{ role: 'user', content: 'Weather?' }], tools, ...extra },
+          'claude-sonnet-4-20250514',
+        );
+
+      it.each([
+        ['auto', { type: 'auto' }],
+        ['required', { type: 'any' }],
+        ['none', { type: 'none' }],
+        [
+          { type: 'function', function: { name: 'get_weather' } },
+          { type: 'tool', name: 'get_weather' },
+        ],
+      ])('maps tool_choice %j to %j', (toolChoice, expected) => {
+        expect(convert({ tool_choice: toolChoice }).tool_choice).toEqual(expected);
+      });
+
+      it('maps parallel_tool_calls: false to disable_parallel_tool_use', () => {
+        expect(convert({ parallel_tool_calls: false }).tool_choice).toEqual({
+          type: 'auto',
+          disable_parallel_tool_use: true,
+        });
+        expect(
+          convert({ tool_choice: 'required', parallel_tool_calls: false }).tool_choice,
+        ).toEqual({ type: 'any', disable_parallel_tool_use: true });
+        expect(convert({ tool_choice: 'none', parallel_tool_calls: false }).tool_choice).toEqual({
+          type: 'none',
+        });
+      });
+
+      it('omits tool_choice when unset, unknown, or no tools are sent', () => {
+        expect(convert({}).tool_choice).toBeUndefined();
+        expect(convert({ parallel_tool_calls: true }).tool_choice).toBeUndefined();
+        expect(convert({ tool_choice: { type: 'custom' } }).tool_choice).toBeUndefined();
+        expect(
+          toAnthropicRequest(
+            { messages: [{ role: 'user', content: 'Hi' }], tool_choice: 'required' },
+            'claude-sonnet-4-20250514',
+          ).tool_choice,
+        ).toBeUndefined();
+      });
+    });
+
     it('prepends subscription identity block when injectSubscriptionIdentity is true', () => {
       const body = {
         messages: [

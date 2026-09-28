@@ -1431,7 +1431,6 @@ describe('ProviderClient', () => {
           },
         },
       });
-      expect(result.structuredOutputToolName).toBeUndefined();
       expect(result.responsesTextFormat).toEqual({
         type: 'json_schema',
         name: 'patient_summary',
@@ -1468,7 +1467,6 @@ describe('ProviderClient', () => {
           schema: { type: 'object', additionalProperties: false },
         },
       });
-      expect(result.structuredOutputToolName).toBeUndefined();
       expect(result.responsesTextFormat).toEqual({ type: 'json_object' });
     });
 
@@ -1493,8 +1491,32 @@ describe('ProviderClient', () => {
 
       const sent = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(sent.tool_choice).toBeUndefined();
-      expect(result.structuredOutputToolName).toBeUndefined();
       expect(result.responsesTextFormat).toBeUndefined();
+    });
+
+    it('forwards a forced client tool on structured Responses routed to Anthropic', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'anthropic',
+        apiKey: 'sk-ant-test',
+        model: 'claude-sonnet-4-5-20250929',
+        body: {
+          input: 'Look up the patient.',
+          text: { format: { type: 'json_object' } },
+        },
+        resolveChatBody: async () => ({
+          messages: [{ role: 'user', content: 'Look up the patient.' }],
+          tools: [{ type: 'function', function: { name: 'lookup_patient', parameters: {} } }],
+          tool_choice: { type: 'function', function: { name: 'lookup_patient' } },
+          response_format: { type: 'json_object' },
+        }),
+        stream: false,
+        apiMode: 'responses',
+      });
+
+      const sent = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sent.tool_choice).toEqual({ type: 'tool', name: 'lookup_patient' });
     });
 
     it('forwards Responses image inputs to Anthropic image content blocks', async () => {

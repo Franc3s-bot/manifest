@@ -81,8 +81,6 @@ export interface ForwardResult {
    * passing the inner body to the standard Google converters.
    */
   isCodeAssist?: boolean;
-  /** Internal: Anthropic synthetic tool used to emulate Responses structured output. */
-  structuredOutputToolName?: string;
   /** Internal: original Responses text.format metadata for synthesized Responses bodies. */
   responsesTextFormat?: Record<string, unknown>;
   responsesToolNames?: ResponsesToolNames;
@@ -115,7 +113,6 @@ interface BuiltProviderRequest {
   url: string;
   headers: Record<string, string>;
   requestBody: Record<string, unknown>;
-  structuredOutputToolName?: string;
 }
 
 /**
@@ -226,23 +223,6 @@ function responsesTextFormat(
     out.description = format.description;
   }
   return out;
-}
-
-function isStructuredResponseFormat(responseFormat: unknown): boolean {
-  return (
-    isRecord(responseFormat) &&
-    (responseFormat.type === 'json_object' || responseFormat.type === 'json_schema')
-  );
-}
-
-function structuredOutputToolName(
-  requestSource: Record<string, unknown>,
-  requestBody: Record<string, unknown>,
-): string | undefined {
-  if (!isStructuredResponseFormat(requestSource.response_format)) return undefined;
-  const toolChoice = requestBody.tool_choice;
-  if (!isRecord(toolChoice) || toolChoice.type !== 'tool') return undefined;
-  return typeof toolChoice.name === 'string' ? toolChoice.name : undefined;
 }
 
 function buildPromptCacheKey(sessionKey: string): string {
@@ -434,7 +414,7 @@ export class ProviderClient {
           opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
       };
     }
-    const { url, headers, requestBody, structuredOutputToolName } = this.buildRequest({
+    const { url, headers, requestBody } = this.buildRequest({
       endpoint,
       endpointKey,
       provider,
@@ -496,7 +476,6 @@ export class ProviderClient {
         isChatGpt,
         isResponses,
         isCodeAssist,
-        structuredOutputToolName,
         responsesTextFormat: textFormat,
         responsesToolNames:
           opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
@@ -759,10 +738,6 @@ export class ProviderClient {
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
             });
-      const syntheticToolName =
-        ctx.apiMode === 'responses'
-          ? structuredOutputToolName(requestSource, requestBody)
-          : undefined;
       requestBody.model = bareModel;
       if (stream) requestBody.stream = true;
       if (shouldApplyAnthropicAutomaticCacheControl(endpointKey)) {
@@ -789,7 +764,6 @@ export class ProviderClient {
             : undefined,
         ),
         requestBody,
-        structuredOutputToolName: syntheticToolName,
       };
     }
 
@@ -937,7 +911,6 @@ export class ProviderClient {
       isChatGpt: boolean;
       isResponses?: boolean;
       isCodeAssist?: boolean;
-      structuredOutputToolName?: string;
       responsesTextFormat?: Record<string, unknown>;
       responsesToolNames?: ResponsesToolNames;
     },

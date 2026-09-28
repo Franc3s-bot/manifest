@@ -642,7 +642,6 @@ export async function handleStreamResponse(
   const responsesTransformer =
     apiMode === 'responses'
       ? createResponsesStreamTransformer(meta.model, {
-          structuredOutputToolName: forward.structuredOutputToolName,
           textFormat: forward.responsesTextFormat,
           toolNames: forward.responsesToolNames,
         })
@@ -897,7 +896,6 @@ export async function handleNonStreamResponse(
 
   if (apiMode === 'responses' && !forward.isResponses) {
     responseBody = fromChatCompletionResponse(responseBody as Record<string, unknown>, meta.model, {
-      structuredOutputToolName: forward.structuredOutputToolName,
       textFormat: forward.responsesTextFormat,
       toolNames: forward.responsesToolNames,
     });

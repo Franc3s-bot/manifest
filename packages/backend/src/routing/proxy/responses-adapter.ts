@@ -9,7 +9,6 @@ type JsonRecord = Record<string, unknown>;
 
 interface ChatCompletionToResponsesOptions {
   toolNames?: ResponsesToolNames;
-  structuredOutputToolName?: string;
   textFormat?: JsonRecord;
 }
 
@@ -309,24 +308,6 @@ function extractImageDetail(part: JsonRecord): { detail?: string } {
   return typeof detail === 'string' ? { detail } : {};
 }
 
-function findStructuredOutputToolCall(
-  toolCalls: unknown,
-  toolName: string | undefined,
-): JsonRecord | null {
-  if (!toolName || !Array.isArray(toolCalls)) return null;
-  for (const toolCall of toolCalls) {
-    if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
-    if (toolCall.function.name === toolName) return toolCall;
-  }
-  return null;
-}
-
-function toolCallArguments(toolCall: JsonRecord | null): string | null {
-  const fn = isRecord(toolCall?.function) ? toolCall.function : null;
-  if (!fn) return null;
-  return typeof fn.arguments === 'string' ? fn.arguments : '{}';
-}
-
 function responseTextFormat(format: unknown): JsonRecord {
   if (!isRecord(format)) return { type: 'text' };
   if (format.type === 'json_object') return { type: 'json_object' };
@@ -351,15 +332,9 @@ export function fromChatCompletionResponse(
   const firstChoice = isRecord(choices[0]) ? choices[0] : {};
   const message = isRecord(firstChoice.message) ? firstChoice.message : {};
   const output: JsonRecord[] = [];
-  const structuredToolCall = findStructuredOutputToolCall(
-    message.tool_calls,
-    options.structuredOutputToolName,
-  );
-  const structuredText = toolCallArguments(structuredToolCall);
-  const contentText = textFromContent(message.content);
-  const outputText = structuredText ?? contentText;
+  const outputText = textFromContent(message.content);
 
-  if (outputText || structuredText !== null) {
+  if (outputText) {
     output.push({
       type: 'message',
       id: `msg_${randomUUID().replace(/-/g, '')}`,
@@ -372,7 +347,6 @@ export function fromChatCompletionResponse(
   if (Array.isArray(message.tool_calls)) {
     for (const toolCall of message.tool_calls) {
       if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
-      if (toolCall === structuredToolCall) continue;
       output.push({
         type: 'function_call',
         id: `fc_${randomUUID().replace(/-/g, '')}`,
@@ -608,7 +582,6 @@ export interface ResponsesStreamTransformer {
 
 export interface ResponsesStreamTransformerOptions {
   toolNames?: ResponsesToolNames;
-  structuredOutputToolName?: string;
   textFormat?: JsonRecord;
 }
 
@@ -632,8 +605,6 @@ interface ResponsesStreamState {
   createdAt: number;
   usage: unknown;
   text: string;
-  structuredOutputToolName?: string;
-  structuredToolCallIndexes: Set<number>;
   textFormat?: JsonRecord;
   createdEmitted: boolean;
   itemOpened: boolean;
@@ -674,8 +645,6 @@ export function createResponsesStreamTransformer(
     createdAt: Math.floor(Date.now() / 1000),
     usage: undefined,
     text: '',
-    structuredOutputToolName: options.structuredOutputToolName,
-    structuredToolCallIndexes: new Set(),
     textFormat: options.textFormat,
     createdEmitted: false,
     itemOpened: false,
@@ -737,29 +706,6 @@ function emitItemOpen(state: ResponsesStreamState): string[] {
   ];
 }
 
-function structuredOutputTextDelta(toolCalls: unknown, state: ResponsesStreamState): string {
-  if (!state.structuredOutputToolName || !Array.isArray(toolCalls)) return '';
-
-  let text = '';
-  for (const toolCall of toolCalls) {
-    if (!isRecord(toolCall)) continue;
-    const index = typeof toolCall.index === 'number' ? toolCall.index : 0;
-    const fn = isRecord(toolCall.function) ? toolCall.function : null;
-    if (!fn) continue;
-    if (fn.name === state.structuredOutputToolName) {
-      state.structuredToolCallIndexes.add(index);
-    }
-    if (
-      state.structuredToolCallIndexes.has(index) &&
-      typeof fn.arguments === 'string' &&
-      fn.arguments.length > 0
-    ) {
-      text += fn.arguments;
-    }
-  }
-  return text;
-}
-
 function emitOutputTextDelta(state: ResponsesStreamState, delta: string): string[] {
   if (!delta) return [];
   const events = emitItemOpen(state);
@@ -819,7 +765,6 @@ function toolCallDeltas(toolCalls: unknown, state: ResponsesStreamState): string
     if (typeof delta.function.name === 'string') call.name += delta.function.name;
     const args = typeof delta.function.arguments === 'string' ? delta.function.arguments : '';
     call.arguments += args;
-    if (call.name === state.structuredOutputToolName) continue;
     // Production forwards the declared names, so complete names can open
     // immediately even before arguments. Undeclared/partial names wait for
     // finalization; an arguments delta does not prove the name is complete.
@@ -863,10 +808,6 @@ function transformResponsesStreamChunk(chunk: string, state: ResponsesStreamStat
     }
 
     events.push(...toolCallDeltas(delta.tool_calls, state));
-    const structuredDelta = structuredOutputTextDelta(delta.tool_calls, state);
-    if (structuredDelta) {
-      events.push(...emitOutputTextDelta(state, structuredDelta));
-    }
   }
 
   return events.length > 0 ? events.join('') : null;
@@ -910,7 +851,7 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
 
   const toolOutput: { index: number; item: JsonRecord }[] = [];
   for (const call of state.toolCalls.values()) {
-    if (!call.name || call.name === state.structuredOutputToolName) continue;
+    if (!call.name) continue;
     if (!call.callId) call.callId = randomUUID();
     events.push(...openFunctionCall(call, state));
     const item = functionCallItem(call, state, 'completed');
@@ -938,10 +879,7 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
       choices: [{ message: { content: state.text } }],
     },
     state.model,
-    {
-      structuredOutputToolName: state.structuredOutputToolName,
-      textFormat: state.textFormat,
-    },
+    { textFormat: state.textFormat },
   );
   response.id = state.responseId;
   // `created_at` is the stream-start stamp (shared across every snapshot for
