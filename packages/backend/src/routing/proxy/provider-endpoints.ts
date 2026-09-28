@@ -80,11 +80,16 @@ const pioneerHeaders = (apiKey: string) => ({
 
 const openaiPath = () => '/v1/chat/completions';
 const BEDROCK_OPENAI_MODEL_RE = /(?:^|\.)openai\./i;
-const BEDROCK_GPT_5_MODEL_RE = /(?:^|\.)openai\.gpt-5(?:[.-]|$)/i;
+// Bedrock rejects `/v1/responses` for the numbered GPT families from GPT-5 on
+// (gpt-5.x, gpt-6-*, ...); they need the namespaced path. GPT OSS stays on the
+// generic one.
+const BEDROCK_NAMESPACED_GPT_MODEL_RE = /(?:^|\.)openai\.gpt-[5-9](?:[.-]|$)/i;
 const BEDROCK_ANTHROPIC_MODEL_RE = /(?:^|\.)anthropic\./i;
 
 const bedrockResponsesPath = (model: string) =>
-  BEDROCK_GPT_5_MODEL_RE.test(stripVendorPrefix(model)) ? '/openai/v1/responses' : '/v1/responses';
+  BEDROCK_NAMESPACED_GPT_MODEL_RE.test(stripVendorPrefix(model))
+    ? '/openai/v1/responses'
+    : '/v1/responses';
 
 export function resolveBedrockEndpointKey(
   model: string,

@@ -264,12 +264,16 @@ describe('PROVIDER_ENDPOINTS', () => {
     'openai.gpt-5.99-future',
     'us.openai.gpt-5.6-luna',
     'bedrock/openai.gpt-5.6-luna',
+    'openai.gpt-6-sol',
+    'openai.gpt-6-luna',
+    'global.openai.gpt-6-luna',
+    'openai.gpt-7',
   ])('uses the namespaced Bedrock Responses path for %s', (model) => {
     expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/openai/v1/responses');
   });
 
-  it.each(['openai.gpt-oss-120b', 'openai.gpt-50'])(
-    'keeps non-GPT-5 Bedrock model %s on the generic Responses path',
+  it.each(['openai.gpt-oss-120b', 'openai.gpt-oss-20b', 'openai.gpt-4.1', 'openai.gpt-50'])(
+    'keeps Bedrock model %s on the generic Responses path',
     (model) => {
       expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/v1/responses');
     },
