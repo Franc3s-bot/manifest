@@ -270,8 +270,7 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
   const declarations = tools
     .map((t) => {
       const fn = t.function as
-        | { name: string; description?: string; parameters?: unknown }
-        | undefined;
+        { name: string; description?: string; parameters?: unknown } | undefined;
       if (!fn) return null;
       return {
         name: fn.name,
@@ -345,14 +344,15 @@ export function toGoogleRequest(
   const toolNamesById = buildToolCallNameMap(messages);
 
   // Extract system instruction
-  const systemMsgs = messages.filter((m) => m.role === 'system');
+  const isSystem = (m: OpenAIMessage) => m.role === 'system' || m.role === 'developer';
+  const systemMsgs = messages.filter(isSystem);
   const systemText = systemMsgs
     .map((m) => systemContentText(m.content))
     .filter(Boolean)
     .join('\n');
 
   for (const msg of messages) {
-    if (msg.role === 'system') continue;
+    if (isSystem(msg)) continue;
     const content = messageToContent(msg, toolNamesById, signatureLookup);
     if (content) contents.push(content);
   }
