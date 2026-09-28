@@ -412,18 +412,3 @@ describe("Sidebar — usage card", () => {
     expect(container.querySelector(".sidebar-usage__fill--danger")).toBeNull();
   });
 });
-
-describe("Sidebar — Autofix announcement card", () => {
-  it("always renders the Autofix announcement card", async () => {
-    const { container } = render(() => <Sidebar />);
-    await screen.findByText("Make sure your APIs no longer crash");
-    expect(container.querySelector(".sidebar-autofix")).not.toBeNull();
-  });
-
-  it("renders the Autofix announcement card in cloud too", async () => {
-    mockIsSelfHosted = false;
-    const { container } = render(() => <Sidebar />);
-    await screen.findByText("Make sure your APIs no longer crash");
-    expect(container.querySelector(".sidebar-autofix")).not.toBeNull();
-  });
-});

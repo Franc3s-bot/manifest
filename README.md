@@ -14,16 +14,6 @@ AI Agents that don't break
 ---
 
 <p align="center">
-  <strong>🦚 Keep your apps up with self-healing APIs</strong><br/>
-  <br/>
-  Manifest fixes API errors in real time, so your apps, workflows and agents keep running instead of breaking on failed requests.<br/>
-  <br/>
-  <a href="https://dashboard.manifest.build/signup" style="display: inline-block; padding: 10px 24px; background-color: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">Get started</a>
-</p>
-
----
-
-<p align="center">
   <a href="https://render.com/deploy?repo=https://github.com/mnfst/llm-gateway" target="_blank" rel="nofollow"><img src="https://img.shields.io/badge/Deploy%20on-Render-46E3B7?style=for-the-badge&amp;logo=render&amp;logoColor=white" alt="Deploy on Render" /></a>
   <a href="https://railway.com/deploy/wild-wild" target="_blank" rel="nofollow"><img src="https://img.shields.io/badge/Deploy%20on-Railway-0B0D0E?style=for-the-badge&amp;logo=railway&amp;logoColor=white" alt="Deploy on Railway" /></a>
   <a href="https://console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/quickcreate?stackName=manifest&amp;templateURL=https%3A%2F%2Fmnfst-manifest-deploy-templates.s3.us-east-1.amazonaws.com%2Fmanifest.yaml" target="_blank" rel="nofollow"><img src="https://img.shields.io/badge/Deploy%20on-AWS-232F3E?style=for-the-badge&amp;logo=amazonwebservices&amp;logoColor=white" alt="Deploy on AWS" /></a>
@@ -49,12 +39,6 @@ AI Agents that don't break
 <p align="center">
 <a href="https://trendshift.io/repositories/12890" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12890" alt="mnfst%2Fllm-gateway | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
-
-> ### 🦚 Meet Manifest, the self-healing layer for APIs
->
-> Manifest fixes failed API requests in real time, before they break your app. This open-source LLM gateway is a Manifest product and stays maintained.
->
-> **[Try Manifest](https://dashboard.manifest.build/signup)**
 
 ## What is Manifest LLM Gateway?
 

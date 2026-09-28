@@ -15,12 +15,6 @@
   <a href="https://discord.gg/FepAked3W7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
-> ### 🦚 Meet Manifest, the self-healing layer for APIs
->
-> Manifest fixes failed API requests in real time, before they break your app. This open-source LLM gateway is a Manifest product and stays maintained.
->
-> **[Try Manifest](https://dashboard.manifest.build/signup)**
-
 ## What is Manifest Gateway?
 
 Manifest Gateway is an open-source LLM gateway for agents and apps. It sits between your agents and your LLM providers (OpenAI, Anthropic, Gemini, local models, and 300+ more) and gives you complete control over routing decisions. Define custom routing rules, set fallbacks when models fail, enable self-healing with Autofix, and track everything from one dashboard.
@@ -32,16 +26,6 @@ Manifest Gateway is an open-source LLM gateway for agents and apps. It sits betw
 - **Self-hosted**: your requests, your providers, your data — complete privacy
 
 ![manifest-gh](https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/manifest-screenshot.png)
-
----
-
-<p align="center">
-  <strong>🦚 Keep your apps up with self-healing APIs</strong><br/>
-  <br/>
-  Manifest fixes API errors in real time, so your apps, workflows and agents keep running instead of breaking on failed requests.<br/>
-  <br/>
-  <a href="https://dashboard.manifest.build/signup" style="display: inline-block; padding: 10px 24px; background-color: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">Get started</a>
-</p>
 
 ---
 
