@@ -21,9 +21,6 @@
 @import './action-menu.css';
 @import './feedback.css';
 @import './params-card.css';
-@import './pivot.css';
-@import './autofix.css';
-@import './autofix-banner.css';
 
 /*
  * Route-scoped stylesheets are intentionally NOT imported here. They are
