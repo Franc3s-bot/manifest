@@ -909,6 +909,27 @@ describe('Google Adapter', () => {
       expect(result.systemInstruction).toBeUndefined();
     });
 
+    it('extracts system instruction from content-part arrays', () => {
+      const body = {
+        messages: [
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'You are helpful.' },
+              { type: 'input_text', text: 'Be concise.' },
+            ],
+          },
+          { role: 'user', content: 'Hi' },
+        ],
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.systemInstruction).toEqual({
+        parts: [{ text: 'You are helpful.\nBe concise.' }],
+      });
+      expect(result.contents).toEqual([{ role: 'user', parts: [{ text: 'Hi' }] }]);
+    });
+
     it('joins multiple system messages into one instruction', () => {
       const body = {
         messages: [

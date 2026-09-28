@@ -311,6 +311,24 @@ function applyResponseFormatToGenerationConfig(
   genConfig.responseSchema = sanitizeSchema(jsonSchema.schema);
 }
 
+/**
+ * System prompts may arrive as content-part arrays (OpenAI SDK clients,
+ * translated Responses `developer` items), not only as plain strings.
+ */
+function systemContentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (part): part is { text: string } =>
+        isRecord(part) &&
+        typeof part.text === 'string' &&
+        (part.type === 'text' || part.type === 'input_text'),
+    )
+    .map((part) => part.text)
+    .join('\n');
+}
+
 /** Extracted thought_signature entries from a Gemini response. */
 export interface ExtractedSignature {
   toolCallId: string;
@@ -329,7 +347,7 @@ export function toGoogleRequest(
   // Extract system instruction
   const systemMsgs = messages.filter((m) => m.role === 'system');
   const systemText = systemMsgs
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .map((m) => systemContentText(m.content))
     .filter(Boolean)
     .join('\n');
 
