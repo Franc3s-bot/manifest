@@ -27,6 +27,10 @@ Manifest Gateway is an open-source LLM gateway for agents and apps. It sits betw
 
 ![manifest-gh](https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/manifest-screenshot.png)
 
+<p align="center">
+  <a href="https://manifest.build/api-bot/"><img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/api-bot-readme-banner.png" alt="Meet API Bot: API changes won't take your app down anymore. Discover" width="100%" /></a>
+</p>
+
 ---
 
 ## Table of contents
