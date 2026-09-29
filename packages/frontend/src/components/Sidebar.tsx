@@ -4,6 +4,7 @@ import { getBillingStatus } from '../services/api/billing.js';
 import { FREE_REQUEST_LIMIT_LABEL } from '../services/billing-display.js';
 import { checkIsSelfHosted, checkMcpEnabled } from '../services/setup-status.js';
 import AddAgentModal from './AddAgentModal.jsx';
+import ApiBotAnnouncement from './ApiBotAnnouncement.jsx';
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -171,6 +172,10 @@ const Sidebar: Component<SidebarProps> = (props) => {
       </A>
 
       <div class="sidebar__spacer" />
+
+      {/* API Bot announcement: shows for everyone in every deployment mode,
+          with a per-session dismiss. Links to manifest.build/api-bot/. */}
+      <ApiBotAnnouncement />
 
       <Show when={!selfHosted() && showUpgrade()}>
         <div class="sidebar-usage">
