@@ -1,5 +1,17 @@
 # manifest
 
+## 6.28.0
+
+### Minor Changes
+
+- 46f2aca: Serve Amazon Bedrock cross-Region inference profiles such as `global.moonshotai.kimi-k3` and `us.openai.gpt-6-sol` through Bedrock Runtime instead of Mantle, which returned 404 for them. Bedrock connections now discover the profiles their region offers for verified models (Kimi K3, GPT-6 Sol, Luna and Astra, GPT-5.6 Luna) and keep them when the Bedrock control plane is briefly unreachable.
+
+### Patch Changes
+
+- 4f49d67: Keep dashboard usage charts on the daily rollup once its backfill is confirmed, so a lagging rollup worker no longer switches every tenant back to raw scans.
+- a83f083: Announce API Bot in the dashboard with a banner and a sidebar card that link to manifest.build/api-bot/.
+- c83cafa: Fix OpenAI subscription model discovery so `gpt-6.1-sol` appears. The `/backend-api/codex/models` endpoint returns an older model subset for older `client_version` values. Bump `CODEX_CLI_VERSION` from `0.156.1` to `0.159.2`.
+
 ## 6.27.0
 
 ### Minor Changes
