@@ -57,6 +57,10 @@ const DAILY_RANGE_DAYS: Readonly<Record<string, number>> = {
 export class AgentUsageDailyService implements OnModuleInit {
   private readonly logger = new Logger(AgentUsageDailyService.name);
   private running = false;
+  // Once the backfill is confirmed complete, stay on the rollup. Re-checking
+  // every minute let a lagging worker switch every tenant back to raw scans,
+  // and that load kept the worker from catching up.
+  private automaticReadsConfirmed = false;
 
   constructor(private readonly dataSource: DataSource) {}
 
@@ -73,6 +77,7 @@ export class AgentUsageDailyService implements OnModuleInit {
   }
 
   async refreshAutomaticReads(): Promise<void> {
+    if (this.automaticReadsConfirmed) return;
     try {
       const rows = (await this.dataSource.query(
         `WITH pending_request AS (
@@ -111,7 +116,8 @@ export class AgentUsageDailyService implements OnModuleInit {
           toLocalSqlTimestamp(new Date(Date.now() - READ_LAG_GRACE_MINUTES * 60_000)),
         ],
       )) as Array<{ ready: boolean }>;
-      setAgentUsageDailyAutomaticReadsReady(rows[0]?.ready === true);
+      this.automaticReadsConfirmed = rows[0]?.ready === true;
+      setAgentUsageDailyAutomaticReadsReady(this.automaticReadsConfirmed);
     } catch (error) {
       setAgentUsageDailyAutomaticReadsReady(false);
       this.logger.warn(`agent usage rollup readiness check failed: ${String(error)}`);

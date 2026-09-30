@@ -75,6 +75,26 @@ describe('AgentUsageDailyService', () => {
     expect(service.readsEnabledFor('tenant-a')).toBe(false);
   });
 
+  it('stays on the rollup once the backfill is confirmed, even if the worker lags', async () => {
+    delete process.env['AGENT_USAGE_DAILY_READS'];
+    delete process.env['AGENT_USAGE_DAILY_READ_TENANTS'];
+    // Only the first response should be consumed. The lag and timeout
+    // responses are tripwires that would switch reads off if the check re-ran.
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce([{ ready: true }])
+      .mockResolvedValueOnce([{ ready: false }])
+      .mockRejectedValueOnce(new Error('statement timeout'));
+    const service = new AgentUsageDailyService({ query } as never);
+
+    await service.refreshAutomaticReads();
+    await service.refreshAutomaticReads();
+    await service.refreshAutomaticReads();
+
+    expect(service.readsEnabledFor('tenant-a')).toBe(true);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('lets operators force the raw path after automatic cutover', async () => {
     process.env['AGENT_USAGE_DAILY_READS'] = 'false';
     delete process.env['AGENT_USAGE_DAILY_READ_TENANTS'];
