@@ -1,6 +1,8 @@
 import {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   closeAnthropicObjectSchemas,
   extractThinkingBlocksFromMessagesResponse,
   toAnthropicRequest,
@@ -3115,5 +3117,181 @@ describe('Anthropic Adapter', () => {
         blocks: [{ type: 'thinking', thinking: 't', signature: 's' }],
       });
     });
+  });
+});
+
+describe('applyAnthropicLastMessageCacheControl', () => {
+  const cache = { type: 'ephemeral' };
+
+  it('marks the last block of the last message so the cached prefix follows the conversation', () => {
+    const body = {
+      system: [{ type: 'text', text: 'instructions', cache_control: cache }],
+      messages: [
+        { role: 'user', content: 'turn 1' },
+        { role: 'assistant', content: 'answer 1' },
+        {
+          role: 'user',
+          content: [
+            { type: 'tool_result', tool_use_id: 't1', content: 'output' },
+            { type: 'text', text: 'turn 2' },
+          ],
+        },
+      ],
+    };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages[2].content).toEqual([
+      { type: 'tool_result', tool_use_id: 't1', content: 'output' },
+      { type: 'text', text: 'turn 2', cache_control: cache },
+    ]);
+    expect(countCacheControls(body)).toBe(2);
+  });
+
+  it('turns a string last message into a single marked text block', () => {
+    const body = { messages: [{ role: 'user', content: 'hi' }] };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages[0].content).toEqual([{ type: 'text', text: 'hi', cache_control: cache }]);
+  });
+
+  it('does not mutate the inbound messages', () => {
+    const lastBlock = { type: 'text', text: 'hi' };
+    const lastMessage = { role: 'user', content: [lastBlock] };
+    const messages = [lastMessage];
+    const body: Record<string, unknown> = { messages };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages).not.toBe(messages);
+    expect(lastMessage.content).toEqual([{ type: 'text', text: 'hi' }]);
+    expect(lastBlock).toEqual({ type: 'text', text: 'hi' });
+  });
+
+  it('skips blocks Anthropic cannot cache and marks the closest cacheable one', () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'prefill' },
+            { type: 'text', text: '' },
+            { type: 'thinking', thinking: 'hmm', signature: 'sig' },
+            { type: 'redacted_thinking', data: 'x' },
+          ],
+        },
+      ],
+    };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages[0].content[0]).toEqual({
+      type: 'text',
+      text: 'prefill',
+      cache_control: cache,
+    });
+    expect(countCacheControls(body)).toBe(1);
+  });
+
+  it.each([
+    ['no messages', {}],
+    ['an empty messages array', { messages: [] }],
+    ['a non-object last message', { messages: ['hi'] }],
+    ['an empty string last message', { messages: [{ role: 'user', content: '' }] }],
+    ['a last message without content', { messages: [{ role: 'user' }] }],
+    [
+      'a last message with only uncacheable blocks',
+      { messages: [{ role: 'user', content: [{ type: 'text', text: '' }, 'raw'] }] },
+    ],
+  ])('leaves the body untouched with %s', (_label, body) => {
+    const before = JSON.stringify(body);
+
+    applyAnthropicLastMessageCacheControl(body as Record<string, unknown>);
+
+    expect(JSON.stringify(body)).toBe(before);
+  });
+
+  it('keeps a caller-marked last block as it is', () => {
+    const existing = { type: 'ephemeral', ttl: '5m' };
+    const body = {
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi', cache_control: existing }] },
+      ],
+    };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages[0].content[0].cache_control).toBe(existing);
+    expect(countCacheControls(body)).toBe(1);
+  });
+
+  it('does not add a breakpoint when the body is at the four-breakpoint cap', () => {
+    const body = {
+      system: [
+        { type: 'text', text: 's1', cache_control: cache },
+        { type: 'text', text: 's2', cache_control: cache },
+        { type: 'text', text: 's3', cache_control: cache },
+      ],
+      tools: [{ name: 'read', cache_control: cache }],
+      messages: [{ role: 'user', content: 'hi' }],
+    };
+
+    applyAnthropicLastMessageCacheControl(body);
+
+    expect(body.messages[0].content).toBe('hi');
+  });
+
+  it('respects a caller cache plan that uses a one-hour TTL or top-level cache_control', () => {
+    const oneHour = {
+      system: [{ type: 'text', text: 's', cache_control: { type: 'ephemeral', ttl: '1h' } }],
+      messages: [{ role: 'user', content: 'hi' }],
+    };
+    const topLevel = { cache_control: cache, messages: [{ role: 'user', content: 'hi' }] };
+
+    applyAnthropicLastMessageCacheControl(oneHour);
+    applyAnthropicLastMessageCacheControl(topLevel);
+
+    expect(oneHour.messages[0].content).toBe('hi');
+    expect(topLevel.messages[0].content).toBe('hi');
+  });
+});
+
+describe('hasMessageCacheControl', () => {
+  const cache = { type: 'ephemeral' };
+
+  it('finds a breakpoint on a message block', () => {
+    expect(
+      hasMessageCacheControl({
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi', cache_control: cache }] }],
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['no messages', {}],
+    ['string content', { messages: [{ role: 'user', content: 'hi' }] }],
+    ['a non-object message', { messages: ['hi'] }],
+    [
+      'a breakpoint on system or tools only',
+      {
+        system: [{ type: 'text', text: 's', cache_control: cache }],
+        tools: [{ name: 't', cache_control: cache }],
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+      },
+    ],
+    [
+      'a tool_use input field named cache_control',
+      {
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 't1', name: 'x', input: { cache_control: 'on' } }],
+          },
+        ],
+      },
+    ],
+  ])('ignores %s', (_label, body) => {
+    expect(hasMessageCacheControl(body as Record<string, unknown>)).toBe(false);
   });
 });

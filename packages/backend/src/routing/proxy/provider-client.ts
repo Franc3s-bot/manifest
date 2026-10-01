@@ -15,7 +15,9 @@ import { isAnthropicHost, mergeAnthropicBeta } from './anthropic-beta';
 import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
 import {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   toGoogleRequest,
   toAnthropicRequest,
   toResponsesRequest,
@@ -147,12 +149,35 @@ const COPILOT_RESPONSES_ENDPOINTS = new Set(['/responses', 'ws:/responses']);
  * Forwarding a beta header the caller already chose is additive: the request
  * either keeps working or starts working. Injecting a cache breakpoint edits
  * the body, changes prompt-caching behaviour and moves what the tenant is
- * billed. Extending that to custom-Anthropic endpoints is a real behaviour
- * change for people who do not get it today, so it belongs in its own change
- * with its own evidence, not folded into header forwarding.
+ * billed. Top-level automatic caching is an Anthropic API feature, so every
+ * other Anthropic-format upstream (Bedrock, custom rows, including ones
+ * pointed at Anthropic) gets an explicit breakpoint on the last message
+ * instead, which is part of the Messages API itself (#3023).
  */
 function shouldApplyAnthropicAutomaticCacheControl(endpointKey: string): boolean {
   return endpointKey === 'anthropic';
+}
+
+/**
+ * The last-message breakpoint costs a cache write, so add it only where it
+ * pays back: a Claude model (the family that caches only where marked), a
+ * caller that has not placed its own message breakpoints, and a request that
+ * is part of a conversation. A lone message without tools is usually a
+ * one-shot call (a title, a summary) whose cache would never be read.
+ */
+function shouldAddConversationCacheBreakpoint(
+  model: string,
+  apiMode: ForwardOptions['apiMode'],
+  inboundBody: Record<string, unknown>,
+  requestBody: Record<string, unknown>,
+): boolean {
+  if (!/claude/i.test(model)) return false;
+  // Only native Messages callers reach the upstream with their own message
+  // breakpoints; translating Chat Completions drops them.
+  if (apiMode === 'messages' && hasMessageCacheControl(inboundBody)) return false;
+  const { messages, tools } = requestBody;
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  return hasTools || (Array.isArray(messages) && messages.length > 1);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -744,6 +769,8 @@ export class ProviderClient {
       if (stream) requestBody.stream = true;
       if (shouldApplyAnthropicAutomaticCacheControl(endpointKey)) {
         applyAnthropicAutomaticCacheControl(requestBody);
+      } else if (shouldAddConversationCacheBreakpoint(bareModel, ctx.apiMode, body, requestBody)) {
+        applyAnthropicLastMessageCacheControl(requestBody);
       }
       return {
         url: `${endpoint.baseUrl}${endpoint.buildPath(bareModel)}`,

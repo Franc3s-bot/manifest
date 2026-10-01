@@ -902,6 +902,202 @@ describe('ProviderClient', () => {
       expect(result.wireApiMode).toBe('messages');
     });
 
+    describe('conversation cache breakpoint on Anthropic-format upstreams (#3023)', () => {
+      const conversation = {
+        messages: [
+          { role: 'system', content: 'Be concise.' },
+          { role: 'user', content: 'turn 1' },
+          { role: 'assistant', content: 'answer 1' },
+          { role: 'user', content: 'turn 2' },
+        ],
+      };
+      const nativeConversation = {
+        max_tokens: 1024,
+        system: 'Be concise.',
+        messages: conversation.messages.slice(1),
+      };
+      const cache = { type: 'ephemeral' };
+
+      async function sentBodyFor(opts: Partial<Parameters<ProviderClient['forward']>[0]>) {
+        mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+        await client.forward({
+          provider: 'bedrock',
+          apiKey: 'test-key',
+          model: 'anthropic.claude-sonnet-5',
+          body: structuredClone(conversation),
+          stream: false,
+          ...opts,
+        });
+        return JSON.parse(mockFetch.mock.calls[0][1].body);
+      }
+
+      it.each([
+        ['translated Chat Completions', {}],
+        [
+          'native Messages',
+          { apiMode: 'messages' as const, body: structuredClone(nativeConversation) },
+        ],
+      ])('marks the last message for Bedrock Claude from %s', async (_label, opts) => {
+        const sent = await sentBodyFor(opts);
+
+        expect(sent.cache_control).toBeUndefined();
+        expect(sent.messages.at(-1)).toEqual({
+          role: 'user',
+          content: [{ type: 'text', text: 'turn 2', cache_control: cache }],
+        });
+        expect(sent.system).toEqual([{ type: 'text', text: 'Be concise.', cache_control: cache }]);
+      });
+
+      it('marks the last message for Bedrock Claude in a configured region', async () => {
+        const sent = await sentBodyFor({
+          customEndpoint: buildEndpointOverride(
+            'https://bedrock-mantle.eu-west-1.api.aws',
+            'bedrock-anthropic',
+          ),
+        });
+
+        expect(mockFetch.mock.calls[0][0]).toBe(
+          'https://bedrock-mantle.eu-west-1.api.aws/anthropic/v1/messages',
+        );
+        expect(sent.messages.at(-1).content).toEqual([
+          { type: 'text', text: 'turn 2', cache_control: cache },
+        ]);
+      });
+
+      it('marks the last message for a custom Anthropic-kind provider', async () => {
+        const sent = await sentBodyFor({
+          provider: 'custom:11111111-1111-1111-1111-111111111111',
+          model: 'claude-sonnet-5',
+          customEndpoint: buildCustomEndpoint('https://claude-proxy.example.com', 'anthropic'),
+        });
+
+        expect(sent.cache_control).toBeUndefined();
+        expect(sent.messages.at(-1).content).toEqual([
+          { type: 'text', text: 'turn 2', cache_control: cache },
+        ]);
+      });
+
+      it('keeps top-level automatic caching, not a message breakpoint, for native Anthropic', async () => {
+        const sent = await sentBodyFor({ provider: 'anthropic', model: 'claude-sonnet-5' });
+
+        expect(sent.cache_control).toEqual(cache);
+        expect(sent.messages.at(-1).content).toEqual([{ type: 'text', text: 'turn 2' }]);
+      });
+
+      it('does not mark the conversation for a non-Claude model on an Anthropic-format upstream', async () => {
+        const sent = await sentBodyFor({
+          provider: 'custom:11111111-1111-1111-1111-111111111111',
+          model: 'MiniMax-M3',
+          customEndpoint: buildCustomEndpoint('https://minimax-proxy.example.com', 'anthropic'),
+        });
+
+        expect(sent.messages.at(-1).content).toEqual([{ type: 'text', text: 'turn 2' }]);
+      });
+
+      it('leaves a native Messages caller that planned its own cache as it is', async () => {
+        const planned = {
+          ...nativeConversation,
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'turn 1', cache_control: cache }] },
+            ...nativeConversation.messages.slice(1),
+          ],
+        };
+
+        const sent = await sentBodyFor({ apiMode: 'messages', body: planned });
+
+        expect(sent.messages[0].content).toEqual([
+          { type: 'text', text: 'turn 1', cache_control: cache },
+        ]);
+        expect(sent.messages.at(-1).content).toBe('turn 2');
+      });
+
+      it('still marks a native Messages caller that only cached its system prompt', async () => {
+        const sent = await sentBodyFor({
+          apiMode: 'messages',
+          body: {
+            ...nativeConversation,
+            system: [{ type: 'text', text: 'Be concise.', cache_control: cache }],
+          },
+        });
+
+        expect(sent.messages.at(-1).content).toEqual([
+          { type: 'text', text: 'turn 2', cache_control: cache },
+        ]);
+      });
+
+      it('does not read a tool schema property named cache_control as a breakpoint', async () => {
+        const sent = await sentBodyFor({
+          apiMode: 'messages',
+          body: {
+            ...nativeConversation,
+            tools: [
+              {
+                name: 'set_cache',
+                input_schema: {
+                  type: 'object',
+                  properties: { cache_control: { type: 'string' } },
+                },
+              },
+            ],
+          },
+        });
+
+        expect(sent.messages.at(-1).content).toEqual([
+          { type: 'text', text: 'turn 2', cache_control: cache },
+        ]);
+      });
+
+      it('still marks a Chat Completions caller whose cache_control translation drops', async () => {
+        const marked = {
+          messages: [
+            conversation.messages[0],
+            { role: 'user', content: [{ type: 'text', text: 'turn 1', cache_control: cache }] },
+            ...conversation.messages.slice(2),
+          ],
+        };
+
+        const sent = await sentBodyFor({ body: marked });
+
+        expect(sent.messages.at(-1).content).toEqual([
+          { type: 'text', text: 'turn 2', cache_control: cache },
+        ]);
+      });
+
+      it('does not mark a lone message without tools, which is usually a one-shot call', async () => {
+        const sent = await sentBodyFor({
+          body: { messages: [{ role: 'user', content: 'Name this chat.' }] },
+        });
+
+        expect(sent.messages).toEqual([
+          { role: 'user', content: [{ type: 'text', text: 'Name this chat.' }] },
+        ]);
+      });
+
+      it('marks a lone message when the request carries tools', async () => {
+        const sent = await sentBodyFor({
+          body: {
+            messages: [{ role: 'user', content: 'List the files.' }],
+            tools: [
+              {
+                type: 'function',
+                function: { name: 'ls', parameters: { type: 'object', properties: {} } },
+              },
+            ],
+          },
+        });
+
+        expect(sent.messages[0].content).toEqual([
+          { type: 'text', text: 'List the files.', cache_control: cache },
+        ]);
+      });
+
+      it('does not mark messages for OpenAI-format upstreams', async () => {
+        const sent = await sentBodyFor({ provider: 'deepseek', model: 'deepseek-chat' });
+
+        expect(sent.messages.at(-1)).toEqual({ role: 'user', content: 'turn 2' });
+      });
+    });
+
     it('builds correct URL for moonshot', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
       await client.forward({

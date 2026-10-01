@@ -6,7 +6,9 @@ import {
 } from './google-adapter';
 import {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   extractThinkingBlocksFromMessagesResponse,
   toAnthropicRequest,
   fromAnthropicResponse,
@@ -76,7 +78,9 @@ export function createAnthropicTransformer(
 // Re-export adapter functions used by ProviderClient.forward()
 export {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   extractThinkingBlocksFromMessagesResponse,
   toGoogleRequest,
   toAnthropicRequest,
