@@ -294,6 +294,52 @@ describe('Google Adapter', () => {
       ]);
     });
 
+    describe('tool_choice', () => {
+      const tools = [
+        {
+          type: 'function',
+          function: { name: 'web_search', parameters: { type: 'object' } },
+        },
+      ];
+      const messages = [{ role: 'user', content: 'Search for cats' }];
+
+      it.each([
+        ['auto', { mode: 'AUTO' }],
+        ['none', { mode: 'NONE' }],
+        ['required', { mode: 'ANY' }],
+        [
+          { type: 'function', function: { name: 'web_search' } },
+          { mode: 'ANY', allowedFunctionNames: ['web_search'] },
+        ],
+      ])('maps %j to toolConfig', (toolChoice, functionCallingConfig) => {
+        const result = toGoogleRequest(
+          { messages, tools, tool_choice: toolChoice },
+          'gemini-2.5-flash',
+        );
+
+        expect(result.toolConfig).toEqual({ functionCallingConfig });
+      });
+
+      it.each([
+        [{ type: 'allowed_tools' }],
+        [{ type: 'function' }],
+        [{ type: 'function', function: {} }],
+      ])('omits toolConfig for an unknown tool_choice %j', (toolChoice) => {
+        const result = toGoogleRequest(
+          { messages, tools, tool_choice: toolChoice },
+          'gemini-2.5-flash',
+        );
+
+        expect(result.toolConfig).toBeUndefined();
+      });
+
+      it('omits toolConfig when no tools are sent', () => {
+        const result = toGoogleRequest({ messages, tool_choice: 'required' }, 'gemini-2.5-flash');
+
+        expect(result.toolConfig).toBeUndefined();
+      });
+    });
+
     it('strips unsupported JSON Schema fields from tool parameters', () => {
       const body = {
         messages: [{ role: 'user', content: 'Do something' }],

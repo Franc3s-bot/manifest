@@ -284,6 +284,26 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
   return [{ functionDeclarations: declarations }];
 }
 
+/**
+ * chat_completions `tool_choice` → Gemini `toolConfig`. A named function is
+ * forced with mode `ANY` limited to that one function.
+ */
+function toGoogleToolConfig(choice: unknown): Record<string, unknown> | undefined {
+  let functionCallingConfig: Record<string, unknown> | undefined;
+  if (choice === 'auto') functionCallingConfig = { mode: 'AUTO' };
+  else if (choice === 'none') functionCallingConfig = { mode: 'NONE' };
+  else if (choice === 'required') functionCallingConfig = { mode: 'ANY' };
+  else if (
+    isRecord(choice) &&
+    choice.type === 'function' &&
+    isRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    functionCallingConfig = { mode: 'ANY', allowedFunctionNames: [choice.function.name] };
+  }
+  return functionCallingConfig ? { functionCallingConfig } : undefined;
+}
+
 function applyResponseFormatToGenerationConfig(
   genConfig: Record<string, unknown>,
   responseFormat: unknown,
@@ -387,7 +407,11 @@ export function toGoogleRequest(
   }
 
   const tools = convertTools(body.tools as Record<string, unknown>[] | undefined);
-  if (tools) result.tools = tools;
+  if (tools) {
+    result.tools = tools;
+    const toolConfig = toGoogleToolConfig(body.tool_choice);
+    if (toolConfig) result.toolConfig = toolConfig;
+  }
 
   const genConfig: Record<string, unknown> = isRecord(body.generationConfig)
     ? cloneRecord(body.generationConfig)
