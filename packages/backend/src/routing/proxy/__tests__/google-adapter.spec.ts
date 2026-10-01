@@ -1459,6 +1459,30 @@ describe('Google Adapter', () => {
       expect(details.cached_tokens).toBe(45000);
     });
 
+    it('counts thinking tokens as completion tokens', () => {
+      const google = {
+        candidates: [
+          {
+            content: { parts: [{ text: 'Hello!' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 5,
+          thoughtsTokenCount: 120,
+          totalTokenCount: 135,
+        },
+      };
+
+      const result = fromGoogleResponse(google, 'gemini-2.5-flash');
+      const usage = result.usage as Record<string, unknown>;
+      expect(usage.prompt_tokens).toBe(10);
+      expect(usage.completion_tokens).toBe(125);
+      expect(usage.total_tokens).toBe(135);
+      expect(usage.completion_tokens_details).toEqual({ reasoning_tokens: 120 });
+    });
+
     it('handles function call response', () => {
       const google = {
         candidates: [
@@ -1994,6 +2018,22 @@ describe('Google Adapter', () => {
       const result = transformGoogleStreamChunk(chunk, 'gemini-2.0-flash');
       expect(result).toContain('"cache_read_tokens":80');
       expect(result).toContain('"cached_tokens":80');
+    });
+
+    it('counts thinking tokens as completion tokens in stream usage', () => {
+      const chunk = JSON.stringify({
+        candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }],
+        usageMetadata: {
+          promptTokenCount: 100,
+          candidatesTokenCount: 50,
+          thoughtsTokenCount: 300,
+          totalTokenCount: 450,
+        },
+      });
+      const result = transformGoogleStreamChunk(chunk, 'gemini-2.5-flash');
+      expect(result).toContain('"completion_tokens":350');
+      expect(result).toContain('"total_tokens":450');
+      expect(result).toContain('"reasoning_tokens":300');
     });
 
     it('emits finish_reason stop for STOP without tool calls in stream with usage', () => {

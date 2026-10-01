@@ -465,17 +465,28 @@ export function fromGoogleResponse(
     choices: [
       { index: 0, message, finish_reason: mapFinishReason(candidate, toolCalls.length > 0) },
     ],
-    usage: usage
-      ? {
-          prompt_tokens: usage.promptTokenCount ?? 0,
-          completion_tokens: usage.candidatesTokenCount ?? 0,
-          total_tokens: usage.totalTokenCount ?? 0,
-          prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-          cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-          cache_creation_tokens: 0,
-        }
-      : undefined,
+    usage: usage ? toChatUsage(usage) : undefined,
     ...(extractedSignatures.length > 0 ? { _extractedSignatures: extractedSignatures } : {}),
+  };
+}
+
+/**
+ * Gemini counts thinking tokens in `thoughtsTokenCount`, apart from
+ * `candidatesTokenCount`, and bills them as output. Fold them into
+ * `completion_tokens` (and report them as `reasoning_tokens`, like OpenAI) so
+ * thinking models are not under-counted and under-priced.
+ */
+function toChatUsage(usage: Record<string, number>): Record<string, unknown> {
+  const reasoningTokens = usage.thoughtsTokenCount ?? 0;
+  const cachedTokens = usage.cachedContentTokenCount ?? 0;
+  return {
+    prompt_tokens: usage.promptTokenCount ?? 0,
+    completion_tokens: (usage.candidatesTokenCount ?? 0) + reasoningTokens,
+    total_tokens: usage.totalTokenCount ?? 0,
+    prompt_tokens_details: { cached_tokens: cachedTokens },
+    completion_tokens_details: { reasoning_tokens: reasoningTokens },
+    cache_read_tokens: cachedTokens,
+    cache_creation_tokens: 0,
   };
 }
 
@@ -578,14 +589,7 @@ export function transformGoogleStreamChunk(chunk: string, model: string): Google
       created: Math.floor(Date.now() / 1000),
       model,
       choices: [],
-      usage: {
-        prompt_tokens: usage.promptTokenCount ?? 0,
-        completion_tokens: usage.candidatesTokenCount ?? 0,
-        total_tokens: usage.totalTokenCount ?? 0,
-        prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-        cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-        cache_creation_tokens: 0,
-      },
+      usage: toChatUsage(usage),
     })}\n\n`;
   }
 
