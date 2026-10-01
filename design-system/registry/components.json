@@ -2226,6 +2226,7 @@
         "model-params__number--slider",
         "model-params__param-key",
         "model-params__request-link",
+        "model-params__reset",
         "model-params__row",
         "model-params__row--disabled",
         "model-params__row-control",
@@ -5118,7 +5119,7 @@
     "tokens": 79,
     "darkOverrides": 38,
     "blocks": 318,
-    "classes": 1699,
+    "classes": 1700,
     "canonicalRules": 46,
     "ghostRules": 46
   }

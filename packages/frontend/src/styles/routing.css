@@ -911,6 +911,32 @@
   color: hsl(var(--muted-foreground));
 }
 
+.model-params__reset {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.model-params__reset:hover:not(:disabled) {
+  color: hsl(var(--foreground));
+}
+
+.model-params__reset:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.model-params__reset:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
 .model-params__row--disabled .model-params__label-title,
 .model-params__row--disabled .model-params__label-hint {
   color: hsl(var(--muted-foreground));
