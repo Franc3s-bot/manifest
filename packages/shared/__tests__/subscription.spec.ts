@@ -221,8 +221,10 @@ describe('getSubscriptionProviderConfig', () => {
       subscriptionAuthMode: 'token',
       subscriptionKeyPlaceholder: 'Paste your OpenCode API key',
     });
+    // No plan-wide cap: models.dev carries the per-model windows for this
+    // gateway (up to 1.05M) and the configured ceiling must not clamp them.
     expect(config?.subscriptionCapabilities).toMatchObject({
-      maxContextWindow: 200000,
+      maxContextWindow: 1050000,
       supportsPromptCaching: false,
       supportsBatching: false,
     });

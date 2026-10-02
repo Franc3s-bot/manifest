@@ -46,7 +46,6 @@ const GEMINI_DEFAULT_CONTEXT = 1000000;
 const MINIMAX_SUBSCRIPTION_MODELS_URL = 'https://api.minimax.io/anthropic/v1/models?limit=100';
 const COMMAND_CODE_MODELS_URL = 'https://api.commandcode.ai/provider/v1/models';
 /** Context window assumed when the Provider API omits `context_length`. */
-const COMMAND_CODE_DEFAULT_CONTEXT = 200_000;
 const XIAOMI_MIMO_MODELS_URL = 'https://api.xiaomimimo.com/v1/models';
 const XIAOMI_TOKEN_PLAN_MODELS_URL = `${getXiaomiTokenPlanBaseUrl()}/v1/models`;
 const QWEN_TOKEN_PLAN_MODELS_URL =
@@ -326,11 +325,14 @@ const parseCommandCode = createModelParser<CommandCodeModelEntry>({
   filter: (entry) => typeof entry.id === 'string' && entry.id.length > 0,
   getId: (entry) => `commandcode/${entry.id}`,
   getDisplayName: (entry, id) => entry.name || id,
-  // Command Code's Provider API reports `context_length` per model; when it
-  // omits it, fall back to the subscription's nominal 200k window (mirrors
-  // the 9router/OmniRoute defaultContextLength for this provider) rather than
-  // the generic 128k discovery default.
-  contextWindow: (entry) => entry.context_length ?? COMMAND_CODE_DEFAULT_CONTEXT,
+  // Command Code's Provider API reports `context_length` per model. When it
+  // omits it we do not invent a nominal window: the entry is marked as a
+  // provider default so enrichment can fill it from catalog metadata
+  // (`lookupModelAcrossProviders`), which is exact-id matched for providers
+  // missing from models.dev.
+  contextWindow: (entry) => entry.context_length ?? DEFAULT_CONTEXT_WINDOW,
+  contextWindowSource: (entry) =>
+    entry.context_length ? ('provider' as const) : ('provider_default' as const),
   capabilityCode: true,
 });
 
@@ -1089,7 +1091,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
   },
 };
 
-const OPENCODE_GO_CONTEXT_WINDOW = 200000;
+// OpenCode Go does not publish context windows and its plan has no per-model
+// ceiling we can trust: models.dev lists the gateway as a provider keyed by the
+// exact ids it serves (1M+ for most of the catalog). The fetcher therefore
+// records only "unknown" here and lets catalog metadata supply the real window
+// during enrichment, instead of capping every model at a nominal 200k.
 
 export interface ProviderModelFetchOptions {
   forceRefresh?: boolean;
@@ -1369,7 +1375,8 @@ export class ProviderModelFetcherService {
           id,
           displayName: id,
           provider: 'opencode-go',
-          contextWindow: OPENCODE_GO_CONTEXT_WINDOW,
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          contextWindowSource: 'provider_default' as const,
           inputPricePerToken: 0,
           outputPricePerToken: 0,
           capabilityReasoning: true,
@@ -1395,7 +1402,8 @@ export class ProviderModelFetcherService {
       id: `opencode-go/${entry.id}`,
       displayName: entry.displayName,
       provider: 'opencode-go',
-      contextWindow: OPENCODE_GO_CONTEXT_WINDOW,
+      contextWindow: DEFAULT_CONTEXT_WINDOW,
+      contextWindowSource: 'provider_default' as const,
       inputPricePerToken: 0,
       outputPricePerToken: 0,
       capabilityReasoning: true,

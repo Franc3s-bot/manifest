@@ -1,4 +1,5 @@
 import { ProviderModelFetcherService, PROVIDER_CONFIGS } from './provider-model-fetcher.service';
+import { DEFAULT_CONTEXT_WINDOW } from './model-fetcher';
 import { CODEX_CLI_VERSION } from '../common/constants/subscription-clients';
 
 describe('ProviderModelFetcherService', () => {
@@ -2934,6 +2935,9 @@ describe('ProviderModelFetcherService', () => {
           provider: 'opencode-go',
           inputPricePerToken: 0,
           outputPricePerToken: 0,
+          // No nominal cap: metadata supplies the real window during enrichment.
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          contextWindowSource: 'provider_default',
         }),
       );
       expect(result[1].id).toBe('opencode-go/glm-5.1');
@@ -2973,6 +2977,8 @@ describe('ProviderModelFetcherService', () => {
           id: 'opencode-go/glm-5.2',
           displayName: 'GLM-5.2',
           provider: 'opencode-go',
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          contextWindowSource: 'provider_default',
         }),
       );
     });
@@ -3081,7 +3087,7 @@ describe('ProviderModelFetcherService', () => {
       ]);
     });
 
-    it('falls back to the 200k default context when the catalog omits context_length', async () => {
+    it('marks an omitted context_length as a provider default instead of inventing 200k', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
         json: async () => ({
@@ -3094,7 +3100,8 @@ describe('ProviderModelFetcherService', () => {
       expect(result).toEqual([
         expect.objectContaining({
           id: 'commandcode/gpt-5.4',
-          contextWindow: 200000,
+          contextWindow: DEFAULT_CONTEXT_WINDOW,
+          contextWindowSource: 'provider_default',
           capabilityCode: true,
         }),
       ]);

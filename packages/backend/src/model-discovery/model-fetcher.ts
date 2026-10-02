@@ -33,8 +33,15 @@ export interface DiscoveredModel {
    * Optional: many discovery sources only report the context window.
    */
   maxOutputTokens?: number;
-  /** Identifies context windows that can be recalculated without replacing provider metadata. */
-  contextWindowSource?: 'provider' | 'subscription_config';
+  /**
+   * Identifies where a context window came from.
+   *
+   * `provider_default` marks a window the provider did not report — the fetcher
+   * only had a nominal/fallback number. Catalog metadata (models.dev) is
+   * authoritative for those and replaces them during enrichment, so a gateway
+   * transport never caps a model below the window it actually serves.
+   */
+  contextWindowSource?: 'provider' | 'provider_default' | 'subscription_config';
   inputPricePerToken: number | null;
   outputPricePerToken: number | null;
   cacheReadPricePerToken?: number;
