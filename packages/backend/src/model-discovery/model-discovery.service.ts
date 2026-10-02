@@ -16,7 +16,10 @@ import { DiscoveredModel, DEFAULT_CONTEXT_WINDOW } from './model-fetcher';
 import { decryptWithAny, getDecryptionSecrets } from '../common/utils/crypto.util';
 import { computeQualityScore } from '../database/quality-score.util';
 import { PricingSyncService } from '../database/pricing-sync.service';
-import { ModelsDevSyncService } from '../database/models-dev-sync.service';
+import {
+  ModelsDevSyncService,
+  type ModelsDevModelEntry,
+} from '../database/models-dev-sync.service';
 import { parseOAuthTokenBlob } from '../routing/oauth/core';
 import { getQwenCompatibleBaseUrl, isQwenResolvedEndpoint } from '../routing/qwen-region';
 import {
@@ -64,6 +67,15 @@ function isQwenProvider(providerId: string): boolean {
 function modelsDevModelIdPrefix(providerId: string): string | undefined {
   const lower = providerId.toLowerCase();
   return lower === 'opencode-go' || lower === 'opencode-zen' ? lower : undefined;
+}
+
+/**
+ * Strip the `provider/` namespace so a catalog lookup can match ids that
+ * models.dev keys by the bare name (`commandcode/gpt-5.4` → `gpt-5.4`).
+ */
+function bareProviderModelId(modelId: string, providerId: string): string {
+  const prefix = `${providerId.toLowerCase()}/`;
+  return modelId.toLowerCase().startsWith(prefix) ? modelId.slice(prefix.length) : modelId;
 }
 
 function prefersModelsDevCatalog(providerId: string): boolean {
@@ -853,7 +865,16 @@ export class ModelDiscoveryService {
     return this.computeScore(this.applyCapabilities(priced, providerId));
   }
 
-  /** Merge capability flags from models.dev without touching pricing or display name. */
+  /**
+   * Merge models.dev metadata without touching pricing or display name.
+   *
+   * Capability flags always come from the catalog entry. Context windows do too,
+   * but only for entries the provider never reported itself
+   * (`contextWindowSource: 'provider_default'`): a nominal fallback number must
+   * not cap a model below the window the catalog says it serves. Providers that
+   * are missing from models.dev (custom subscriptions such as Command Code) fall
+   * back to the exact-id across-provider lookup.
+   */
   private applyCapabilities(model: DiscoveredModel, providerId: string): DiscoveredModel {
     if (!this.modelsDevSync) return model;
     const { metadata, entry: mdEntry } = resolveMetadataEntry(
@@ -863,18 +884,45 @@ export class ModelDiscoveryService {
         this.modelsDevSync!.lookupModelCapabilities(lookupProvider, lookupModel),
     );
     const metadataProvider = metadata.provider ?? providerId;
-    if (!mdEntry) return model;
+    const withCapabilities = mdEntry
+      ? {
+          ...model,
+          capabilityReasoning: mdEntry.reasoning ?? model.capabilityReasoning,
+          capabilityCode: mdEntry.toolCall ?? model.capabilityCode,
+          ...(mdEntry.inputModalities ? { inputModalities: mdEntry.inputModalities } : {}),
+          ...(mdEntry.outputModalities ? { outputModalities: mdEntry.outputModalities } : {}),
+          capabilities: mergeModelCapabilities(
+            model.capabilities,
+            mdEntry.capabilities,
+            modelSupportsStreaming(metadataProvider, metadata.model) ? ['stream'] : undefined,
+          ),
+        }
+      : model;
+
+    return this.applyCatalogContextWindow(withCapabilities, mdEntry);
+  }
+
+  /**
+   * Give a nominal context window the catalog's real value. Only models whose
+   * window the provider did not report are eligible — a provider-reported or
+   * subscription-configured window is never rewritten here.
+   */
+  private applyCatalogContextWindow(
+    model: DiscoveredModel,
+    mdEntry: ModelsDevModelEntry | null,
+  ): DiscoveredModel {
+    if (model.contextWindowSource !== 'provider_default' || !this.modelsDevSync) return model;
+    const catalogEntry =
+      mdEntry ??
+      this.modelsDevSync.lookupModelAcrossProviders(bareProviderModelId(model.id, model.provider));
+    const contextWindow = catalogEntry?.contextWindow;
+    if (contextWindow === undefined || contextWindow === model.contextWindow) return model;
     return {
       ...model,
-      capabilityReasoning: mdEntry.reasoning ?? model.capabilityReasoning,
-      capabilityCode: mdEntry.toolCall ?? model.capabilityCode,
-      ...(mdEntry.inputModalities ? { inputModalities: mdEntry.inputModalities } : {}),
-      ...(mdEntry.outputModalities ? { outputModalities: mdEntry.outputModalities } : {}),
-      capabilities: mergeModelCapabilities(
-        model.capabilities,
-        mdEntry.capabilities,
-        modelSupportsStreaming(metadataProvider, metadata.model) ? ['stream'] : undefined,
-      ),
+      contextWindow,
+      ...(model.maxOutputTokens === undefined && catalogEntry?.maxOutputTokens !== undefined
+        ? { maxOutputTokens: catalogEntry.maxOutputTokens }
+        : {}),
     };
   }
 

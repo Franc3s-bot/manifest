@@ -106,6 +106,7 @@ describe('ModelDiscoveryService', () => {
   let mockModelsDevSync: {
     lookupModel: jest.Mock;
     lookupModelCapabilities: jest.Mock;
+    lookupModelAcrossProviders: jest.Mock;
     getModelsForProvider: jest.Mock;
     refreshCache: jest.Mock;
   };
@@ -129,6 +130,7 @@ describe('ModelDiscoveryService', () => {
         lookupModel(providerId, modelId),
       ),
       getModelsForProvider: jest.fn().mockReturnValue([]),
+      lookupModelAcrossProviders: jest.fn().mockReturnValue(null),
       refreshCache: jest.fn().mockResolvedValue(0),
     };
     mockModelRegistry = {
@@ -1443,6 +1445,93 @@ describe('ModelDiscoveryService', () => {
       );
       expect(result[0].capabilityReasoning).toBe(true);
       expect(result[0].inputModalities).toEqual(['text', 'image']);
+    });
+
+    it('should give a provider-default context window the catalog value', async () => {
+      // opencode-go publishes no per-model windows, so the fetcher records only a
+      // nominal default and marks it `provider_default`. models.dev keys the same
+      // gateway (bare id) with the real 1M window: enrichment must apply it, or
+      // every routed model stays capped at the nominal number.
+      mockModelsDevSync.lookupModelCapabilities.mockImplementation(
+        (_providerId: string, modelId: string) =>
+          modelId.endsWith('deepseek-v4.1-flash')
+            ? {
+                id: 'deepseek-v4.1-flash',
+                name: 'DeepSeek V4.1 Flash',
+                contextWindow: 1000000,
+                maxOutputTokens: 65536,
+              }
+            : null,
+      );
+      fetcher.fetch.mockResolvedValue([
+        makeModel({
+          id: 'opencode-go/deepseek-v4.1-flash',
+          provider: 'opencode-go',
+          contextWindow: 128000,
+          contextWindowSource: 'provider_default',
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
+        }),
+      ]);
+
+      const result = await service.discoverModels(
+        makeProvider({ provider: 'opencode-go', auth_type: 'subscription' }),
+      );
+
+      expect(result[0].contextWindow).toBe(1000000);
+      expect(result[0].maxOutputTokens).toBe(65536);
+    });
+
+    it('should keep a provider-reported context window untouched', async () => {
+      mockModelsDevSync.lookupModelCapabilities.mockImplementation(
+        (_providerId: string, modelId: string) =>
+          modelId.endsWith('deepseek-v4.1-flash')
+            ? { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', contextWindow: 1000000 }
+            : null,
+      );
+      fetcher.fetch.mockResolvedValue([
+        makeModel({
+          id: 'opencode-go/deepseek-v4.1-flash',
+          provider: 'opencode-go',
+          contextWindow: 400000,
+          contextWindowSource: 'provider',
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
+        }),
+      ]);
+
+      const result = await service.discoverModels(
+        makeProvider({ provider: 'opencode-go', auth_type: 'subscription' }),
+      );
+
+      expect(result[0].contextWindow).toBe(400000);
+    });
+
+    it('should use the across-provider catalog for providers absent from models.dev', async () => {
+      // Command Code is a custom subscription that models.dev does not list, so
+      // the gateway-aware identity lookup misses. The bare-id fallback keeps the
+      // real window instead of dropping to the nominal default.
+      mockModelsDevSync.lookupModelCapabilities.mockReturnValue(null);
+      mockModelsDevSync.lookupModelAcrossProviders.mockImplementation((modelId: string) =>
+        modelId === 'gpt-5.4' ? { id: 'gpt-5.4', name: 'GPT-5.4', contextWindow: 400000 } : null,
+      );
+      fetcher.fetch.mockResolvedValue([
+        makeModel({
+          id: 'commandcode/gpt-5.4',
+          provider: 'commandcode',
+          contextWindow: 128000,
+          contextWindowSource: 'provider_default',
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
+        }),
+      ]);
+
+      const result = await service.discoverModels(
+        makeProvider({ provider: 'commandcode', auth_type: 'subscription' }),
+      );
+
+      expect(mockModelsDevSync.lookupModelAcrossProviders).toHaveBeenCalledWith('gpt-5.4');
+      expect(result[0].contextWindow).toBe(400000);
     });
 
     it('should fall back to exact model ID lookup when prefix lookup misses', async () => {

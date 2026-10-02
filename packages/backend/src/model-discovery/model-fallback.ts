@@ -293,7 +293,7 @@ export function buildSubscriptionFallbackModels(providerId: string): DiscoveredM
   const knownModels = getSubscriptionKnownModels(providerId);
   if (!knownModels) return [];
   const capabilities = getSubscriptionCapabilities(providerId);
-  const defaultCtx = capabilities?.maxContextWindow ?? 200000;
+  const defaultCtx = capabilities?.maxContextWindow ?? DEFAULT_CONTEXT_WINDOW;
   return knownModels.map((modelId) => ({
     id: modelId,
     displayName: modelId,
@@ -332,7 +332,7 @@ export function reconcileCachedSubscriptionContextWindow(
   const capabilities = getSubscriptionCapabilities(providerId);
   const contextWindow = resolveSubscriptionContextWindow(
     model.id,
-    capabilities?.maxContextWindow ?? 200000,
+    capabilities?.maxContextWindow ?? DEFAULT_CONTEXT_WINDOW,
     capabilities,
   );
   if (contextWindow === model.contextWindow) return model;
@@ -354,7 +354,7 @@ export function supplementWithKnownModels(
   const matchMode = getSubscriptionKnownModelsMatch(providerId);
 
   const capabilities = getSubscriptionCapabilities(providerId);
-  const defaultCtx = capabilities?.maxContextWindow ?? 200000;
+  const defaultCtx = capabilities?.maxContextWindow ?? DEFAULT_CONTEXT_WINDOW;
 
   for (const modelId of knownModels) {
     const lowerModelId = modelId.toLowerCase();
