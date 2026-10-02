@@ -248,8 +248,13 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionKeyPlaceholder: 'Paste your OpenCode API key',
     // Model list is discovered from OpenCode Go's live /models endpoint; models.dev
     // and the docs catalog provide metadata, quota cost, and fallback data.
+    //
+    // The window is the largest one the catalog serves (1.05M), not a per-model
+    // plan cap: OpenCode Go does not publish per-model windows and models.dev
+    // lists the gateway's ids with their real windows, so clamping here would
+    // advertise less context than the routed model can honor.
     subscriptionCapabilities: Object.freeze({
-      maxContextWindow: 200000,
+      maxContextWindow: 1050000,
       supportsPromptCaching: false,
       supportsBatching: false,
     }),
