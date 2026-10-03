@@ -245,6 +245,7 @@ function toChatToolChoice(choice: unknown): unknown {
   if (!isRecord(choice)) return undefined;
   if (choice.type === 'auto') return 'auto';
   if (choice.type === 'any') return 'required';
+  if (choice.type === 'none') return 'none';
   if (choice.type === 'tool' && typeof choice.name === 'string') {
     return { type: 'function', function: { name: choice.name } };
   }
@@ -298,6 +299,16 @@ export function messagesToChatCompletionsRequest(body: JsonRecord): JsonRecord {
   if (Array.isArray(body.tools)) chatBody.tools = toChatTools(body.tools);
   const toolChoice = toChatToolChoice(body.tool_choice);
   if (toolChoice !== undefined) chatBody.tool_choice = toolChoice;
+  // Anthropic carries the parallel switch on tool_choice; chat_completions has
+  // a top-level flag, which OpenAI rejects on a request without tools.
+  if (
+    isRecord(body.tool_choice) &&
+    body.tool_choice.disable_parallel_tool_use === true &&
+    Array.isArray(chatBody.tools) &&
+    chatBody.tools.length > 0
+  ) {
+    chatBody.parallel_tool_calls = false;
+  }
 
   return chatBody;
 }

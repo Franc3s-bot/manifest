@@ -437,6 +437,44 @@ describe('Anthropic Messages adapter', () => {
       expect(ignoredNamed.tool_choice).toBeUndefined();
     });
 
+    it('translates tool_choice none so tools stay off on chat routes', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools: [{ name: 'search', input_schema: { type: 'object' } }],
+        tool_choice: { type: 'none' },
+      });
+      expect(result.tool_choice).toBe('none');
+      expect(result).not.toHaveProperty('parallel_tool_calls');
+    });
+
+    it('maps disable_parallel_tool_use to parallel_tool_calls false', () => {
+      const tools = [{ name: 'search', input_schema: { type: 'object' } }];
+      for (const choice of [{ type: 'auto' }, { type: 'any' }, { type: 'tool', name: 'search' }]) {
+        const result = messagesToChatCompletionsRequest({
+          messages: [{ role: 'user', content: 'x' }],
+          tools,
+          tool_choice: { ...choice, disable_parallel_tool_use: true },
+        });
+        expect(result.parallel_tool_calls).toBe(false);
+      }
+
+      const allowed = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools,
+        tool_choice: { type: 'auto', disable_parallel_tool_use: false },
+      });
+      expect(allowed).not.toHaveProperty('parallel_tool_calls');
+    });
+
+    it('omits parallel_tool_calls when no tools are sent', () => {
+      // OpenAI rejects parallel_tool_calls on a request without tools.
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+      });
+      expect(result).not.toHaveProperty('parallel_tool_calls');
+    });
+
     it('exposes Anthropic server tools to the scorer by function.name (issue #1886)', () => {
       // chatBody is consumed by the routing/scoring layer in messages mode —
       // the scorer reads tool count + function.name. When the resolved
