@@ -260,6 +260,90 @@ describe('chatgpt-adapter', () => {
 
       expect(req).not.toHaveProperty('max_output_tokens');
     });
+
+    it('maps a json_schema response_format to text.format', () => {
+      const schema = { type: 'object', properties: { city: { type: 'string' } } };
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'place', description: 'A place', schema, strict: true },
+        },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toEqual({
+        format: {
+          type: 'json_schema',
+          name: 'place',
+          description: 'A place',
+          schema,
+          strict: true,
+        },
+      });
+    });
+
+    it('maps a json_object response_format to text.format', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: { type: 'json_object' },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toEqual({ format: { type: 'json_object' } });
+    });
+
+    it('leaves text unset for a plain text or malformed response_format', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+
+      expect(
+        toResponsesRequest({ messages, response_format: { type: 'text' } }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+      expect(
+        toResponsesRequest({ messages, response_format: { type: 'json_schema' } }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+      expect(
+        toResponsesRequest({ messages, response_format: 'json_object' }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+    });
+
+    it('copies only the json_schema fields the caller set', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+
+      expect(
+        toResponsesRequest(
+          { messages, response_format: { type: 'json_schema', json_schema: {} } },
+          'gpt-5-codex',
+        ).text,
+      ).toEqual({ format: { type: 'json_schema' } });
+      expect(
+        toResponsesRequest(
+          {
+            messages,
+            response_format: {
+              type: 'json_schema',
+              json_schema: { name: 'place', schema: {}, description: '' },
+            },
+          },
+          'gpt-5-codex',
+        ).text,
+      ).toEqual({ format: { type: 'json_schema', name: 'place', schema: {} } });
+    });
+
+    it('prefers an explicit Responses-style text object over response_format', () => {
+      const text = { format: { type: 'json_object' }, verbosity: 'low' };
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        text,
+        response_format: { type: 'json_schema', json_schema: { name: 'x', schema: {} } },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toBe(text);
+    });
   });
 
   describe('fromResponsesResponse', () => {

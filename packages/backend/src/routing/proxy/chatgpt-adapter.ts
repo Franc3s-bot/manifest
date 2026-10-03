@@ -133,6 +133,9 @@ export function toResponsesRequest(
 
   if (isObjectRecord(body.text)) {
     request.text = body.text;
+  } else {
+    const format = toResponsesTextFormat(body.response_format);
+    if (format) request.text = { format };
   }
 
   if (Array.isArray(body.tools)) {
@@ -140,6 +143,29 @@ export function toResponsesRequest(
   }
 
   return request;
+}
+
+/**
+ * Chat Completions `response_format` → Responses `text.format`. The Responses
+ * API has no `response_format`, so without this a structured-output request
+ * routed to a /responses endpoint comes back as free-form prose.
+ */
+function toResponsesTextFormat(responseFormat: unknown): Record<string, unknown> | undefined {
+  if (!isObjectRecord(responseFormat)) return undefined;
+  if (responseFormat.type === 'json_object') return { type: 'json_object' };
+  if (responseFormat.type !== 'json_schema' || !isObjectRecord(responseFormat.json_schema)) {
+    return undefined;
+  }
+
+  const jsonSchema = responseFormat.json_schema;
+  const format: Record<string, unknown> = { type: 'json_schema' };
+  if (jsonSchema.name !== undefined) format.name = jsonSchema.name;
+  if (jsonSchema.schema !== undefined) format.schema = jsonSchema.schema;
+  if (jsonSchema.strict !== undefined) format.strict = jsonSchema.strict;
+  if (typeof jsonSchema.description === 'string' && jsonSchema.description) {
+    format.description = jsonSchema.description;
+  }
+  return format;
 }
 
 function textFromReasoningParts(parts: unknown): string {
