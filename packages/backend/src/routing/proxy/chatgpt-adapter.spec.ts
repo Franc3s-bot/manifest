@@ -94,6 +94,64 @@ describe('chatgpt-adapter', () => {
       ]);
     });
 
+    describe('tool_choice and parallel_tool_calls', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+      const tools = [{ type: 'function', function: { name: 'add' } }];
+
+      it.each(['auto', 'none', 'required'])('forwards tool_choice %s as is', (choice) => {
+        const req = toResponsesRequest({ messages, tools, tool_choice: choice }, 'gpt-5');
+
+        expect(req.tool_choice).toBe(choice);
+      });
+
+      it('flattens a named function tool_choice to the Responses shape', () => {
+        const req = toResponsesRequest(
+          { messages, tools, tool_choice: { type: 'function', function: { name: 'add' } } },
+          'gpt-5',
+        );
+
+        expect(req.tool_choice).toEqual({ type: 'function', name: 'add' });
+      });
+
+      it('leaves tool_choice unset when it is missing or not understood', () => {
+        for (const choice of [
+          undefined,
+          'sometimes',
+          { type: 'function' },
+          { type: 'function', function: {} },
+          { type: 'allowed_tools', allowed_tools: { mode: 'auto', tools: [] } },
+        ]) {
+          expect(
+            toResponsesRequest({ messages, tools, tool_choice: choice }, 'gpt-5'),
+          ).not.toHaveProperty('tool_choice');
+        }
+      });
+
+      it.each([true, false])('forwards parallel_tool_calls %s', (parallel) => {
+        const req = toResponsesRequest({ messages, tools, parallel_tool_calls: parallel }, 'gpt-5');
+
+        expect(req.parallel_tool_calls).toBe(parallel);
+      });
+
+      it('leaves parallel_tool_calls unset when it is not a boolean', () => {
+        expect(
+          toResponsesRequest({ messages, tools, parallel_tool_calls: 'false' }, 'gpt-5'),
+        ).not.toHaveProperty('parallel_tool_calls');
+      });
+
+      it('sends neither field without tools', () => {
+        for (const body of [
+          { messages, tool_choice: 'none', parallel_tool_calls: false },
+          { messages, tools: [], tool_choice: 'none', parallel_tool_calls: false },
+        ]) {
+          const req = toResponsesRequest(body, 'gpt-5');
+
+          expect(req).not.toHaveProperty('tool_choice');
+          expect(req).not.toHaveProperty('parallel_tool_calls');
+        }
+      });
+    });
+
     it('forwards an explicit Responses-style reasoning object verbatim', () => {
       const body = {
         messages: [{ role: 'user', content: 'hi' }],

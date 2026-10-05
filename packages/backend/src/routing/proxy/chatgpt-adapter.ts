@@ -140,9 +140,34 @@ export function toResponsesRequest(
 
   if (Array.isArray(body.tools)) {
     request.tools = convertTools(body.tools as Record<string, unknown>[]);
+    if (body.tools.length > 0) {
+      const toolChoice = toResponsesToolChoice(body.tool_choice);
+      if (toolChoice !== undefined) request.tool_choice = toolChoice;
+      if (typeof body.parallel_tool_calls === 'boolean') {
+        request.parallel_tool_calls = body.parallel_tool_calls;
+      }
+    }
   }
 
   return request;
+}
+
+/**
+ * Chat Completions `tool_choice` → Responses `tool_choice`. The string modes
+ * are shared; a named function moves its name up a level, matching the flat
+ * tool shape `convertTools` produces.
+ */
+function toResponsesToolChoice(choice: unknown): unknown {
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (
+    isObjectRecord(choice) &&
+    choice.type === 'function' &&
+    isObjectRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    return { type: 'function', name: choice.function.name };
+  }
+  return undefined;
 }
 
 /**
