@@ -1,5 +1,11 @@
 # manifest
 
+## 6.28.4
+
+### Patch Changes
+
+- 92f4a58: List the Claude cross-Region inference profiles that Bedrock Runtime serves (such as `us.anthropic.claude-sonnet-5-5`) in Amazon Bedrock model discovery, so they can be picked for routing.
+
 ## 6.28.3
 
 ### Patch Changes
