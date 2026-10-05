@@ -25,10 +25,7 @@ import {
   getBedrockMantleBaseUrl,
   normalizeBedrockMantleBaseUrl,
 } from '../routing/bedrock-region';
-import {
-  getBedrockRuntimeCapabilities,
-  getBedrockRuntimeSupportedEndpoints,
-} from '../routing/bedrock-runtime-capabilities';
+import { getBedrockRuntimeSupportedEndpoints } from '../routing/bedrock-runtime-capabilities';
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
@@ -209,11 +206,17 @@ interface BedrockInferenceProfileEntry {
   status: string;
 }
 
-/** Active CRIS profiles from `ListInferenceProfiles` that the capability catalog lists. */
+/**
+ * CRIS profiles Bedrock Runtime serves (catalogued or verified Claude): exactly
+ * those with at least one supported Manifest endpoint.
+ */
+const isBedrockRuntimeProfile = (id: string): boolean =>
+  getBedrockRuntimeSupportedEndpoints(id).length > 0;
+
+/** Active CRIS profiles from `ListInferenceProfiles` that Bedrock Runtime serves. */
 const parseBedrockCrisProfiles = createModelParser<BedrockInferenceProfileEntry>({
   arrayKey: 'inferenceProfileSummaries',
-  filter: (entry) =>
-    entry.status === 'ACTIVE' && getBedrockRuntimeCapabilities(entry.inferenceProfileId) !== null,
+  filter: (entry) => entry.status === 'ACTIVE' && isBedrockRuntimeProfile(entry.inferenceProfileId),
   getId: (entry) => entry.inferenceProfileId,
   getDisplayName: (_entry, id) => id,
   supportedEndpoints: (entry) => getBedrockRuntimeSupportedEndpoints(entry.inferenceProfileId),
@@ -1272,8 +1275,9 @@ export class ProviderModelFetcherService {
   }
 
   /**
-   * Catalogued CRIS profiles offered in the connection's region. If the control
-   * plane can't be reached, the profiles from the last discovery are kept.
+   * Catalogued and Claude CRIS profiles offered in the connection's region. If
+   * the control plane can't be reached, the profiles from the last discovery
+   * are kept.
    */
   private async fetchBedrockCrisProfiles(
     apiKey: string,
@@ -1298,9 +1302,7 @@ export class ProviderModelFetcherService {
       }
       return parseBedrockCrisProfiles(body, providerId);
     } catch (err) {
-      const kept = previousModels.filter(
-        (model) => getBedrockRuntimeCapabilities(model.id) !== null,
-      );
+      const kept = previousModels.filter((model) => isBedrockRuntimeProfile(model.id));
       this.logger.warn(
         `Could not list Bedrock inference profiles (${String(err)}); ` +
           `kept ${kept.length} from the last discovery`,
