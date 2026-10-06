@@ -204,6 +204,8 @@ const FIREWORKS_INFERENCE_BASE = 'https://api.fireworks.ai/inference';
 const HUGGING_FACE_INFERENCE_BASE = 'https://router.huggingface.co';
 const PIONEER_BASE = 'https://api.pioneer.ai';
 const META_BASE = 'https://api.meta.ai';
+/** Agnes AI: OpenAI-compatible chat base. Media paths are built by the media adapter. */
+const AGNES_CHAT_BASE = 'https://apihub.agnes-ai.com';
 const chatgptSubscriptionHeaders = (apiKey: string) => ({
   Authorization: `Bearer ${apiKey}`,
   'Content-Type': 'application/json',
@@ -428,6 +430,16 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
   },
   meta: {
     baseUrl: META_BASE,
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
+  agnes: {
+    // OpenAI-compatible chat endpoint. Image/video models do NOT go through
+    // this map — the media adapter builds their paths (/images/generations,
+    // /videos) directly, so only text traffic resolves here.
+    baseUrl: AGNES_CHAT_BASE,
     buildHeaders: openaiHeaders,
     buildPath: openaiPath,
     format: 'openai',

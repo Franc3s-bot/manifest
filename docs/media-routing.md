@@ -48,6 +48,25 @@ one and the phases below shift.
   - `GET {origin}/agnesapi?video_id=&model_name=` — task status (host root, not `/v1`).
   - Base `https://apihub.agnes-ai.com/v1`; video billed per second of output.
 
+## Agnes AI is a full provider, not media-only
+
+The public [Agnes AI Model Catalog](https://github.com/AgnesAI-Labs/AgnesAI-Models)
+lists an OpenAI-compatible surface at `https://apihub.agnes-ai.com/v1`:
+
+| Kind | Models | Endpoint |
+|------|--------|----------|
+| Text | `agnes-2.5-flash` (512K ctx), `agnes-2.0-flash` (256K), `agnes-1.5-flash` (256K) | `POST /v1/chat/completions` |
+| Image | `agnes-image-2.1-flash`, `agnes-image-2.0-flash` | `POST /v1/images/generations` |
+| Video | `agnes-video-v2.0` | `POST /v1/videos` (async) |
+
+Video task status: `GET https://apihub.agnes-ai.com/agnesapi?video_id=<ID>`.
+Auth: `Authorization: Bearer <key>`.
+
+So Agnes is added as a **normal OpenAI-compatible provider** (text routes through
+the existing chat proxy) plus a **media-capable** one (image/video route through
+the media adapter). This is why the shared provider entry carries a `media`
+descriptor rather than the whole provider being special-cased.
+
 ## Architecture
 
 ```
@@ -90,13 +109,18 @@ Key points:
 
 ### Phase 1 — Contracts and provider catalog
 - `OUTPUT_MODALITIES = ['text', 'image', 'video']` (**done**).
-- Shared media request/response types (image generation, video task, task status).
-- `SharedProviderEntry` gains a media descriptor (`media?: { image?: boolean; video?: boolean }`).
-- `agnes` added to `SHARED_PROVIDERS` with a curated model catalog
-  (`agnes-image-2.1-flash`, `agnes-video-2.5`) and media pricing constants.
-- Discovery: media models for media-capable providers bypass
-  `filterNonChatModels` and are published in `GET /v1/models` with
-  `output_modalities: ['image'] | ['video']`.
+- `SharedProviderEntry.media` descriptor; `agnes` registered with
+  `media: { image: true, video: true }` (**done**).
+- `AGNES_MODELS` curated catalog (ids, display names, output modality, context
+  windows) + `AGNES_BASE_URL` / `AGNES_TASK_ORIGIN` (**done**).
+- Discovery: `parseAgnes` annotates the live `/v1/models` listing from the
+  catalog, appends curated media models the listing omits, and media-capable
+  providers bypass `filterNonChatModels` (**done**).
+- `agnes` OpenAI-compatible chat endpoint in `PROVIDER_ENDPOINTS` (**done**).
+- Synthetic tier profile already aggregates the chain's `outputModalities`, so
+  an `auto-{name}` tier over an image model advertises `output_modalities:
+  ['image']` today (**done**).
+- Not yet: a media endpoint to actually call. That is Phase 2.
 
 ### Phase 2 — Image endpoint (vertical slice)
 - `ProxyApiMode` gains `images`.

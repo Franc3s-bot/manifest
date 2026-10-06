@@ -40,10 +40,14 @@ import {
   parseKiroModels,
 } from '../routing/proxy/kiro-adapter';
 import {
+  AGNES_BASE_URL,
+  AGNES_MODELS,
+  AGNES_MODEL_BY_ID,
   getSubscriptionCapabilities,
   getSubscriptionKnownModels,
   META_MODEL_API_CONTEXT_WINDOW,
   META_MODEL_API_MODEL_BY_ID,
+  SHARED_PROVIDER_BY_ID_OR_ALIAS,
   type ModelCapability,
   type ModelModality,
 } from 'manifest-shared';
@@ -201,6 +205,61 @@ const parseOpenAI = createModelParser<OpenAIModelEntry>({
   inputModalities: (entry) => parseModalities(entry.input_modalities),
   outputModalities: (entry) => parseModalities(entry.output_modalities),
 });
+
+/**
+ * Agnes AI serves text, image, and video models from one OpenAI-compatible
+ * base URL. Its `/v1/models` listing is not guaranteed to carry the media
+ * models or their output modality, so every entry is annotated from the
+ * curated AGNES_MODELS catalog and any catalog model missing from the live
+ * listing is appended. Image/video synthetic tiers always have a target.
+ */
+function parseAgnes(body: unknown, provider: string): DiscoveredModel[] {
+  const arr = (body as { data?: unknown } | null)?.data;
+  const seen = new Set<string>();
+  const models: DiscoveredModel[] = [];
+  if (Array.isArray(arr)) {
+    for (const raw of arr) {
+      const id = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : undefined;
+      if (typeof id !== 'string' || id.length === 0 || seen.has(id)) continue;
+      seen.add(id);
+      models.push(buildAgnesModel(id, provider));
+    }
+  }
+  for (const entry of AGNES_MODELS) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    models.push(buildAgnesModel(entry.id, provider));
+  }
+  return models;
+}
+
+/** One Agnes model with the catalog's modality and context facts applied. */
+function buildAgnesModel(id: string, provider: string): DiscoveredModel {
+  const catalog = AGNES_MODEL_BY_ID.get(id);
+  const output = catalog?.output ?? 'text';
+  const isText = output === 'text';
+  const capabilities: ModelCapability[] = isText
+    ? ['text', 'stream', 'tools']
+    : output === 'image'
+      ? ['text', 'image']
+      : ['text', 'video'];
+  return {
+    id,
+    displayName: catalog?.displayName ?? id,
+    provider,
+    contextWindow: catalog?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    contextWindowSource: catalog?.contextWindow ? 'provider' : 'provider_default',
+    ...(catalog?.maxOutputTokens !== undefined ? { maxOutputTokens: catalog.maxOutputTokens } : {}),
+    inputPricePerToken: null,
+    outputPricePerToken: null,
+    capabilityReasoning: isText,
+    capabilityCode: isText,
+    capabilities,
+    inputModalities: output === 'image' ? (['text', 'image'] as const) : (['text'] as const),
+    outputModalities: [output],
+    qualityScore: isText ? 3 : 2,
+  };
+}
 
 interface BedrockInferenceProfileEntry {
   inferenceProfileId: string;
@@ -516,6 +575,15 @@ export const PROVIDER_BLOCKLIST: Record<string, ReadonlySet<string>> = {
     'voxtral-mini-2602', // Invalid model returned by API; not a real chat endpoint
   ]),
 };
+
+/**
+ * Providers that also serve image/video generation. Their discovered models
+ * must bypass {@link filterNonChatModels}, which exists to keep media-only
+ * models out of the chat routing UI.
+ */
+export function isMediaCapableProvider(providerId: string): boolean {
+  return SHARED_PROVIDER_BY_ID_OR_ALIAS.get(providerId.toLowerCase())?.media !== undefined;
+}
 
 /** Filter models that are not compatible with chat completions. */
 export function filterNonChatModels(
@@ -1015,6 +1083,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: bearerHeaders,
     parse: parseMeta,
   },
+  agnes: {
+    endpoint: `${AGNES_BASE_URL}/models`,
+    buildHeaders: bearerHeaders,
+    parse: parseAgnes,
+  },
   'minimax-subscription': {
     endpoint: MINIMAX_SUBSCRIPTION_MODELS_URL,
     buildHeaders: (key: string) => ({
@@ -1278,7 +1351,10 @@ export class ProviderModelFetcherService {
       }
 
       const body = await res.json();
-      return filterNonChatModels(config.parse(body, providerId), configKey);
+      const parsed = config.parse(body, providerId);
+      // Media-capable providers serve image/video models that the non-chat
+      // filter exists to exclude; keep them so synthetic media tiers can route.
+      return isMediaCapableProvider(configKey) ? parsed : filterNonChatModels(parsed, configKey);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch models from ${providerId}: ${message}`);

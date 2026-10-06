@@ -240,6 +240,18 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subtitle: 'DeepSeek V4 Pro, V4 Flash, V3.2, R1',
     models: [],
   },
+  agnes: {
+    initial: 'Ag',
+    subtitle: 'Agnes 2.5 Flash, Image 2.1, Video 2.0',
+    models: [
+      { label: 'Agnes 2.5 Flash', value: 'agnes-2.5-flash' },
+      { label: 'Agnes 2.0 Flash', value: 'agnes-2.0-flash' },
+      { label: 'Agnes 1.5 Flash', value: 'agnes-1.5-flash' },
+      { label: 'Agnes Image 2.1 Flash', value: 'agnes-image-2.1-flash' },
+      { label: 'Agnes Image 2.0 Flash', value: 'agnes-image-2.0-flash' },
+      { label: 'Agnes Video 2.0', value: 'agnes-video-v2.0' },
+    ],
+  },
   fireworks: {
     initial: 'Fw',
     subtitle: 'DeepSeek V4, Kimi, Qwen 3.7, Nemotron',
@@ -536,6 +548,7 @@ export function buildProviderDef(shared: SharedProviderEntry): ProviderDef {
 // Preserve previous ordering (alphabetical-ish by display name) so UI tests
 // that index into PROVIDERS don't shift.
 const PROVIDER_ORDER = [
+  'agnes',
   'qwen',
   'anthropic',
   'bedrock',

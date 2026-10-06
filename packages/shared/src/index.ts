@@ -154,9 +154,18 @@ export {
   META_MODEL_API_CONTEXT_WINDOW,
   META_MODEL_API_MODELS,
   META_MODEL_API_MODEL_BY_ID,
+  AGNES_MODELS,
+  AGNES_MODEL_BY_ID,
+  AGNES_BASE_URL,
+  AGNES_TASK_ORIGIN,
   normalizeProviderName,
 } from './providers';
-export type { SharedProviderEntry, LocalServerHint, MetaModelApiModel } from './providers';
+export type {
+  SharedProviderEntry,
+  LocalServerHint,
+  MetaModelApiModel,
+  AgnesModelEntry,
+} from './providers';
 export type { ResolveResponse } from './resolve-response';
 export {
   SUBSCRIPTION_PROVIDER_CONFIGS,
