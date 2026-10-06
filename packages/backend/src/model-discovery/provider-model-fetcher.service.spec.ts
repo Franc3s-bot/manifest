@@ -3817,3 +3817,41 @@ describe('ProviderModelFetcherService', () => {
     expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
   });
 });
+
+describe('Agnes discovery', () => {
+  let service: ProviderModelFetcherService;
+  let fetchSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    service = new ProviderModelFetcherService();
+    fetchSpy = jest.spyOn(global, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('falls back to the curated catalog when /v1/models is unavailable', async () => {
+    fetchSpy.mockResolvedValue({ ok: false, status: 404 });
+
+    const models = await service.fetch('agnes', 'key');
+    const byId = new Map(models.map((m) => [m.id, m]));
+
+    expect(byId.get('agnes-image-2.1-flash')?.outputModalities).toEqual(['image']);
+    expect(byId.get('agnes-video-v2.0')?.outputModalities).toEqual(['video']);
+  });
+
+  it('keeps a live listing and appends the media models it omits', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'agnes-2.5-flash' }] }),
+    });
+
+    const models = await service.fetch('agnes', 'key');
+    const byId = new Map(models.map((m) => [m.id, m]));
+
+    expect(byId.get('agnes-2.5-flash')?.outputModalities).toEqual(['text']);
+    expect(byId.get('agnes-image-2.1-flash')?.outputModalities).toEqual(['image']);
+    expect(byId.get('agnes-video-v2.0')?.outputModalities).toEqual(['video']);
+  });
+});

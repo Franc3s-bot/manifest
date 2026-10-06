@@ -1306,6 +1306,21 @@ export class ProviderModelFetcherService {
 
     const headers = config.buildHeaders(apiKey, authType);
 
+    if (configKey === 'agnes') {
+      // Agnes' OpenAI-compatible listing is not guaranteed to exist or to
+      // carry the media models. Fall back to the curated catalog whenever the
+      // live fetch yields nothing, so image/video tiers always have a target.
+      const fetched = await this.fetchModelList(
+        url,
+        headers,
+        config,
+        apiKey,
+        providerId,
+        configKey,
+      );
+      return fetched.length > 0 ? fetched : config.parse({ data: [] }, providerId);
+    }
+
     if (configKey === 'bedrock') {
       // Mantle lists no CRIS profiles, so they come from the control plane of
       // the same region (the Mantle host is `bedrock-mantle.<region>.api.aws`).
