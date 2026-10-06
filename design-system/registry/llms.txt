@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (318 BEM blocks, 1700 classes)
+## Blocks (331 BEM blocks, 1753 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -167,7 +167,7 @@ count-link (theme.css): count-link
 custom-provider-item (routing-providers.css): custom-provider-item custom-provider-item__delete custom-provider-item__icon custom-provider-item__info custom-provider-item__meta custom-provider-item__name
 custom-provider-model-row (routing-providers.css): custom-provider-model-row custom-provider-model-row__name custom-provider-model-row__price custom-provider-model-row__remove
 custom-provider-models (routing-providers.css): custom-provider-models custom-provider-models__column custom-provider-models__column--name custom-provider-models__column--price custom-provider-models__column-spacer custom-provider-models__columns custom-provider-models__label
-custom-select (connection-detail.css, custom-select.css, discovery.css, routing-providers.css): custom-select custom-select__chevron custom-select__dropdown custom-select__dropdown--portal custom-select__dropdown--wide custom-select__option custom-select__option--disabled custom-select__option--selected custom-select__option--top custom-select__option-desc custom-select__option-text custom-select__option-text--inline custom-select__trigger custom-select__trigger--open custom-select__value
+custom-select (connection-detail.css, custom-select.css, discovery.css, routing-providers.css, theme.css): custom-select custom-select__chevron custom-select__dropdown custom-select__dropdown--portal custom-select__dropdown--wide custom-select__option custom-select__option--disabled custom-select__option--selected custom-select__option--top custom-select__option-desc custom-select__option-text custom-select__option-text--inline custom-select__trigger custom-select__trigger--open custom-select__value
 dark (agent-type-select.css, agents.css, analytics-overview.css, auth.css, controls.css, data.css, modals.css, model-filter.css, overview.css, platform-icons.css, request-drawer.css, routing-deprecation.css, routing-providers.css, routing.css, syntax-highlight.css, tokens.css, welcome.css, wizard.css): dark
 data-table (data.css, feedback.css, theme.css): data-table data-table__sortable
 data-table-scroll (data.css): data-table-scroll
@@ -177,6 +177,7 @@ discovery-card (discovery.css): discovery-card discovery-card__desc discovery-ca
 discovery-form (discovery.css): discovery-form
 discovery-select (discovery.css): discovery-select--empty
 dither-ground (api-bot.css): dither-ground
+drag-ghost (routing.css): drag-ghost drag-ghost__icon drag-ghost__label
 drawer (request-drawer.css): drawer drawer--open drawer__badge drawer__badge--autofix drawer__badge--fallback drawer__body drawer__close drawer__content drawer__content-empty drawer__header drawer__messages-pane drawer__meta-row drawer__meta-sep drawer__meta-text drawer__sidebar drawer__sidebar-title drawer__split drawer__tabs-full drawer__title drawer__title-row
 drawer-context-card (request-drawer.css): drawer-context-card drawer-context-card--autofix drawer-context-card--error drawer-context-card--fallback
 drawer-kv (request-drawer.css): drawer-kv drawer-kv__key
@@ -209,7 +210,7 @@ header-controls (layout.css, theme.css): header-controls
 header-tier-card (routing-header-tiers.css): header-tier-card__actions header-tier-card__icon-btn header-tier-card__kebab header-tier-card__kebab-btn header-tier-card__menu header-tier-card__menu-item header-tier-card__menu-item--danger header-tier-card__name header-tier-card__ordinal header-tier-card__rule header-tier-card__title
 header-tier-manage (routing-header-tiers.css): header-tier-manage__create-btn header-tier-manage__footer
 header-tier-manage-modal (routing-header-tiers.css): header-tier-manage-modal
-header-tier-modal (routing-header-tiers.css): header-tier-modal header-tier-modal__back header-tier-modal__close header-tier-modal__delete-btn header-tier-modal__error header-tier-modal__footer header-tier-modal__footer-right header-tier-modal__swatch header-tier-modal__swatch--active header-tier-modal__swatch--amber header-tier-modal__swatch--blue header-tier-modal__swatch--brown header-tier-modal__swatch--coral header-tier-modal__swatch--cyan header-tier-modal__swatch--emerald header-tier-modal__swatch--fuchsia header-tier-modal__swatch--gray header-tier-modal__swatch--green header-tier-modal__swatch--indigo header-tier-modal__swatch--lime header-tier-modal__swatch--navy header-tier-modal__swatch--orange header-tier-modal__swatch--pink header-tier-modal__swatch--purple header-tier-modal__swatch--red header-tier-modal__swatch--rose header-tier-modal__swatch--sky header-tier-modal__swatch--slate header-tier-modal__swatch--stone header-tier-modal__swatch--teal header-tier-modal__swatch--violet header-tier-modal__swatch--yellow header-tier-modal__swatch--zinc header-tier-modal__swatches
+header-tier-modal (modals.css, routing-header-tiers.css): header-tier-modal header-tier-modal__back header-tier-modal__close header-tier-modal__delete-btn header-tier-modal__error header-tier-modal__footer header-tier-modal__footer-right header-tier-modal__swatch header-tier-modal__swatch--active header-tier-modal__swatch--amber header-tier-modal__swatch--blue header-tier-modal__swatch--brown header-tier-modal__swatch--coral header-tier-modal__swatch--cyan header-tier-modal__swatch--emerald header-tier-modal__swatch--fuchsia header-tier-modal__swatch--gray header-tier-modal__swatch--green header-tier-modal__swatch--indigo header-tier-modal__swatch--lime header-tier-modal__swatch--navy header-tier-modal__swatch--orange header-tier-modal__swatch--pink header-tier-modal__swatch--purple header-tier-modal__swatch--red header-tier-modal__swatch--rose header-tier-modal__swatch--sky header-tier-modal__swatch--slate header-tier-modal__swatch--stone header-tier-modal__swatch--teal header-tier-modal__swatch--violet header-tier-modal__swatch--yellow header-tier-modal__swatch--zinc header-tier-modal__swatches
 hljs (syntax-highlight.css): hljs
 hljs-addition (syntax-highlight.css): hljs-addition
 hljs-attr (request-drawer.css, syntax-highlight.css): hljs-attr
@@ -236,8 +237,19 @@ info-card (cards.css): info-card__content info-card__text
 info-tooltip (tooltip.css): info-tooltip info-tooltip__bubble info-tooltip__icon
 integration-grid (wizard.css): integration-grid
 integration-panel (wizard.css): integration-panel__desc integration-panel__header integration-panel__tabs
+is-selected (routing-key-order.css): is-selected
 json-block (request-drawer.css): json-block json-block__size-notice
 json-block-wrap (request-drawer.css): json-block-wrap
+key-order-card (routing-key-order.css): key-order-card key-order-card__action key-order-card__action--danger key-order-card__actions key-order-card__glyph key-order-card__head key-order-card__letter key-order-card__model key-order-card__provider key-order-card__titles
+key-order-chip (routing-key-order.css): key-order-chip key-order-chip__btn key-order-chip__btn--remove key-order-chip__hint key-order-chip__label key-order-chip__ordinal
+key-order-empty (routing-key-order.css): key-order-empty key-order-empty__desc key-order-empty__error key-order-empty__title
+key-order-list (routing-key-order.css): key-order-list
+key-order-modal (routing-key-order.css): key-order-modal key-order-modal__add key-order-modal__error key-order-modal__footer key-order-modal__helper key-order-modal__keys key-order-modal__scope key-order-modal__scope-desc key-order-modal__scope-option key-order-modal__scope-options key-order-modal__scope-title
+key-order-section (routing-key-order.css): key-order-section__header key-order-section__hint
+key-order-skeleton (routing-key-order.css): key-order-skeleton key-order-skeleton__bar
+key-order-tier (routing-key-order.css): key-order-tier key-order-tier__count key-order-tier__empty key-order-tier__head key-order-tier__hint key-order-tier__title
+key-order-tiers (routing-key-order.css): key-order-tiers
+key-rotation-icon (data.css): key-rotation-icon
 language-json (request-drawer.css): language-json
 limit-block-toggle (limits.css): limit-block-toggle limit-block-toggle__label
 limit-modal (limits.css): limit-modal__row
@@ -254,7 +266,7 @@ mobile-nav-toggle (theme.css): mobile-nav-toggle
 modal (modals.css, theme.css): modal modal__body modal__close modal__footer modal__header modal__title
 modal-back-btn (modals.css): modal-back-btn
 modal-backdrop (modals.css, theme.css): modal-backdrop
-modal-card (limits.css, modals.css, notifications.css, overview.css, routing-header-tiers.css, routing.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
+modal-card (limits.css, modals.css, notifications.css, overview.css, routing-header-tiers.css, routing.css, theme.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
 modal-key-box (wizard.css): modal-key-box modal-key-box__copy modal-key-box__header modal-key-box__label modal-key-box__value modal-key-box__warning
 modal-overlay (modals.css): modal-overlay
 modal-stepper (modals.css): modal-stepper modal-stepper__circle modal-stepper__label modal-stepper__line modal-stepper__step modal-stepper__step--active modal-stepper__step--done
@@ -288,7 +300,7 @@ panel (analytics-overview.css, cards.css, charts.css, limits.css, request-drawer
 plan-picker (auth.css): plan-picker plan-picker__amount plan-picker__badge plan-picker__card plan-picker__card--expanded plan-picker__card--pro plan-picker__cta plan-picker__details plan-picker__features plan-picker__name plan-picker__period plan-picker__price-inline plan-picker__radio plan-picker__radio-dot plan-picker__row plan-picker__section-header plan-picker__section-subtitle plan-picker__section-title plan-picker__usage
 platform-icon (platform-icons.css): platform-icon
 playground (playground.css): playground playground--embedded playground__add playground__add-plus playground__add-shortcut playground__add-shortcut-plus playground__columns
-playground-column (playground.css): playground-column playground-column__best playground-column__best--on playground-column__best--static playground-column__body playground-column__chip playground-column__edit-icon playground-column__error playground-column__error-text playground-column__header playground-column__headers playground-column__headers-caret playground-column__headers-caret--open playground-column__headers-list playground-column__headers-toggle playground-column__icon playground-column__metric playground-column__metric-label playground-column__metric-value playground-column__metric-value-row playground-column__metrics playground-column__name playground-column__placeholder playground-column__remove playground-column__response playground-column__skeleton playground-column__title playground-column__title--readonly playground-column__title-left playground-column__win-badge
+playground-column (playground.css): playground-column playground-column__best playground-column__best--on playground-column__best--static playground-column__body playground-column__chip playground-column__edit-icon playground-column__error playground-column__error-text playground-column__header playground-column__headers playground-column__headers-caret playground-column__headers-caret--open playground-column__headers-list playground-column__headers-toggle playground-column__icon playground-column__key-badge playground-column__key-badge--readonly playground-column__key-icon playground-column__key-label playground-column__metric playground-column__metric-label playground-column__metric-value playground-column__metric-value-row playground-column__metrics playground-column__name playground-column__placeholder playground-column__remove playground-column__response playground-column__skeleton playground-column__title playground-column__title--readonly playground-column__title-left playground-column__win-badge
 playground-empty (playground.css): playground-empty playground-empty__body playground-empty__cta playground-empty__title
 playground-headers (playground.css): playground-headers playground-headers__add playground-headers__backdrop playground-headers__clear playground-headers__close playground-headers__empty playground-headers__footer playground-headers__header playground-headers__hint playground-headers__input playground-headers__input--key playground-headers__remove playground-headers__row playground-headers__row--blocked playground-headers__rows playground-headers__title playground-headers__warning
 playground-prompt (playground.css): playground-prompt playground-prompt--info playground-prompt__headers playground-prompt__headers-badge playground-prompt__headers-slot playground-prompt__info-text playground-prompt__send playground-prompt__textarea playground-prompt__toolbar playground-prompt__toolbar-left
@@ -298,7 +310,7 @@ playground-summary (playground.css): playground-summary playground-summary__best
 pro-range-badge (custom-select.css): pro-range-badge
 provider-auth-badge (routing.css): provider-auth-badge provider-auth-badge--key provider-auth-badge--local provider-auth-badge--overlay provider-auth-badge--sub
 provider-card (notifications.css, routing-providers.css): provider-card provider-card__actions provider-card__body provider-card__dropdown provider-card__dropdown-item provider-card__dropdown-item--danger provider-card__email provider-card__header provider-card__key provider-card__label provider-card__logo provider-card__logo-letter provider-card__menu provider-card__menu-btn provider-card__meta provider-card__name
-provider-detail (routing-providers.css): provider-detail provider-detail__action provider-detail__beta-badge provider-detail__disconnect provider-detail__disconnect-icon provider-detail__error provider-detail__field provider-detail__footer provider-detail__format provider-detail__format-help provider-detail__format-legend provider-detail__format-option provider-detail__format-option--active provider-detail__format-option--disabled provider-detail__format-option-path provider-detail__format-option-title provider-detail__format-options provider-detail__header provider-detail__header-actions provider-detail__hint provider-detail__icon provider-detail__input provider-detail__input--disabled provider-detail__input--error provider-detail__input--masked provider-detail__key-help provider-detail__key-help-link provider-detail__key-row provider-detail__label provider-detail__label-muted provider-detail__models-bar provider-detail__name provider-detail__no-key provider-detail__refresh-btn provider-detail__refresh-icon--spinning provider-detail__signin-btn provider-detail__subtitle provider-detail__title-group
+provider-detail (routing-providers.css, theme.css): provider-detail provider-detail__action provider-detail__beta-badge provider-detail__disconnect provider-detail__disconnect-icon provider-detail__error provider-detail__field provider-detail__footer provider-detail__format provider-detail__format-help provider-detail__format-legend provider-detail__format-option provider-detail__format-option--active provider-detail__format-option--disabled provider-detail__format-option-path provider-detail__format-option-title provider-detail__format-options provider-detail__header provider-detail__header-actions provider-detail__hint provider-detail__icon provider-detail__input provider-detail__input--disabled provider-detail__input--error provider-detail__input--masked provider-detail__key-help provider-detail__key-help-link provider-detail__key-row provider-detail__label provider-detail__label-muted provider-detail__models-bar provider-detail__name provider-detail__no-key provider-detail__refresh-btn provider-detail__refresh-icon--spinning provider-detail__signin-btn provider-detail__subtitle provider-detail__title-group
 provider-icon (routing-providers.css): provider-icon--opencode-go-dark provider-icon--opencode-go-light provider-icon--opencode-zen-dark provider-icon--opencode-zen-light
 provider-modal (overview.css, routing-providers.css): provider-modal__add-custom provider-modal__add-custom-chip provider-modal__disclaimer provider-modal__disclaimer-label provider-modal__footer provider-modal__list provider-modal__request-sub provider-modal__request-sub-btn provider-modal__tab-hint provider-modal__tab-icon provider-modal__tabs-wrapper provider-modal__view provider-modal__view--from-left provider-modal__view--from-right
 provider-modal-option (notifications.css): provider-modal-option provider-modal-option--active provider-modal-option__logo
@@ -316,7 +328,7 @@ request-tool (request-drawer.css): request-tool request-tool--available request-
 request-tools-section (request-drawer.css): request-tools-section request-tools-section__count request-tools-section__title
 response-mode-btn (routing.css): response-mode-btn response-mode-btn__icon
 response-mode-modal (routing.css): response-mode-modal response-mode-modal__blocker response-mode-modal__blocker-list response-mode-modal__blocker-meta response-mode-modal__blocker-model response-mode-modal__blocker-row response-mode-modal__blocker-text response-mode-modal__body response-mode-modal__desc response-mode-modal__field-header response-mode-modal__field-title
-routing-action (routing.css): routing-action routing-action--danger
+routing-action (routing.css, theme.css): routing-action routing-action--danger
 routing-card (routing-header-tiers.css, routing-specificity.css, routing.css): routing-card routing-card--cta routing-card--disabled routing-card--header-tier routing-card__actions routing-card__auto-tag routing-card__body routing-card__change-btn routing-card__change-icon routing-card__change-label routing-card__chip-action routing-card__chip-action--active routing-card__chip-action--configured routing-card__chip-action--dialog-open routing-card__chip-footer routing-card__chip-main routing-card__chip-meta routing-card__chip-price routing-card__chip-reset routing-card__desc routing-card__disabled-desc routing-card__disabled-text routing-card__empty routing-card__empty-link routing-card__empty-text routing-card__fallbacks routing-card__fallbacks-label routing-card__header routing-card__header-action routing-card__header-action--danger routing-card__header-add routing-card__main routing-card__model-chip routing-card__model-chip--dragging routing-card__model-chip--drop-target routing-card__model-chip--skipped routing-card__model-row routing-card__override routing-card__override-icon routing-card__reset-btn routing-card__right routing-card__skipped-badge routing-card__sub routing-card__sub--subscription routing-card__tier
 routing-cards (routing.css, welcome.css): routing-cards routing-cards--centered routing-cards--unified-compact routing-cards--wide
 routing-cards-backdrop (routing.css): routing-cards-backdrop
@@ -342,8 +354,8 @@ routing-unified-add-card (routing.css): routing-unified-add-card
 rule-menu (limits.css): rule-menu__btn rule-menu__dropdown rule-menu__item rule-menu__item--danger
 scroll-panel (analytics-overview.css, routing-providers.css): scroll-panel scroll-panel--at-bottom scroll-panel__body
 security-event (data.css, theme.css): security-event security-event__badge security-event__desc security-event__dot security-event__dot--critical security-event__dot--info security-event__dot--warning security-event__time
-select (controls.css, theme.css): select
-settings-card (agents.css, cards.css, controls.css, modals.css, notifications.css): settings-card settings-card--danger settings-card--disabled settings-card--flush settings-card--highlight settings-card--info settings-card__body settings-card__control settings-card__control--end settings-card__copy-btn settings-card__desc settings-card__footer settings-card__id-row settings-card__id-value settings-card__input settings-card__key-actions settings-card__key-row settings-card__key-value settings-card__label settings-card__label-desc settings-card__label-desc--meta settings-card__label-title settings-card__legal settings-card__row
+select (controls.css, routing-key-order.css, theme.css): select
+settings-card (agents.css, cards.css, controls.css, modals.css, notifications.css, theme.css): settings-card settings-card--danger settings-card--disabled settings-card--flush settings-card--highlight settings-card--info settings-card__body settings-card__control settings-card__control--end settings-card__copy-btn settings-card__desc settings-card__footer settings-card__id-row settings-card__id-value settings-card__input settings-card__key-actions settings-card__key-row settings-card__key-value settings-card__label settings-card__label-desc settings-card__label-desc--meta settings-card__label-title settings-card__legal settings-card__row
 settings-section (agents.css, controls.css): settings-section__title settings-section__title--danger
 settings-switch (agents.css, modals.css, welcome.css): settings-switch settings-switch--on settings-switch__thumb settings-switch__track
 setup-agents-card (wizard.css): setup-agents-card setup-agents-card__title
@@ -405,9 +417,10 @@ upgrade-page-header (agents.css): upgrade-page-header upgrade-page-header--cente
 upgrade-plan-card (agents.css): upgrade-plan-card upgrade-plan-card--pro upgrade-plan-card__amount upgrade-plan-card__amount--custom upgrade-plan-card__badge upgrade-plan-card__body upgrade-plan-card__cta upgrade-plan-card__desc upgrade-plan-card__divider upgrade-plan-card__features upgrade-plan-card__features-intro upgrade-plan-card__footer upgrade-plan-card__header upgrade-plan-card__no-commitment upgrade-plan-card__period upgrade-plan-card__price upgrade-plan-card__usage
 upgrade-plan-grid (agents.css): upgrade-plan-grid
 upgrade-pro-current (agents.css): upgrade-pro-current upgrade-pro-current__card upgrade-pro-current__status
-upgrade-success-modal (modals.css): upgrade-success-modal upgrade-success-modal__body upgrade-success-modal__done upgrade-success-modal__features upgrade-success-modal__icon upgrade-success-modal__subtitle upgrade-success-modal__title
+upgrade-success-modal (modals.css, theme.css): upgrade-success-modal upgrade-success-modal__body upgrade-success-modal__done upgrade-success-modal__features upgrade-success-modal__icon upgrade-success-modal__subtitle upgrade-success-modal__title
 upgrade-terms (agents.css): upgrade-terms
-usage-limit-banner (modals.css): usage-limit-banner usage-limit-banner__actions usage-limit-banner__btn usage-limit-banner__text
+usage-limit-banner (modals.css, theme.css): usage-limit-banner usage-limit-banner__actions usage-limit-banner__btn usage-limit-banner__text
+user-discovery-modal (theme.css): user-discovery-modal
 version-indicator (version-indicator.css): version-indicator version-indicator--update version-indicator__dismiss version-indicator__update
 view-more-link (analytics-overview.css, cards.css): view-more-link
 waiting-banner (overview.css): waiting-banner waiting-banner--success
@@ -422,8 +435,12 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 ## Migration map — legacy component → primitive to use instead (0)
 (empty until primitives exist)
 
-## Canonical rules — same selector+property declared twice with different values; the winner renders (46)
+## Canonical rules — same selector+property declared twice with different values; the winner renders (50)
+.settings-card__row { align-items: flex-start }  ← agents.css:423  [@media (max-width: 768px)]
 .view-more-link { color: hsl(var(--foreground)) }  ← analytics-overview.css:213
+.overview-stats { grid-template-columns: repeat(2, 1fr) !important }  ← analytics-overview.css:311  [@media (max-width: 768px)]
+.overview-stats { gap: var(--gap-md) }  ← analytics-overview.css:312  [@media (max-width: 768px)]
+.overview-stats { grid-template-columns: 1fr !important }  ← analytics-overview.css:322  [@media (max-width: 480px)]
 .custom-select__option--top > svg { margin-top: calc((18px - 14px) / 2) }  ← custom-select.css:142
 .custom-select__option--top > img { margin-top: calc((18px - 14px) / 2) }  ← custom-select.css:142
 .setup-modal__header { align-items: center }  ← overview.css:15
@@ -472,7 +489,11 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .welcome__route-test-heading { align-items: center }  ← welcome.css:903
 .welcome__route-test-heading { gap: 10px }  ← welcome.css:904
 
-## Ghost rules — declared but always losing; edit the canonical rule instead, delete these in the refactor project (46)
+## Ghost rules — declared but always losing; edit the canonical rule instead, delete these in the refactor project (50)
+.settings-card__row { align-items: stretch }  at agents.css:297 loses to agents.css:423
+.overview-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) }  at analytics-overview.css:58 loses to analytics-overview.css:311
+.overview-stats { gap: 12px }  at analytics-overview.css:59 loses to analytics-overview.css:312
+.overview-stats { grid-template-columns: 1fr }  at analytics-overview.css:73 loses to analytics-overview.css:322
 .summary-card { box-shadow: var(--card-shadow) }  at cards.css:7 loses to theme.css:197
 .trend--up { color: hsl(var(--muted-foreground)) }  at cards.css:48 loses to theme.css:238
 .trend--down { color: hsl(var(--muted-foreground)) }  at cards.css:48 loses to theme.css:243
@@ -495,11 +516,11 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .sidebar { padding: var(--gap-md) 0 }  at controls.css:213 loses to theme.css:785
 .custom-select__option--top > svg { margin-top: calc((18px - 13px) / 2) }  at custom-select.css:137 loses to custom-select.css:142
 .custom-select__option--top > img { margin-top: calc((18px - 13px) / 2) }  at custom-select.css:137 loses to custom-select.css:142
-.tier-badge--fallback { background: hsl(var(--muted-foreground) / 0.1) }  at data.css:299 loses to overview.css:105
-.tier-badge--fallback { color: hsl(var(--muted-foreground)) }  at data.css:300 loses to overview.css:106
-.feed-item { align-items: flex-start }  at data.css:507 loses to theme.css:587
-.feed-item { gap: 12px }  at data.css:508 loses to theme.css:588
-.feed-item { padding: 12px 0 }  at data.css:509 loses to theme.css:589
+.tier-badge--fallback { background: hsl(var(--muted-foreground) / 0.1) }  at data.css:321 loses to overview.css:105
+.tier-badge--fallback { color: hsl(var(--muted-foreground)) }  at data.css:322 loses to overview.css:106
+.feed-item { align-items: flex-start }  at data.css:529 loses to theme.css:587
+.feed-item { gap: 12px }  at data.css:530 loses to theme.css:588
+.feed-item { padding: 12px 0 }  at data.css:531 loses to theme.css:589
 .theme-toggle { width: 2rem }  at layout.css:141 loses to theme.css:952
 .theme-toggle { padding: 0 }  at layout.css:149 loses to theme.css:943
 .modal { box-shadow: var(--card-shadow),
@@ -514,14 +535,14 @@ workspace-table (agents.css): workspace-table__actions workspace-table__icon wor
 .request-tool { border: 1px solid hsl(var(--border)) }  at request-drawer.css:670 loses to request-drawer.css:918
 .request-tool { border-radius: var(--radius) }  at request-drawer.css:671 loses to request-drawer.css:919
 .request-tool { background: hsl(var(--card)) }  at request-drawer.css:672 loses to request-drawer.css:920
-.hljs-attr { color: hsl(187 60% 38%) }  at request-drawer.css:1098 loses to syntax-highlight.css:41
+.hljs-attr { color: hsl(187 60% 38%) }  at request-drawer.css:1103 loses to syntax-highlight.css:41
 .welcome__progress-header span { letter-spacing: 0.09em }  at welcome.css:548 loses to welcome.css:554
 .welcome__text-link:focus-visible { outline: 3px solid hsl(var(--ring)) }  at welcome.css:726 loses to welcome.css:865
 .welcome__text-link:focus-visible { outline-offset: 2px }  at welcome.css:727 loses to welcome.css:866
 .welcome__route-test-heading { align-items: flex-start }  at welcome.css:873 loses to welcome.css:903
 .welcome__route-test-heading { gap: 14px }  at welcome.css:875 loses to welcome.css:904
 
-## Component-loaded sheets — imported by components, not theme.css; they load after the global styles (20)
+## Component-loaded sheets — imported by components, not theme.css; they load after the global styles (21)
 agent-chart-tooltip.css ← components/ChartHoverTooltip.tsx
 analytics-overview.css ← components/AutofixKpiCards.tsx, pages/GlobalOverview.tsx, pages/providers/ConnectionDetail.tsx, pages/providers/ProviderConnectionsPage.tsx
 connection-detail.css ← pages/providers/ConnectionDetail.tsx
@@ -535,6 +556,7 @@ reliability-card.css ← components/ReliabilityChart.tsx
 request-drawer.css ← components/RequestDrawer.tsx
 routing-deprecation.css ← components/RoutingDeprecationNotice.tsx
 routing-header-tiers.css ← pages/RoutingHeaderTiersSection.tsx
+routing-key-order.css ← pages/RoutingKeyOrderSection.tsx
 routing-modal.css ← pages/Welcome.tsx
 routing-providers.css ← pages/Welcome.tsx
 routing-specificity.css ← pages/RoutingSpecificitySection.tsx
