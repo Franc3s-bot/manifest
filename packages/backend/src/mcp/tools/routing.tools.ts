@@ -1,10 +1,15 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { PLATFORM_API_SURFACES } from 'manifest-shared';
+import { PLATFORM_API_SURFACES, type JsonValue } from 'manifest-shared';
 import { authOrigin } from '../../auth/auth.instance';
 import { McpOperator, MCP_WRITE_SCOPE } from '../mcp-auth';
 import { McpToolDeps } from '../tool-deps';
 import { result } from '../tool-result';
+import {
+  describeUnresolvedModel,
+  matchesModelName,
+  resolveModelRoute,
+} from '../../routing/routing-core/resolve-model-route';
 
 const AUTH_TYPES = ['api_key', 'subscription', 'local'] as const;
 const ROUTE_TEST_TIMEOUT_MS = 120_000;
@@ -172,6 +177,62 @@ export function registerRoutingTools(
             const agent = await deps.resolveAgent.resolve(operator.tenantId, agentName);
             await deps.tiers.clearFallbacks(agent.id, tier ?? 'default');
             return { ok: true };
+          })(),
+        ),
+    );
+
+  server.registerTool(
+    'manifest_routing_params_get',
+    {
+      title: 'Get model params',
+      description:
+        'List the params a routed model accepts (type, allowed values, description) with their saved ' +
+        'values, e.g. reasoning.effort or temperature. tier is "default" or a custom tier name; model ' +
+        'defaults to the tier primary and may name one of its fallbacks. current: null means the ' +
+        'provider default applies.',
+      inputSchema: z.object({
+        agent: z.string().min(1),
+        tier: z.string().min(1).optional(),
+        model: z.string().min(1).optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ agent: agentName, tier, model }) =>
+      result(
+        (async () => {
+          const agent = await deps.resolveAgent.resolve(operator.tenantId, agentName);
+          return deps.routeModelParams.get(agent.id, tier, model);
+        })(),
+      ),
+  );
+
+  if (canWrite)
+    server.registerTool(
+      'manifest_routing_params_set',
+      {
+        title: 'Set model params',
+        description:
+          'Set or unset params on a routed model. Saved params override the values the caller sends ' +
+          'on routed requests (model "auto" or a matching custom-tier header); a request naming a ' +
+          'concrete model skips them. ' +
+          'set maps a param path to its value ({"reasoning.effort": "high"}); unset lists paths to ' +
+          'remove. Other saved params are kept. Read manifest_routing_params_get first for valid paths.',
+        inputSchema: z.object({
+          agent: z.string().min(1),
+          tier: z.string().min(1).optional(),
+          model: z.string().min(1).optional(),
+          set: z.record(z.string().min(1), z.unknown()).optional(),
+          unset: z.array(z.string().min(1)).max(50).optional(),
+        }),
+      },
+      async ({ agent: agentName, tier, model, set, unset }) =>
+        result(
+          (async () => {
+            const agent = await deps.resolveAgent.resolve(operator.tenantId, agentName);
+            return deps.routeModelParams.update(agent.id, tier, model, {
+              set: set as Record<string, JsonValue> | undefined,
+              unset,
+            });
           })(),
         ),
     );
@@ -443,13 +504,28 @@ export function registerRoutingTools(
               }
               const primary = models[0];
               const fallbacks = models.slice(1);
+              const available = await deps.modelDiscovery.getModelsForAgent(
+                agent.tenant_id,
+                agent.id,
+              );
+              // Resolve the route the way it will be stored: scoped to its
+              // provider, and to its auth type when one was given.
+              const primaryRoute = resolveModelRoute(primary, available, {
+                provider,
+                authType: auth_type,
+              });
               if (!force) {
-                const known = new Set(
-                  (await deps.modelDiscovery.getModelsForAgent(agent.tenant_id, agent.id)).map(
-                    (m) => m.id,
-                  ),
+                if (!primaryRoute.ok) {
+                  throw new Error(
+                    `${describeUnresolvedModel(primary, primaryRoute.reason, available, {
+                      provider,
+                      authType: auth_type,
+                    })} Refresh models or pass force:true.`,
+                  );
+                }
+                const missing = fallbacks.filter(
+                  (name) => !available.some((m) => matchesModelName(m, name)),
                 );
-                const missing = models.filter((m) => !known.has(m));
                 if (missing.length > 0) {
                   throw new Error(
                     `Not in the models discovered for "${agentName}": ${missing.join(', ')}. ` +
@@ -457,7 +533,10 @@ export function registerRoutingTools(
                   );
                 }
               }
-              const authType = auth_type ?? 'api_key';
+              // An omitted auth_type follows discovery, so a subscription model
+              // is never stored as a metered api_key route.
+              const authType =
+                auth_type ?? (primaryRoute.ok ? primaryRoute.route.authType : 'api_key');
               if (tier) {
                 const list = await deps.headerTiers.list(agent.id);
                 const hit = list.find((t) => t.name.toLowerCase() === tier.toLowerCase());

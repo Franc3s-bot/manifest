@@ -2,9 +2,9 @@ import { A, useLocation } from '@solidjs/router';
 import { Show, createSignal, createResource, type Component } from 'solid-js';
 import { getBillingStatus } from '../services/api/billing.js';
 import { FREE_REQUEST_LIMIT_LABEL } from '../services/billing-display.js';
-import { checkIsSelfHosted } from '../services/setup-status.js';
+import { checkIsSelfHosted, checkMcpEnabled } from '../services/setup-status.js';
 import AddAgentModal from './AddAgentModal.jsx';
-import PivotAnnouncement from './PivotAnnouncement.jsx';
+import ApiBotAnnouncement from './ApiBotAnnouncement.jsx';
 
 interface SidebarProps {
   mobileOpen?: boolean;
@@ -29,6 +29,11 @@ const Sidebar: Component<SidebarProps> = (props) => {
   // Local providers only exist on self-hosted installs — a cloud backend
   // can't reach the user's localhost, so the Local entry is hidden there.
   const [selfHosted] = createResource(checkIsSelfHosted);
+  // An install served over plain HTTP cannot host the MCP OAuth resource, so
+  // the backend runs without the endpoint entirely. The entry waits for the
+  // status like the Local one does, rather than appearing and then vanishing
+  // on the installs that don't have it.
+  const [mcpEnabled] = createResource(checkMcpEnabled);
   const [billing] = createResource(async () => {
     try {
       return await getBillingStatus();
@@ -135,15 +140,17 @@ const Sidebar: Component<SidebarProps> = (props) => {
           The "New" pills are a showcase device, not structure — delete the two
           spans once these stop being new. n8n joins here when it gets a page. */}
       <div class="sidebar__section-label">INTEGRATIONS</div>
-      <A
-        href="/integrations/mcp"
-        class="sidebar__link"
-        classList={{ active: isGlobalActive('/integrations/mcp') }}
-        aria-current={isGlobalActive('/integrations/mcp') ? 'page' : undefined}
-      >
-        MCP server
-        <span class="sidebar__badge">New</span>
-      </A>
+      <Show when={mcpEnabled()}>
+        <A
+          href="/integrations/mcp"
+          class="sidebar__link"
+          classList={{ active: isGlobalActive('/integrations/mcp') }}
+          aria-current={isGlobalActive('/integrations/mcp') ? 'page' : undefined}
+        >
+          MCP server
+          <span class="sidebar__badge">New</span>
+        </A>
+      </Show>
       <A
         href="/integrations/cli"
         class="sidebar__link"
@@ -166,10 +173,9 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
       <div class="sidebar__spacer" />
 
-      {/* Pivot announcement: shows for everyone in every deployment mode,
-          with a per-session dismiss. Replaces the retired Autofix card,
-          which duplicated the notifications. */}
-      <PivotAnnouncement />
+      {/* API Bot announcement: shows for everyone in every deployment mode,
+          with a per-session dismiss. Links to manifest.build/api-bot/. */}
+      <ApiBotAnnouncement />
 
       <Show when={!selfHosted() && showUpgrade()}>
         <div class="sidebar-usage">

@@ -642,7 +642,6 @@ export async function handleStreamResponse(
   const responsesTransformer =
     apiMode === 'responses'
       ? createResponsesStreamTransformer(meta.model, {
-          structuredOutputToolName: forward.structuredOutputToolName,
           textFormat: forward.responsesTextFormat,
           toolNames: forward.responsesToolNames,
         })
@@ -718,7 +717,10 @@ export async function handleStreamResponse(
       relayOptions,
     );
   }
-  if (forward.isChatGpt) {
+  // A native Responses upstream reaches this point only for a Chat Completions
+  // or Messages client (an Autofix heal that re-routes the Codex wire body), and
+  // its SSE is the same Responses stream the ChatGPT transformer converts.
+  if (forward.isChatGpt || forward.isResponses) {
     // Stateful: must be created once per stream and fed events in order.
     const chatGptTransformer = providerClient.createChatGptStreamTransformer(meta.model);
     return pipeStream(
@@ -859,7 +861,10 @@ export async function handleNonStreamResponse(
       );
     }
     delete (responseBody as Record<string, unknown>)._extractedThinkingBlocks;
-  } else if (forward.isChatGpt) {
+  } else if (forward.isChatGpt || forward.isResponses) {
+    // A native Responses upstream lands here for a Chat Completions or Messages
+    // client: an Autofix heal that changes the model re-routes the Codex wire
+    // body in `responses` mode, so its forward is isResponses, not isChatGpt.
     // Responses-format upstreams differ on their non-streaming shape. The
     // ChatGPT Codex subscription backend always returns SSE even when
     // stream:false, but the Bedrock mantle /openai/v1/responses endpoint (and
@@ -891,7 +896,6 @@ export async function handleNonStreamResponse(
 
   if (apiMode === 'responses' && !forward.isResponses) {
     responseBody = fromChatCompletionResponse(responseBody as Record<string, unknown>, meta.model, {
-      structuredOutputToolName: forward.structuredOutputToolName,
       textFormat: forward.responsesTextFormat,
       toolNames: forward.responsesToolNames,
     });

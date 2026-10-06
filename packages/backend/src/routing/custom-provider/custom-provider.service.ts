@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
   Inject,
+  Logger,
   Optional,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -23,11 +24,13 @@ import {
   CustomProviderApiKind,
   CustomProviderModel,
 } from '../../entities/custom-provider.entity';
+import type { TenantProvider } from '../../entities/tenant-provider.entity';
 import { ProviderService } from '../routing-core/provider.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
 import { CreateCustomProviderDto, UpdateCustomProviderDto } from '../dto/custom-provider.dto';
 import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
+import { decryptWithAny, getDecryptionSecrets } from '../../common/utils/crypto.util';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { ModelsDevSyncService } from '../../database/models-dev-sync.service';
 import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
@@ -52,6 +55,25 @@ export function isEmbeddingModel(id: string): boolean {
 }
 
 /**
+ * The connection that stands for a custom provider when a caller names none:
+ * the first active row by priority, which is the key the proxy forwards an
+ * unpinned route with. Inactive rows only count when nothing is active.
+ */
+export function primaryCustomConnection(
+  rows: readonly TenantProvider[],
+  providerKey: string,
+): TenantProvider | undefined {
+  return rows
+    .filter((r) => r.provider === providerKey)
+    .sort(
+      (a, b) =>
+        Number(b.is_active) - Number(a.is_active) ||
+        a.priority - b.priority ||
+        a.id.localeCompare(b.id),
+    )[0];
+}
+
+/**
  * A custom provider whose display name resolves to a canonical local
  * runner (Ollama, LM Studio) belongs under the Local tab, not API Keys.
  * Used to stamp `auth_type: 'local'` on the companion tenant_providers row
@@ -64,6 +86,17 @@ export function isLocalCustomProviderName(name: string): boolean {
     SHARED_PROVIDER_BY_ID_OR_ALIAS.get(name) ??
     SHARED_PROVIDER_BY_ID_OR_ALIAS.get(name.toLowerCase());
   return !!shared && CANONICAL_LOCAL_IDS.has(shared.id);
+}
+
+/**
+ * Trim surrounding whitespace and trailing slashes without a regex, to avoid
+ * polynomial backtracking on adversarial input (CodeQL js/polynomial-redos).
+ */
+function trimBaseUrl(baseUrl: string): string {
+  const s = baseUrl.trim();
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return s.slice(0, end);
 }
 
 function authTypeForCustomProvider(name: string): AuthType {
@@ -86,6 +119,8 @@ function isAliasUniqueViolation(err: unknown): boolean {
 
 @Injectable()
 export class CustomProviderService {
+  private readonly logger = new Logger(CustomProviderService.name);
+
   constructor(
     @InjectRepository(CustomProvider)
     private readonly repo: Repository<CustomProvider>,
@@ -137,6 +172,14 @@ export class CustomProviderService {
   /** Provider key used in TenantProvider tables. */
   static providerKey(id: string): string {
     return `custom:${id}`;
+  }
+
+  /** The primary connection of one custom provider (see primaryCustomConnection). */
+  async primaryConnection(tenantId: string, id: string): Promise<TenantProvider | undefined> {
+    return primaryCustomConnection(
+      await this.providerService.getProviders(tenantId),
+      CustomProviderService.providerKey(id),
+    );
   }
 
   /** Unique model name for model lookups. */
@@ -408,11 +451,24 @@ export class CustomProviderService {
     const nameCategoryChanged =
       previousName !== cp.name && authTypeForCustomProvider(previousName) !== nextAuthType;
 
-    // Update API key if explicitly provided. Preserve the auth_type
-    // derived from the (possibly renamed) display name so toggling between
-    // "LM Studio" ↔ a freeform name re-tags the companion tenant_providers
-    // row accordingly.
+    // Flip auth_type in place first, so the rows keep their stored keys and
+    // tier overrides. Going through upsertProvider alone would insert a second
+    // row, since the unique index is keyed on (tenant_id, provider, auth_type).
+    if (nameCategoryChanged) {
+      await this.providerService.retagAuthType(
+        null,
+        tenantId,
+        CustomProviderService.providerKey(id),
+        nextAuthType,
+      );
+    }
+
+    // Update API key if explicitly provided, under the auth_type derived from
+    // the (possibly renamed) display name. Pin the write to the primary
+    // connection: the unlabeled path matches a row named 'Default' and would
+    // add a second connection once the primary one has been renamed.
     if ('apiKey' in dto) {
+      const primary = await this.primaryConnection(tenantId, id);
       await this.providerService.upsertProvider(
         null,
         tenantId,
@@ -420,19 +476,8 @@ export class CustomProviderService {
         dto.apiKey,
         nextAuthType,
         undefined,
-        undefined,
+        primary?.label,
         actorUserId,
-      );
-    } else if (nameCategoryChanged) {
-      // Rename-only path: flip auth_type in place so the row keeps its
-      // stored api_key_encrypted and tier overrides stay intact. Going
-      // through upsertProvider would insert a second row since the unique
-      // index is keyed on (tenant_id, provider, auth_type).
-      await this.providerService.retagAuthType(
-        null,
-        tenantId,
-        CustomProviderService.providerKey(id),
-        nextAuthType,
       );
     }
 
@@ -519,11 +564,7 @@ export class CustomProviderService {
       throw new BadRequestException((err as Error).message);
     }
 
-    // Trim trailing slashes without a regex to avoid polynomial backtracking
-    // on adversarial input (CodeQL js/polynomial-redos).
-    let end = baseUrl.length;
-    while (end > 0 && baseUrl.charCodeAt(end - 1) === 47 /* '/' */) end--;
-    const trimmed = baseUrl.slice(0, end);
+    const trimmed = trimBaseUrl(baseUrl);
     const url = apiKind === 'anthropic' ? `${trimmed}/v1/models` : `${trimmed}/models`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
@@ -577,6 +618,41 @@ export class CustomProviderService {
       throw new BadRequestException(classifyProbeError({ url, error: err as Error }).message);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Decrypt the stored API key of an existing custom provider for a single
+   * server-side probe. The edit form never has the plaintext key (list() only
+   * exposes `has_api_key:bool`), so "Fetch models" relies on this when the
+   * user hasn't re-typed one.
+   *
+   * The key is only released for the endpoint it was saved for: the row is
+   * loaded tenant-scoped, and the submitted base URL (after trimming) and
+   * api_kind must match the stored ones. Otherwise any credential holder
+   * could point the probe at their own server and receive the key.
+   * Returns undefined on any miss so the caller probes without a key.
+   */
+  async loadStoredApiKey(
+    tenantId: string,
+    providerId: string,
+    baseUrl: string,
+    apiKind: CustomProviderApiKind = 'openai',
+  ): Promise<string | undefined> {
+    const cp = await this.getById(providerId, tenantId);
+    if (!cp) return undefined;
+    if (trimBaseUrl(cp.base_url) !== trimBaseUrl(baseUrl) || cp.api_kind !== apiKind) {
+      return undefined;
+    }
+    const row = await this.primaryConnection(tenantId, providerId);
+    if (!row?.api_key_encrypted) return undefined;
+    try {
+      return decryptWithAny(row.api_key_encrypted, getDecryptionSecrets()).plaintext;
+    } catch (err) {
+      this.logger.warn(
+        `Could not decrypt the stored API key of custom provider ${providerId}; probing without it: ${(err as Error).message}`,
+      );
+      return undefined;
     }
   }
 

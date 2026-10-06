@@ -6,7 +6,9 @@ import {
 } from './google-adapter';
 import {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   extractThinkingBlocksFromMessagesResponse,
   toAnthropicRequest,
   fromAnthropicResponse,
@@ -79,7 +81,9 @@ export function createAnthropicTransformer(
 // Re-export adapter functions used by ProviderClient.forward()
 export {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   extractThinkingBlocksFromMessagesResponse,
   toGoogleRequest,
   toAnthropicRequest,
@@ -451,6 +455,14 @@ function sanitizeToolSchemas(tools: unknown[]): unknown[] {
   });
 }
 
+export interface SanitizeOpenAiBodyOptions {
+  /**
+   * The upstream rejects `max_tokens` outright, so it is rewritten to
+   * `max_completion_tokens`, or dropped when both are present.
+   */
+  requireMaxCompletionTokens?: boolean;
+}
+
 /**
  * Normalize unconditional OpenAI-compatible wire differences. Provider- and
  * model-specific parameter corrections are intentionally left to Autofix.
@@ -459,12 +471,17 @@ export function sanitizeOpenAiBody(
   body: Record<string, unknown>,
   endpointKey: string,
   model: string,
+  options: SanitizeOpenAiBodyOptions = {},
 ): Record<string, unknown> {
   const passthroughTopLevel = PASSTHROUGH_PROVIDERS.has(endpointKey);
 
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
-  const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
+  const needsMaxCompletionTokens =
+    options.requireMaxCompletionTokens === true ||
+    usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
+  const convertMaxTokens =
+    needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
   // NVIDIA Nemotron hosts (reached through the OpenRouter passthrough) reject the
   // Anthropic-style top-level `thinking` param; scope the strip to that family so
   // the general OpenRouter passthrough stays untouched (mnfst/llm-gateway#2464).
@@ -500,12 +517,13 @@ export function sanitizeOpenAiBody(
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that
     // require it (native OpenAI + Copilot for o-series / GPT-5+). Applies in both
     // passthrough and non-passthrough branches.
-    if (needsMaxCompletionTokens && key === 'max_tokens') {
-      if (!('max_completion_tokens' in body)) {
-        cleaned['max_completion_tokens'] = value;
-      }
+    if (convertMaxTokens && key === 'max_tokens') {
+      cleaned['max_completion_tokens'] = value;
       continue;
     }
+    // Both caps were sent: `max_completion_tokens` stays, and the rejected
+    // `max_tokens` goes.
+    if (options.requireMaxCompletionTokens && key === 'max_tokens') continue;
     if (passthroughTopLevel) {
       // OpenRouter forwards the whole body for most models, but NVIDIA Nemotron
       // hosts validate strictly and reject Anthropic-style `thinking`. Drop it

@@ -14,6 +14,7 @@ import {
   MANIFEST_ORIGIN_PREDICATE,
   CUSTOM_PROVIDER_JOIN_CONDITION,
   excludePlaygroundAgents,
+  filterByLiveAgentName,
   sqlExcludePlayground,
   excludeDirectAttempts,
   sqlExcludeDirectRequests,
@@ -74,6 +75,28 @@ WITH RECURSIVE p AS (
   FROM p WHERE p.provider IS NOT NULL
 )
 SELECT provider FROM p WHERE provider IS NOT NULL`;
+
+/**
+ * Bound a correlated Provider Attempt lookup to the tenant and time window its
+ * parent Request already sits in.
+ *
+ * An attempt always carries its parent's tenant and never starts before its
+ * parent: the Request row takes the first attempt's start time, and the request
+ * backfill keeps the earliest attempt's time. So for any Request in range these
+ * predicates are always true, and the lookup returns the same rows. They exist
+ * for the planner: without them Postgres probes `agent_messages` by request_id
+ * once per parent row (about 135k pages for a 23k-request week, tens of seconds
+ * cold); with them it reads the tenant's attempts in range once through a
+ * (tenant_id, timestamp) index and hash-joins them. The day of slack absorbs
+ * clock ordering between rows written by different hops.
+ *
+ * `tenantParam` and `cutoffParam` name parameters the caller already binds.
+ */
+function attemptWindow(alias: string, tenantParam: string, cutoffParam?: string): string {
+  const tenant = `${alias}.tenant_id = :${tenantParam}`;
+  if (!cutoffParam) return tenant;
+  return `${tenant} AND ${alias}.timestamp >= CAST(:${cutoffParam} AS timestamp) - interval '1 day'`;
+}
 
 interface MessageFilterParams {
   range?: string;
@@ -298,17 +321,17 @@ export class MessagesQueryService {
     if (cutoff) qb.where('r.timestamp >= :requestCutoff', { requestCutoff: cutoff });
     if (params.tenantId)
       qb.andWhere('r.tenant_id = :requestTenantId', { requestTenantId: params.tenantId });
-    else qb.andWhere('1 = 0');
-    if (params.agent_name) {
-      qb.andWhere(
-        `r.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = r.tenant_id AND name = :requestAgentName AND deleted_at IS NULL
-          LIMIT 1
-        )`,
-        { requestAgentName: params.agent_name },
-      );
+    // Still bound without a tenant: the agent and attempt-window subqueries
+    // reference it, and `1 = 0` already empties the result.
+    else qb.andWhere('1 = 0', { requestTenantId: null });
+    if (params.agent_name && params.tenantId) {
+      const agentId = await this.resolveLiveAgentId(params.tenantId, params.agent_name);
+      if (agentId) qb.andWhere('r.agent_id = :requestAgentId', { requestAgentId: agentId });
+      else qb.andWhere('1 = 0');
     }
+    // Only meaningful with a tenant: without one the query is already `1 = 0`.
+    const window = (alias: string): string =>
+      attemptWindow(alias, 'requestTenantId', cutoff ? 'requestCutoff' : undefined);
     if (params.exclude_playground) {
       qb.andWhere(sqlExcludePlayground('r'));
     }
@@ -345,12 +368,14 @@ export class MessagesQueryService {
       qb.andWhere(
         `(EXISTS (
             SELECT 1 FROM agent_messages model_attempt
-            WHERE model_attempt.request_id = r.id AND model_attempt.model IN (:...requestModels)
+            WHERE model_attempt.request_id = r.id AND ${window('model_attempt')}
+              AND model_attempt.model IN (:...requestModels)
           )
           OR (
             r.requested_model IN (:...requestModels)
             AND NOT EXISTS (
-              SELECT 1 FROM agent_messages any_attempt WHERE any_attempt.request_id = r.id
+              SELECT 1 FROM agent_messages any_attempt
+              WHERE any_attempt.request_id = r.id AND ${window('any_attempt')}
             )
           ))`,
         { requestModels: params.models },
@@ -360,7 +385,8 @@ export class MessagesQueryService {
     const attemptParameters: Record<string, unknown> = {};
     const matchingAttempt = (predicates: string[]): string => `EXISTS (
       SELECT 1 FROM agent_messages filtered_attempt
-      WHERE filtered_attempt.request_id = r.id AND ${predicates.join(' AND ')}
+      WHERE filtered_attempt.request_id = r.id AND ${window('filtered_attempt')}
+        AND ${predicates.join(' AND ')}
     )`;
     if (params.provider) {
       attemptPredicates.push('filtered_attempt.provider = :requestProvider');
@@ -420,7 +446,8 @@ export class MessagesQueryService {
         : '';
       const triggerExists = (condition: string): string => `EXISTS (
         SELECT 1 FROM agent_messages trigger_attempt
-        WHERE trigger_attempt.request_id = r.id AND ${condition}${connScope}
+        WHERE trigger_attempt.request_id = r.id AND ${window('trigger_attempt')}
+          AND ${condition}${connScope}
       )`;
       const parts = params.triggers.map((trigger) => {
         if (trigger === 'autofix') return triggerExists('trigger_attempt.autofix_applied = true');
@@ -428,16 +455,22 @@ export class MessagesQueryService {
           return triggerExists('trigger_attempt.fallback_from_model IS NOT NULL');
         // Key rotation is a request-level outcome, not an attempt marker.
         if (trigger === 'key_rotation') return 'r.recovered_by_key_rotation = true';
-        // 'none': no recovery attempt anywhere on the request. Deliberate:
-        // failed rotation attempts carry no attempt-level marker (rotation is
-        // a request-level recovery per docs/glossary.md), so a request whose
-        // ONLY recovery attempt was a failed key rotation is NOT excluded here
-        // — the rotation flag exists only when rotation recovered the request.
-        return `NOT EXISTS (
+        // 'none': no recovery attempt anywhere on the request. Two anti-joins
+        // rather than one over `autofix OR fallback`: each kind has its own
+        // partial index, and the OR forced a heap read of every attempt in range.
+        // Deliberate on key rotation: failed rotation attempts carry no
+        // attempt-level marker (rotation is a request-level recovery per
+        // docs/glossary.md), so a request whose ONLY recovery attempt was a
+        // failed key rotation is NOT excluded here — the rotation flag exists
+        // only when rotation recovered the request.
+        const noAttempt = (condition: string): string => `NOT EXISTS (
           SELECT 1 FROM agent_messages trigger_attempt
-          WHERE trigger_attempt.request_id = r.id
-          AND (trigger_attempt.autofix_applied = true OR trigger_attempt.fallback_from_model IS NOT NULL)
-        ) AND (r.recovered_by_key_rotation IS NULL OR r.recovered_by_key_rotation = false)`;
+          WHERE trigger_attempt.request_id = r.id AND ${window('trigger_attempt')}
+            AND ${condition}
+        )`;
+        return `(${noAttempt('trigger_attempt.autofix_applied = true')} AND ${noAttempt(
+          'trigger_attempt.fallback_from_model IS NOT NULL',
+        )} AND (r.recovered_by_key_rotation IS NULL OR r.recovered_by_key_rotation = false))`;
       });
       qb.andWhere(`(${parts.join(' OR ')})`, triggerParameters);
     }
@@ -467,7 +500,8 @@ export class MessagesQueryService {
         qb.andWhere(
           `EXISTS (
             SELECT 1 FROM agent_messages outcome_attempt
-            WHERE outcome_attempt.request_id = r.id AND ${condition}${connScope}
+            WHERE outcome_attempt.request_id = r.id AND ${window('outcome_attempt')}
+              AND ${condition}${connScope}
           )`,
           outcomeParameters,
         );
@@ -699,6 +733,28 @@ export class MessagesQueryService {
     };
   }
 
+  /**
+   * The live harness id for a name, or null when none is live.
+   *
+   * Resolved before the Requests queries are built so Postgres plans them with
+   * the actual value. Written as `agent_id = (SELECT id FROM agents ...)`, the
+   * lookup is an InitPlan whose result the planner cannot see: it guesses a
+   * handful of rows even for a harness that owns most of its tenant's traffic,
+   * then probes attempts once per request (117k pages for a 23k-request week,
+   * against 950 with the value). Correlating it on `r.tenant_id` was worse
+   * still, a per-row SubPlan that kept `agent_id` out of the index condition.
+   *
+   * The unique live-name index on `agents` makes this the same single row the
+   * subquery returned.
+   */
+  private async resolveLiveAgentId(tenantId: string, agentName: string): Promise<string | null> {
+    const rows = (await this.requestRepo!.query(
+      'SELECT id FROM agents WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1',
+      [tenantId, agentName],
+    )) as Array<{ id: string }>;
+    return rows[0]?.id ?? null;
+  }
+
   /** Resolve connection ids to their identity triple, tenant-scoped. */
   private async resolveConnections(
     tenantId: string | null,
@@ -803,7 +859,7 @@ export class MessagesQueryService {
       qb.andWhere(
         `ht.agent_id = (
           SELECT id FROM agents
-          WHERE tenant_id = ht.tenant_id AND name = :headerTierAgent AND deleted_at IS NULL
+          WHERE tenant_id = :headerTierTenant AND name = :headerTierAgent AND deleted_at IS NULL
           LIMIT 1
         )`,
         { headerTierAgent: agentName },
@@ -871,17 +927,8 @@ export class MessagesQueryService {
       qb.andWhere('at.cost_usd >= :costMin', { costMin: params.cost_min });
     if (params.cost_max !== undefined)
       qb.andWhere('at.cost_usd <= :costMax', { costMax: params.cost_max });
-    if (params.agent_name) {
-      qb.andWhere(
-        `at.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = at.tenant_id
-            AND name = :filterAgent
-            AND deleted_at IS NULL
-          LIMIT 1
-        )`,
-        { filterAgent: params.agent_name },
-      );
+    if (params.agent_name && params.tenantId) {
+      filterByLiveAgentName(qb, params.agent_name, params.tenantId);
     }
 
     if (params.status === 'failed') {
@@ -1078,21 +1125,22 @@ export class MessagesQueryService {
       .select('DISTINCT r.requested_model', 'model')
       .where('r.timestamp >= :cutoff', { cutoff })
       .andWhere("r.requested_model IS NOT NULL AND r.requested_model <> ''")
+      // The attempt window turns a per-request probe (40 s cold on a 23k-request
+      // week, for an answer that is almost always empty) into one hash anti-join.
       .andWhere(
-        'NOT EXISTS (SELECT 1 FROM agent_messages blocked_attempt WHERE blocked_attempt.request_id = r.id)',
+        `NOT EXISTS (
+          SELECT 1 FROM agent_messages blocked_attempt
+          WHERE blocked_attempt.request_id = r.id
+            AND ${attemptWindow('blocked_attempt', 'blockedTenantId', 'cutoff')}
+        )`,
       )
       // Scoped on `r` by hand: addTenantFilter hardcodes the `at` alias of the
       // attempt-first queries and would emit SQL with no such FROM entry here.
       .andWhere('r.tenant_id = :blockedTenantId', { blockedTenantId: params.tenantId });
     if (params.agent_name) {
-      qb.andWhere(
-        `r.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = r.tenant_id AND name = :blockedAgentName AND deleted_at IS NULL
-          LIMIT 1
-        )`,
-        { blockedAgentName: params.agent_name },
-      );
+      const agentId = await this.resolveLiveAgentId(params.tenantId, params.agent_name);
+      if (agentId) qb.andWhere('r.agent_id = :blockedAgentId', { blockedAgentId: agentId });
+      else qb.andWhere('1 = 0');
     }
     const rows = (await qb.getRawMany()) as { model: string }[];
     const models = rows.map((row) => String(row.model)).filter(Boolean);

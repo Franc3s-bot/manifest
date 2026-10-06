@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RouteModelParamsModule } from '../routing/model-params/route-model-params.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CommonModule } from '../common/common.module';
@@ -31,6 +32,7 @@ import { McpController } from './mcp.controller';
     ModelDiscoveryModule,
     ModelPricesModule,
     OtlpModule,
+    RouteModelParamsModule,
   ],
   controllers: [McpController],
 })

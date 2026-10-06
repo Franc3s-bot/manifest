@@ -83,6 +83,10 @@ export class AgentMessage {
   @Column('varchar', { default: 'pending' })
   status!: string;
 
+  /** Set after this completed Provider Attempt has been added to agent_usage_daily. */
+  @Column(timestampType(), { nullable: true })
+  agent_usage_rolled_up_at?: string | null;
+
   @Column('varchar', { nullable: true })
   error_message!: string | null;
 
@@ -92,7 +96,7 @@ export class AgentMessage {
   /**
    * The documented Manifest error code behind this row ('M100', 'M300', …),
    * NULL for provider/transport failures and successes. Lets the dashboard deep
-   * link to https://manifest.build/docs/errors/<code>. The catalogue lives in
+   * link to https://manifest.build/llm-gateway/docs/errors/<code>. The catalogue lives in
    * common/errors/error-codes.ts.
    */
   @Column('varchar', { length: 8, nullable: true })

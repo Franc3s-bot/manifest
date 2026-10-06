@@ -80,8 +80,9 @@ import { CopilotTokenService } from './copilot-token.service';
 import { ReasoningContentCache } from './reasoning-content-cache';
 import { buildProviderExtraHeaders } from './provider-hooks';
 import { shouldTriggerFallback } from './fallback-status-codes';
+import { peekStream, STREAM_WARMUP_MS } from './stream-warmup';
 import { inferProviderFromModelName } from '../../common/utils/provider-aliases';
-import { normalizeAnthropicShortModelId } from '../../common/utils/anthropic-model-id';
+import { normalizeProviderModel } from '../../common/utils/anthropic-model-id';
 import {
   isTransportError,
   buildTransportErrorResponse,
@@ -103,6 +104,10 @@ import {
   type RouteCredentialDeps,
 } from './route-credentials';
 import { recordingResponseFromText } from './attempt-recording-capture';
+import {
+  CredentialRejectionCooldown,
+  type RejectedCredentialRef,
+} from './credential-rejection-cooldown';
 
 // Fallback cooldown applied when an upstream 429 carries no usable Retry-After.
 // Kept short (15s) on purpose: many providers rate-limit on brief RPM/burst
@@ -153,6 +158,7 @@ export interface FailedFallback {
 export class ProxyFallbackService {
   private readonly logger = new Logger(ProxyFallbackService.name);
   private readonly rateLimitCooldowns = new Map<string, number>();
+  private readonly credentialRejections = new CredentialRejectionCooldown();
 
   constructor(
     private readonly providerKeyService: ProviderKeyService,
@@ -389,33 +395,36 @@ export class ProxyFallbackService {
           `Fallback ${i}: trying model=${model} provider=${provider} auth_type=${authType} (primary=${primaryModel})`,
         );
 
-        const forward = await this.tryForwardToProvider({
-          provider,
-          apiKey: credentials.apiKey,
-          model,
-          body,
-          resolveChatBody,
-          stream,
-          sessionKey,
-          reasoningCacheKey,
-          providerCacheKey,
-          signal,
-          agentId,
-          tenantId,
-          rawApiKey: credentials.rawApiKey,
-          providerKeyLabel,
-          authType,
-          apiMode,
-          resourceUrl: credentials.resourceUrl,
-          providerRegion: credentials.providerRegion,
-          signatureLookup,
-          thinkingLookup,
-          clientAnthropicBeta,
-          paramMergeContext,
-          tenantProviderId,
-          startProviderAttempt,
-          clientUserAgent,
-        });
+        const forward = await this.warmUpStreamBody(
+          await this.tryForwardToProvider({
+            provider,
+            apiKey: credentials.apiKey,
+            model,
+            body,
+            resolveChatBody,
+            stream,
+            sessionKey,
+            reasoningCacheKey,
+            providerCacheKey,
+            signal,
+            agentId,
+            tenantId,
+            rawApiKey: credentials.rawApiKey,
+            providerKeyLabel,
+            authType,
+            apiMode,
+            resourceUrl: credentials.resourceUrl,
+            providerRegion: credentials.providerRegion,
+            signatureLookup,
+            thinkingLookup,
+            clientAnthropicBeta,
+            paramMergeContext,
+            tenantProviderId,
+            startProviderAttempt,
+            clientUserAgent,
+          }),
+          { stream, provider, model },
+        );
 
         // Autofix runs on a failed fallback hop too, not just the primary: a
         // fallback that rejects a request-side param (e.g. an unsupported
@@ -449,6 +458,7 @@ export class ProxyFallbackService {
             signal,
             startProviderAttempt,
             keyRotationState,
+            stream,
           });
         }
         const finalForward = autofixAttempt?.forward ?? forward;
@@ -582,6 +592,7 @@ export class ProxyFallbackService {
      * fallback hop marks the same labels the chain's own rotation would skip.
      */
     keyRotationState?: KeyRotationState;
+    stream: boolean;
   }): Promise<AutofixAttempt | null> {
     return this.autofixService.maybeHeal({
       forward: input.forward,
@@ -593,18 +604,60 @@ export class ProxyFallbackService {
       apiMode: input.apiMode,
       requestBody: input.requestBody,
       keyRotationState: input.keyRotationState,
-      reforward: (healedBody) =>
-        this.retryWireBody(input.forward, healedBody, {
-          provider: input.provider,
-          model: input.model,
-          authType: input.authType,
-          agentId: input.agentId,
-          tenantProviderId: input.tenantProviderId,
-          providerKeyLabel: input.providerKeyLabel,
-          startProviderAttempt: input.startProviderAttempt,
-          signal: input.signal,
-        }),
+      // Warm up the patched retry before Autofix sees it, so a retry whose
+      // stream stalls counts as a failed patch rather than a healed request.
+      reforward: async (healedBody) =>
+        this.warmUpStreamBody(
+          await this.retryWireBody(input.forward, healedBody, {
+            provider: input.provider,
+            model: input.model,
+            authType: input.authType,
+            agentId: input.agentId,
+            tenantProviderId: input.tenantProviderId,
+            providerKeyLabel: input.providerKeyLabel,
+            startProviderAttempt: input.startProviderAttempt,
+            signal: input.signal,
+            stream: input.stream,
+          }),
+          input,
+        ),
     });
+  }
+
+  /**
+   * Streaming counterpart of {@link bufferNonStreamBody} for fallback hops.
+   * Peek at the first chunk before the hop is committed; on a stall, error or
+   * empty stream, return a synthetic 502 so the chain treats it as a failed
+   * hop. The primary gets the same warm-up in ProxyService.proxyRequest.
+   */
+  private async warmUpStreamBody(
+    forward: ForwardResult,
+    opts: { stream: boolean; provider: string; model: string },
+  ): Promise<ForwardResult> {
+    const { response, attempt } = forward;
+    if (!opts.stream || !response.ok || !response.body) return forward;
+    const warmup = await peekStream(response.body, STREAM_WARMUP_MS);
+    if (warmup.ok) {
+      return {
+        ...forward,
+        response: new Response(warmup.stream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      };
+    }
+    if (attempt) attempt.completedAtMs = Date.now();
+    this.logger.warn(
+      `Fallback stream warmup failed: provider=${opts.provider} model=${opts.model} reason=${warmup.reason} message=${warmup.message}`,
+    );
+    return {
+      ...forward,
+      response: new Response(
+        JSON.stringify({ error: { message: `Stream warmup failed: ${warmup.message}` } }),
+        { status: 502, headers: { 'content-type': 'application/json' } },
+      ),
+    };
   }
 
   private routeCredentialDeps(): RouteCredentialDeps {
@@ -626,12 +679,26 @@ export class ProxyFallbackService {
     if (cooldown) {
       return this.buildRateLimitCooldownForward(opts, cooldown);
     }
+    const rejectedUntil = this.credentialRejections.rejectedUntil(
+      this.credentialRef(opts, opts.apiKey),
+    );
+    if (rejectedUntil) {
+      return this.buildCredentialRejectedForward(opts, rejectedUntil);
+    }
 
     try {
       const forward = await this.forwardToProvider(opts);
-      const result = await this.retryOAuthSubscriptionAfterRejectedToken(opts, forward);
+      const { forward: result, apiKey } = await this.retryOAuthSubscriptionAfterRejectedToken(
+        opts,
+        forward,
+      );
       this.recordRateLimitCooldown(opts, result.response);
-      return result;
+      // Still 401 after any OAuth refresh: the credential is stale (refresh
+      // rejected, or the account itself is refused). Skip it until it changes.
+      if (result.response.status === 401) {
+        this.credentialRejections.reject(this.credentialRef(opts, apiKey));
+      }
+      return await this.bufferNonStreamBody(result, opts);
     } catch (error) {
       if (opts.signal?.aborted) throw error;
       if (!isTransportError(error)) throw error;
@@ -653,6 +720,50 @@ export class ProxyFallbackService {
     }
   }
 
+  /**
+   * Read a successful non-streaming body before the route is committed. The
+   * fallback decision only sees the status line, so a provider that sends 200
+   * headers and then times out or drops the socket mid-body used to fail later
+   * in the response handler, as an M500 with no fallback. Reading it here turns
+   * that failure into the same synthetic 503/504 as a pre-response transport
+   * error, which the fallback chain already handles. Only buffers when the
+   * caller is known to be non-streaming: nothing has reached the client yet, so
+   * another route can still answer.
+   */
+  private async bufferNonStreamBody(
+    forward: ForwardResult,
+    opts: { stream?: boolean; signal?: AbortSignal; provider: string; model: string },
+  ): Promise<ForwardResult> {
+    const { response, attempt } = forward;
+    if (opts.stream !== false || !response.ok || !response.body) return forward;
+    try {
+      const body = await response.arrayBuffer();
+      // The attempt ends when its body does, not when headers arrived.
+      if (attempt) attempt.completedAtMs = Date.now();
+      return {
+        ...forward,
+        response: new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      };
+    } catch (error) {
+      if (attempt) attempt.completedAtMs = Date.now();
+      if (opts.signal?.aborted || !isTransportError(error)) {
+        if (attempt && error instanceof Error) {
+          (error as AttemptTaggedError)[PROVIDER_ATTEMPT_REF] = attempt;
+        }
+        throw error;
+      }
+      const failureResponse = buildTransportErrorResponse(error);
+      this.logger.warn(
+        `Provider body read failure: provider=${opts.provider} model=${opts.model} status=${failureResponse.status} message=${describeTransportError(error)}`,
+      );
+      return { ...forward, response: failureResponse, providerCallStarted: true };
+    }
+  }
+
   /** Re-send a healed body without rebuilding the already-resolved provider request. */
   async retryWireBody(
     forward: ForwardResult,
@@ -667,7 +778,7 @@ export class ProxyFallbackService {
       | 'providerKeyLabel'
       | 'startProviderAttempt'
       | 'signal'
-    >,
+    > & { stream?: boolean },
   ): Promise<ForwardResult> {
     if (!forward.retryWireBody) {
       throw new Error('Provider forward does not support wire-body retry');
@@ -696,7 +807,10 @@ export class ProxyFallbackService {
         }),
         retried.response,
       );
-      return { ...retried, attempt, providerCallStarted: true };
+      return await this.bufferNonStreamBody(
+        { ...retried, attempt, providerCallStarted: true },
+        opts,
+      );
     } catch (error) {
       if (attempt) attempt.completedAtMs = Date.now();
       if (attempt && error instanceof Error) {
@@ -736,6 +850,33 @@ export class ProxyFallbackService {
     opts: ForwardProviderOptions,
     expiresAt: number,
   ): ForwardResult {
+    const message =
+      `Provider route temporarily cooling down after an upstream 429: ` +
+      `${opts.provider}/${opts.model}`;
+    return this.buildLocalSkipForward(opts, 429, message, expiresAt);
+  }
+
+  private buildCredentialRejectedForward(
+    opts: ForwardProviderOptions,
+    expiresAt: number,
+  ): ForwardResult {
+    const credential = opts.providerKeyLabel ? `"${opts.providerKeyLabel}" ` : '';
+    const message =
+      `${opts.provider} rejected the ${credential}credential with a 401 and it is skipped ` +
+      `for now. Reconnect or replace it if this continues.`;
+    return this.buildLocalSkipForward(opts, 401, message, expiresAt);
+  }
+
+  /**
+   * A route skipped locally, without calling the provider. The status keeps
+   * the fallback chain moving; the attempt is not persisted as a provider call.
+   */
+  private buildLocalSkipForward(
+    opts: ForwardProviderOptions,
+    status: number,
+    message: string,
+    expiresAt: number,
+  ): ForwardResult {
     const attempt = opts.startProviderAttempt?.({
       provider: opts.provider,
       model: opts.model,
@@ -746,12 +887,9 @@ export class ProxyFallbackService {
     });
     if (attempt) attempt.completedAtMs = Date.now();
     const retryAfterSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
-    const message =
-      `Provider route temporarily cooling down after an upstream 429: ` +
-      `${opts.provider}/${opts.model}`;
     return {
       response: new Response(JSON.stringify({ error: { message } }), {
-        status: 429,
+        status,
         headers: {
           'content-type': 'application/json',
           'retry-after': String(retryAfterSeconds),
@@ -762,6 +900,18 @@ export class ProxyFallbackService {
       isChatGpt: false,
       providerCallStarted: false,
       attempt,
+    };
+  }
+
+  private credentialRef(opts: ForwardProviderOptions, secret: string): RejectedCredentialRef {
+    return {
+      tenantId: opts.tenantId,
+      connectionId: opts.tenantProviderId,
+      provider: opts.provider,
+      authType: opts.authType,
+      keyLabel: opts.providerKeyLabel,
+      model: opts.model,
+      secret,
     };
   }
 
@@ -832,10 +982,16 @@ export class ProxyFallbackService {
     ].join('\u0000');
   }
 
+  /**
+   * Refresh an OAuth token the provider rejected with a 401 and resend once.
+   * Returns the secret the final attempt used, so a still-rejected credential
+   * is remembered under the token the next request will actually send.
+   */
   private async retryOAuthSubscriptionAfterRejectedToken(
     opts: ForwardProviderOptions,
     forward: ForwardResult,
-  ): Promise<ForwardResult> {
+  ): Promise<{ forward: ForwardResult; apiKey: string }> {
+    const unchanged = { forward, apiKey: opts.apiKey };
     if (
       opts.authType !== 'subscription' ||
       forward.response.status !== 401 ||
@@ -843,7 +999,7 @@ export class ProxyFallbackService {
       !opts.agentId ||
       !opts.tenantId
     ) {
-      return forward;
+      return unchanged;
     }
 
     const refreshed = await refreshRejectedOAuthCredential(
@@ -861,7 +1017,13 @@ export class ProxyFallbackService {
         xaiOauth: this.xaiOauth,
       },
     );
-    if (!refreshed?.apiKey || refreshed.apiKey === opts.apiKey) return forward;
+    if (!refreshed?.apiKey || refreshed.apiKey === opts.apiKey) {
+      this.logger.warn(
+        `OAuth token rejected upstream and could not be refreshed: provider=${opts.provider} ` +
+          `keyLabel=${opts.providerKeyLabel ?? 'default'} agent=${opts.agentId}`,
+      );
+      return unchanged;
+    }
 
     this.logger.log(
       `OAuth token rejected upstream; refreshed provider=${opts.provider} agent=${opts.agentId}`,
@@ -882,16 +1044,19 @@ export class ProxyFallbackService {
       resourceUrl: refreshed.resourceUrl ?? opts.resourceUrl,
     };
     try {
-      return await this.forwardToProvider(retryOpts);
+      return { forward: await this.forwardToProvider(retryOpts), apiKey: refreshed.apiKey };
     } catch (error) {
       if (opts.signal?.aborted || !isTransportError(error)) throw error;
       return {
-        response: buildTransportErrorResponse(error),
-        attempt: attemptFromError(error),
-        providerCallStarted: true,
-        isGoogle: false,
-        isAnthropic: false,
-        isChatGpt: false,
+        forward: {
+          response: buildTransportErrorResponse(error),
+          attempt: attemptFromError(error),
+          providerCallStarted: true,
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        },
+        apiKey: refreshed.apiKey,
       };
     }
   }
@@ -954,6 +1119,7 @@ export class ProxyFallbackService {
       resourceUrl,
       customProvider,
       logger: this.logger,
+      apiMode: opts.apiMode,
     });
 
     const reasoningEndpointKey =
@@ -1054,6 +1220,4 @@ export class ProxyFallbackService {
   }
 }
 
-export function normalizeProviderModel(provider: string, model: string): string {
-  return provider.toLowerCase() === 'anthropic' ? normalizeAnthropicShortModelId(model) : model;
-}
+export { normalizeProviderModel };

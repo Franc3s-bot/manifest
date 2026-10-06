@@ -23,6 +23,18 @@ describe('resolveForwardEndpoint', () => {
     expect(out.customEndpoint).toBeUndefined();
   });
 
+  it('builds the MiniMax CN endpoint for API-key credentials', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'minimax',
+      authType: 'api_key',
+      model: 'minimax/MiniMax-M3',
+      providerRegion: 'cn',
+    });
+    expect(out.forwardModel).toBe('MiniMax-M3');
+    expect(out.customEndpoint?.baseUrl).toBe('https://api.minimaxi.com');
+    expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/v1/chat/completions');
+  });
+
   it('normalises a legacy MiniMax resource_url before building the region endpoint', () => {
     const out = resolveForwardEndpoint({
       provider: 'minimax',
@@ -238,6 +250,58 @@ describe('resolveForwardEndpoint', () => {
     expect(out.customEndpoint?.format).toBe('anthropic');
     expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/anthropic/v1/messages');
   });
+
+  it.each([
+    ['chat_completions', 'openai', '/openai/v1/chat/completions'],
+    ['responses', 'chatgpt', '/openai/v1/responses'],
+  ] as const)(
+    'sends a catalogued CRIS profile to Bedrock Runtime in the selected region (%s)',
+    (apiMode, format, path) => {
+      const out = resolveForwardEndpoint({
+        provider: 'bedrock',
+        authType: 'api_key',
+        model: 'global.moonshotai.kimi-k3',
+        providerRegion: 'eu-west-1',
+        apiMode,
+      });
+
+      expect(out.forwardModel).toBe('global.moonshotai.kimi-k3');
+      expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.eu-west-1.amazonaws.com');
+      expect(out.customEndpoint?.format).toBe(format);
+      expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe(path);
+    },
+  );
+
+  it('keeps an uncatalogued non-Claude CRIS profile on Mantle in the selected region', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'bedrock',
+      authType: 'api_key',
+      model: 'global.openai.gpt-7',
+      providerRegion: 'us-west-2',
+      apiMode: 'responses',
+    });
+
+    expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-mantle.us-west-2.api.aws');
+  });
+
+  it.each(['us.anthropic.claude-sonnet-5-5', 'bedrock/us.anthropic.claude-sonnet-5-5'])(
+    'sends the Claude CRIS profile %s to Bedrock Runtime Messages in the selected region',
+    (model) => {
+      const out = resolveForwardEndpoint({
+        provider: 'bedrock',
+        authType: 'api_key',
+        model,
+        providerRegion: 'us-west-2',
+        apiMode: 'messages',
+      });
+
+      expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-west-2.amazonaws.com');
+      expect(out.customEndpoint?.format).toBe('anthropic');
+      expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/anthropic/v1/messages');
+      // The resolver never strips the `bedrock/` prefix; provider-client does that.
+      expect(out.forwardModel).toBe(model);
+    },
+  );
 
   it('sets no qwen override for an unresolved region', () => {
     const out = resolveForwardEndpoint({

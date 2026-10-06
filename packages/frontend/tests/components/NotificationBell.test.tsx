@@ -40,13 +40,22 @@ vi.mock('../../src/services/api.js', () => ({
   getAgents: (...args: unknown[]) => mockGetAgents(...args),
 }));
 
-vi.mock('../../src/services/sse.js', () => ({
-  messagePing: () => 0,
-  agentPing: () => 0,
-  routingPing: () => 0,
-}));
+vi.mock('../../src/services/sse.js', async () => {
+  const { createSignal } = await import('solid-js');
+  const [messagePing, setMessagePing] = createSignal(0);
+  return {
+    messagePing,
+    agentPing: () => 0,
+    routingPing: () => 0,
+    __setMessagePing: setMessagePing,
+  };
+});
 
 import NotificationBell from '../../src/components/NotificationBell';
+import * as sse from '../../src/services/sse.js';
+
+const setMessagePing = (sse as unknown as { __setMessagePing: (n: number) => void })
+  .__setMessagePing;
 
 describe('NotificationBell', () => {
   beforeEach(() => {
@@ -91,9 +100,33 @@ describe('NotificationBell', () => {
     render(() => <NotificationBell />);
 
     await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeDefined());
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await waitFor(() => expect(screen.queryByLabelText('Notifications')).toBeNull());
     expect(localStorage.getItem('manifest_notif_read')).toBe('[]');
+  });
+
+  it('does not refetch the workspace Autofix status when a new message arrives', async () => {
+    // Every gateway request emits a message ping. Refetching the status on each
+    // one made this bell the busiest dashboard endpoint in production, and the
+    // status only changes on an Autofix toggle, never on traffic.
+    render(() => <NotificationBell />);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(1));
+
+    setMessagePing(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls the workspace Autofix status once a minute, not every 15 seconds', async () => {
+    render(() => <NotificationBell />);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(2));
   });
 
   it('hides itself when loading agents fails', async () => {
@@ -142,7 +175,7 @@ describe('NotificationBell', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await waitFor(() => expect(screen.queryByLabelText('Notifications')).toBeNull());
     setItem.mockRestore();
   });

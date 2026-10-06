@@ -134,7 +134,6 @@ describe('IngestEventBusService', () => {
 describe('IngestEventBusService message cache invalidation', () => {
   let service: IngestEventBusService;
   let invalidate: jest.Mock;
-
   beforeEach(() => {
     jest.useFakeTimers();
     invalidate = jest.fn().mockResolvedValue(undefined);
@@ -208,5 +207,16 @@ describe('IngestEventBusService message cache invalidation', () => {
     await jest.advanceTimersByTimeAsync(250);
 
     expect(invalidate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the response-cache generation fresh for automatic fallback', async () => {
+    const received: IngestEvent[] = [];
+    service.forTenant('tenant-1').subscribe((event) => received.push(event));
+
+    service.emit('tenant-1', 'message');
+    await jest.advanceTimersByTimeAsync(250);
+
+    expect(invalidate).toHaveBeenCalledWith('tenant-1');
+    expect(received).toEqual([{ tenantId: 'tenant-1', kind: 'message', userId: undefined }]);
   });
 });

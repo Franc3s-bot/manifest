@@ -1620,6 +1620,94 @@ describe('ProxyController', () => {
     });
   });
 
+  describe('post-routing M500 rows', () => {
+    const failAfterRouting = (meta: Record<string, unknown>) => {
+      proxyService.proxyRequest.mockResolvedValue({
+        forward: {
+          response: new Response('data: {}\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: true,
+        },
+        meta,
+      });
+      (providerClient as Record<string, jest.Mock>).collectChatGptSseResponse = jest
+        .fn()
+        .mockImplementation(() => {
+          throw new Error('adapter bug');
+        });
+    };
+
+    it('keeps the tier and header tier the request was routed through', async () => {
+      failAfterRouting({
+        tier: 'standard',
+        model: 'gpt-5.3-codex',
+        provider: 'openai',
+        confidence: 0.8,
+        reason: 'header-match',
+        specificity_category: 'coding',
+        header_tier_id: 'header-tier-1',
+        header_tier_name: 'Program Weeks',
+        header_tier_color: 'indigo',
+      });
+      const manifestSpy = jest.spyOn(recorder, 'recordManifestBlockedRequest');
+
+      const req = mockRequest({ messages: [{ role: 'user', content: 'test' }] });
+      const { res } = mockResponse();
+      await controller.chatCompletions(req as never, res as never);
+      await flushRecorderMicrotasks();
+
+      expect(manifestSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          errorCode: 'M500',
+          routing: {
+            tier: 'standard',
+            specificityCategory: 'coding',
+            headerTierId: 'header-tier-1',
+            headerTierName: 'Program Weeks',
+            headerTierColor: 'indigo',
+          },
+        }),
+      );
+      expect(mockMessageRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error_code: 'M500',
+          provider: null,
+          routing_tier: 'standard',
+          specificity_category: 'coding',
+          header_tier_id: 'header-tier-1',
+          header_tier_name: 'Program Weeks',
+          header_tier_color: 'indigo',
+        }),
+      );
+    });
+
+    it("does not stamp a friendly stub's placeholder tier", async () => {
+      failAfterRouting({
+        tier: 'simple',
+        model: 'manifest',
+        provider: 'manifest',
+        confidence: 1,
+        reason: 'manifest_internal_error',
+      });
+      const manifestSpy = jest.spyOn(recorder, 'recordManifestBlockedRequest');
+
+      const req = mockRequest({ messages: [{ role: 'user', content: 'test' }] });
+      const { res } = mockResponse();
+      await controller.chatCompletions(req as never, res as never);
+      await flushRecorderMicrotasks();
+
+      expect(manifestSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.objectContaining({ routing: expect.anything() }),
+      );
+    });
+  });
+
   it('should record message with zero tokens when response reports zero usage', async () => {
     const responseBody = {
       choices: [{ message: { content: 'hello' } }],
@@ -3255,6 +3343,93 @@ describe('ProxyController', () => {
 
       expect(successSpy).not.toHaveBeenCalled();
       expect(cancelledSpy).toHaveBeenCalled();
+    });
+
+    it('cancels earlier pending attempts when the caller closes mid fallback chain', async () => {
+      let closeListener: (() => void) | undefined;
+      const cancelledSpy = jest.spyOn(recorder, 'recordCancelledRequest');
+      const attemptIds: string[] = [];
+      proxyService.proxyRequest.mockImplementation(
+        async (options: { startProviderAttempt: StartProviderAttempt }) => {
+          const primary = options.startProviderAttempt({ provider: 'openai', model: 'gpt-4o' });
+          const cooldown = options.startProviderAttempt({
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            providerCallStarted: false,
+          });
+          const fallback = options.startProviderAttempt({
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+          });
+          attemptIds.push(primary.id, cooldown.id, fallback.id);
+          // The primary failed, the chain moved on, then the caller hung up and
+          // the fallback call rejected with the aborted signal.
+          closeListener?.();
+          throw new DOMException('This operation was aborted', 'AbortError');
+        },
+      );
+      const { res } = mockResponse();
+      (res.once as jest.Mock).mockImplementation((event: string, cb: () => void) => {
+        if (event === 'close') closeListener = cb;
+      });
+
+      await controller.chatCompletions(
+        mockRequest({ messages: [{ role: 'user', content: 'hi' }] }) as never,
+        res as never,
+      );
+      await flushRecorderMicrotasks();
+
+      const [primaryId, cooldownId, fallbackId] = attemptIds;
+      expect(cancelledSpy).toHaveBeenCalledTimes(1);
+      // recordCancelledRequest completes the last attempt; the sweep's
+      // pending-guarded update on it is then a no-op.
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: fallbackId },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
+      // The primary row must not stay pending, and only a still-pending row
+      // is touched so a terminal write that already landed wins.
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: primaryId, status: 'pending' },
+        expect.objectContaining({ status: 'cancelled', error_message: null }),
+      );
+      // A cooldown skip never inserted a row, so there is nothing to cancel.
+      const touched = mockMessageRepo.update.mock.calls.map(
+        ([criteria]) => (criteria as { id: string }).id,
+      );
+      expect(touched).not.toContain(cooldownId);
+    });
+
+    it('cancels the last attempt when recordCancelledRequest fails to write it', async () => {
+      let closeListener: (() => void) | undefined;
+      jest.spyOn(recorder, 'recordCancelledRequest').mockRejectedValue(new Error('db down'));
+      let lastId: string | undefined;
+      proxyService.proxyRequest.mockImplementation(
+        async (options: { startProviderAttempt: StartProviderAttempt }) => {
+          options.startProviderAttempt({ provider: 'openai', model: 'gpt-4o' });
+          lastId = options.startProviderAttempt({
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+          }).id;
+          closeListener?.();
+          throw new DOMException('This operation was aborted', 'AbortError');
+        },
+      );
+      const { res } = mockResponse();
+      (res.once as jest.Mock).mockImplementation((event: string, cb: () => void) => {
+        if (event === 'close') closeListener = cb;
+      });
+
+      await controller.chatCompletions(
+        mockRequest({ messages: [{ role: 'user', content: 'hi' }] }) as never,
+        res as never,
+      );
+
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: lastId, status: 'pending' },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
+      expect(rateLimiter.releaseSlot).toHaveBeenCalled();
     });
 
     it('should emit a terminal SSE error when the upstream dies after the first chunk', async () => {

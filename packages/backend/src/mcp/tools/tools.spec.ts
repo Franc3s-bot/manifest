@@ -127,10 +127,16 @@ function makeDeps(): McpToolDeps {
       probeModels: jest.fn().mockResolvedValue([{ model_name: 'm' }]),
     } as never,
     autofix: { resolveEnabled: jest.fn().mockReturnValue(true) } as never,
+    routeModelParams: {
+      get: jest.fn().mockResolvedValue({ tier: 'default', params: [] }),
+      update: jest.fn().mockResolvedValue({ tier: 'default', params: [] }),
+    } as never,
     modelDiscovery: {
       getModelsForAgent: jest
         .fn()
-        .mockResolvedValue([{ id: 'gpt-4o', provider: 'openai', displayName: 'GPT-4o' }]),
+        .mockResolvedValue([
+          { id: 'gpt-4o', provider: 'openai', displayName: 'GPT-4o', authType: 'api_key' },
+        ]),
       discoverModels: jest.fn().mockResolvedValue(undefined),
       refreshProvider: jest.fn().mockResolvedValue({ ok: true, model_count: 1 }),
       discoverAllForAgent: jest.fn().mockResolvedValue(undefined),
@@ -291,6 +297,45 @@ describe('MCP tools', () => {
     it('lists connections and custom providers', async () => {
       const { data } = await call(registerAll(makeDeps()), 'manifest_provider_list');
       expect(data).toMatchObject({ connections: [{ cached_model_count: 1 }] });
+    });
+
+    it('counts a custom connection by the models entered on its custom provider', async () => {
+      const deps = makeDeps();
+      (deps.providers.getProviders as jest.Mock).mockResolvedValue([
+        CONNECTION,
+        { ...CONNECTION, id: 'conn-2', provider: 'custom:c1', cached_models: null },
+      ]);
+      (deps.customProviders.list as jest.Mock).mockResolvedValue([
+        {
+          id: 'c1',
+          name: 'cp',
+          alias: 'cp',
+          base_url: 'http://x',
+          models: [{ model_name: 'a' }, { model_name: 'b' }],
+        },
+        { id: 'c2', name: 'empty', alias: 'empty', base_url: 'http://y', models: null },
+      ]);
+      const tools = registerAll(deps);
+
+      const { data } = await call(tools, 'manifest_provider_list');
+      expect(data).toMatchObject({
+        connections: [{ cached_model_count: 1 }, { cached_model_count: 2 }],
+        custom_providers: [{ model_count: 2 }, { model_count: 0 }],
+      });
+
+      const refreshed = await call(tools, 'manifest_provider_refresh', { agent: 'demo' });
+      expect(refreshed.data).toMatchObject({
+        connections: [{ cached_model_count: 1 }, { cached_model_count: 2 }],
+      });
+    });
+
+    it('counts a connection with no discovery cache as empty', async () => {
+      const deps = makeDeps();
+      (deps.providers.getProviders as jest.Mock).mockResolvedValue([
+        { ...CONNECTION, cached_models: null },
+      ]);
+      const { data } = await call(registerAll(deps), 'manifest_provider_list');
+      expect(data).toMatchObject({ connections: [{ cached_model_count: 0 }] });
     });
 
     it('returns the catalog', async () => {
@@ -507,6 +552,37 @@ describe('MCP tools', () => {
       ).toBeFalsy();
     });
 
+    it('reads and writes model params by tier and model', async () => {
+      const deps = makeDeps();
+      const tools = registerAll(deps);
+      const got = await call(tools, 'manifest_routing_params_get', {
+        agent: 'demo',
+        tier: 'deep',
+        model: 'gpt-5',
+      });
+      expect(got.data).toEqual({ tier: 'default', params: [] });
+      expect(deps.routeModelParams.get).toHaveBeenCalledWith('agent-1', 'deep', 'gpt-5');
+
+      const set = await call(tools, 'manifest_routing_params_set', {
+        agent: 'demo',
+        tier: 'deep',
+        model: 'gpt-5',
+        set: { 'reasoning.effort': 'high' },
+        unset: ['temperature'],
+      });
+      expect(set.error).toBe(false);
+      expect(deps.routeModelParams.update).toHaveBeenCalledWith('agent-1', 'deep', 'gpt-5', {
+        set: { 'reasoning.effort': 'high' },
+        unset: ['temperature'],
+      });
+    });
+
+    it('hides the params write tool from a read-only token', () => {
+      const tools = registerAll(makeDeps(), { ...OPERATOR, scopes: new Set(['mcp:read']) });
+      expect(tools.has('manifest_routing_params_get')).toBe(true);
+      expect(tools.has('manifest_routing_params_set')).toBe(false);
+    });
+
     it('reads and writes Autofix and recording', async () => {
       const tools = registerAll(makeDeps());
       expect(
@@ -665,6 +741,49 @@ describe('MCP tools', () => {
         (await call(tools, 'manifest_agent_configure', { agent: 'demo', models: ['gpt-4o'] }))
           .error,
       ).toBe(true);
+    });
+
+    it('checks the primary against its provider and takes its auth type from discovery', async () => {
+      const deps = makeDeps();
+      (deps.modelDiscovery.getModelsForAgent as jest.Mock).mockResolvedValue([
+        { id: 'gpt-4o', provider: 'openai', displayName: 'GPT-4o', authType: 'api_key' },
+        { id: 'gpt-5.4', provider: 'openai', displayName: 'GPT-5.4', authType: 'subscription' },
+      ]);
+      const tools = registerAll(deps);
+
+      // A model another provider offers no longer passes the guard.
+      const wrong = await call(tools, 'manifest_agent_configure', {
+        agent: 'demo',
+        models: ['gpt-4o'],
+        provider: 'anthropic',
+      });
+      expect(wrong.error).toBe(true);
+      expect(wrong.text).toContain('not offered by provider "anthropic"');
+
+      // An unknown fallback is still named.
+      const fallback = await call(tools, 'manifest_agent_configure', {
+        agent: 'demo',
+        models: ['gpt-4o', 'nope'],
+        provider: 'openai',
+      });
+      expect(fallback.error).toBe(true);
+      expect(fallback.text).toContain('Not in the models discovered for "demo": nope');
+
+      // No auth_type: a subscription model stays a subscription route.
+      await call(tools, 'manifest_agent_configure', {
+        agent: 'demo',
+        models: ['openai/gpt-5.4-subscription'],
+        provider: 'openai',
+      });
+      expect(deps.tiers.setOverride).toHaveBeenLastCalledWith(
+        'agent-1',
+        expect.anything(),
+        'default',
+        'openai/gpt-5.4-subscription',
+        'openai',
+        'subscription',
+        undefined,
+      );
     });
 
     it('rejects tier-only config and rolls back a failed new custom tier', async () => {

@@ -1,0 +1,195 @@
+/* ── API Bot promotions (ApiBotBanner.tsx, ApiBotAnnouncement.tsx) ─────
+   API Bot's own look, the same in both dashboard themes: the near-black
+   ground of the API Bot website with its dithered green pixels
+   (services/dither-ground.ts), light text, and the green button with hard
+   bands and stepped corners. */
+
+.api-bot-banner,
+.sidebar-api-bot {
+  --api-bot-ground: #0b0f0d;
+  --api-bot-text: #ffffff;
+  --api-bot-muted: #ffffff;
+  /* a halo of the ground around the letters lifts them off the pixels */
+  --api-bot-halo: 0 0 4px #0b0f0d, 0 0 8px #0b0f0d;
+  --api-bot-pixel: 3px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--api-bot-ground);
+  color: var(--api-bot-text);
+}
+
+.dither-ground {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  image-rendering: pixelated;
+  pointer-events: none;
+}
+
+/* the button of the API Bot website: the left of a strip twice its width, a
+   hover glides it to the lighter right */
+.api-bot-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 12px;
+  background-image: linear-gradient(
+    115deg,
+    #16a35d 0 14%,
+    #1cb467 14% 28%,
+    #22c574 28% 42%,
+    #22c574 42% 56%,
+    #3fd187 56% 70%,
+    #5edc9b 70% 85%,
+    #86efba 85% 100%
+  );
+  background-size: 200% 100%;
+  background-position: 0% 0;
+  color: var(--api-bot-ground);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+  clip-path: polygon(
+    0 var(--api-bot-pixel),
+    var(--api-bot-pixel) var(--api-bot-pixel),
+    var(--api-bot-pixel) 0,
+    calc(100% - var(--api-bot-pixel)) 0,
+    calc(100% - var(--api-bot-pixel)) var(--api-bot-pixel),
+    100% var(--api-bot-pixel),
+    100% calc(100% - var(--api-bot-pixel)),
+    calc(100% - var(--api-bot-pixel)) calc(100% - var(--api-bot-pixel)),
+    calc(100% - var(--api-bot-pixel)) 100%,
+    var(--api-bot-pixel) 100%,
+    var(--api-bot-pixel) calc(100% - var(--api-bot-pixel)),
+    0 calc(100% - var(--api-bot-pixel))
+  );
+  transition: background-position 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.api-bot-btn:hover {
+  background-position: 100% 0;
+}
+
+.api-bot-btn:focus-visible {
+  outline: 2px solid var(--api-bot-text);
+  outline-offset: 2px;
+}
+
+.api-bot-close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--api-bot-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.api-bot-close:hover,
+.api-bot-close:focus-visible {
+  color: var(--api-bot-text);
+  background: rgba(244, 246, 243, 0.12);
+}
+
+/* ── Banner, above the page content ── */
+.api-bot-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto var(--gap-lg);
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--radius);
+}
+
+.api-bot-banner__text {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  text-shadow: var(--api-bot-halo);
+}
+
+.api-bot-banner__text strong {
+  font-weight: 700;
+}
+
+/* ── Sidebar card ── */
+.sidebar-api-bot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: var(--gap-sm);
+  padding: 12px;
+  border-radius: var(--radius);
+  cursor: default;
+}
+
+.sidebar-api-bot__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  color: var(--api-bot-ground);
+  background: #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar-api-bot__close:hover,
+.sidebar-api-bot__close:focus-visible {
+  color: var(--api-bot-ground);
+  background: #e6ebe7;
+}
+
+.sidebar-api-bot__close:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.sidebar-api-bot__close svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sidebar-api-bot__image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.sidebar-api-bot__title {
+  margin-top: 4px;
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  line-height: 1.35;
+  text-shadow: var(--api-bot-halo);
+}
+
+.sidebar-api-bot__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--api-bot-muted);
+  text-shadow: var(--api-bot-halo);
+}
+
+.sidebar-api-bot .api-bot-btn {
+  margin-top: 4px;
+  padding: 8px 12px;
+}

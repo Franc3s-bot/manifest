@@ -154,6 +154,82 @@ describe('OverviewController', () => {
     );
   });
 
+  it('returns the critical overview without waiting for detail queries', async () => {
+    const result = await controller.getOverview({ range: '90d', fast: 'true' }, ctx as never);
+
+    expect(result.summary.messages).toEqual({ value: 50, trend_pct: 11 });
+    expect(result.cost_by_model).toEqual([]);
+    expect(result.recent_activity).toEqual([]);
+    expect(result.request_reliability).toBeNull();
+    expect(result.has_data).toBe(true);
+    expect(agg.getPreviousWindowMetrics).toHaveBeenCalledWith(
+      '90d',
+      'tenant-123',
+      undefined,
+      true,
+      false,
+    );
+    expect(ts.getTimeseries).toHaveBeenCalledWith(
+      '90d',
+      'tenant-123',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(agg.hasAnyData).toHaveBeenCalledWith('tenant-123', undefined, true, false);
+    expect(agg.getRequestReliability).not.toHaveBeenCalled();
+    expect(ts.getCostByModel).not.toHaveBeenCalled();
+    expect(ts.getRecentActivity).not.toHaveBeenCalled();
+    expect(ts.getActiveSkills).not.toHaveBeenCalled();
+  });
+
+  it('loads slow overview details independently', async () => {
+    const requestItems = [{ id: 'request-1' }];
+    const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: requestItems }) };
+    const requestAwareController = new OverviewController(
+      agg as never,
+      ts as never,
+      { getProviders: mockGetProviders } as never,
+      { resolve: mockResolveAgent } as never,
+      { find: mockAccessFind } as never,
+      messagesQuery as never,
+    );
+    ts.getCostByModel.mockResolvedValueOnce([{ model: 'gpt-5', tokens: 10 }]);
+
+    await expect(
+      requestAwareController.getOverviewDetails({ range: '365d' }, ctx as never),
+    ).resolves.toEqual({
+      cost_by_model: [{ model: 'gpt-5', tokens: 10 }],
+      recent_activity: requestItems,
+      request_reliability: expect.objectContaining({ total: 50 }),
+      active_skills: [],
+    });
+    expect(messagesQuery.getMessages).toHaveBeenCalledWith({
+      range: '365d',
+      tenantId: 'tenant-123',
+      agent_name: undefined,
+      limit: 5,
+      include_total: false,
+      include_filter_options: false,
+      exclude_playground: true,
+      exclude_direct: false,
+    });
+    expect(ts.getCostByModel).toHaveBeenCalledWith('365d', 'tenant-123', undefined, true, false);
+    expect(agg.getRequestReliability).toHaveBeenCalledWith(
+      '365d',
+      'tenant-123',
+      undefined,
+      true,
+      false,
+    );
+    expect(ts.getActiveSkills).toHaveBeenCalledWith('365d', 'tenant-123', undefined, true, false);
+  });
+
   it('uses request rows for recent activity when the request query service is available', async () => {
     const requestItems = [{ id: 'request-1', status: 'ok' }];
     const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: requestItems }) };

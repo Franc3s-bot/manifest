@@ -191,7 +191,7 @@ describe('ModelParamsAffordance', () => {
     expect(mockGetSpecs).toHaveBeenCalledWith('demo', 'deepseek', 'api_key', 'deepseek-v4');
   });
 
-  it('saves null when the chosen value collapses back to the spec default', async () => {
+  it('saves null when the user resets the only stored param', async () => {
     const setParams = vi.fn().mockResolvedValue(undefined);
     const { container, getByRole } = render(() => (
       <ModelParamsAffordance
@@ -202,7 +202,7 @@ describe('ModelParamsAffordance', () => {
     ));
     fireEvent.click(findButton(container) as HTMLButtonElement);
 
-    fireEvent.click(await waitFor(() => getByRole('button', { name: /Thinking mode/ })));
+    fireEvent.click(await waitFor(() => getByRole('button', { name: 'Reset Thinking mode' })));
     fireEvent.click(getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
@@ -223,7 +223,9 @@ describe('ModelParamsAffordance', () => {
     ));
     fireEvent.click(findButton(container) as HTMLButtonElement);
 
-    expect(await findByText('No parameter controls are published for deepseek-v4 yet.')).toBeTruthy();
+    expect(
+      await findByText('No parameter controls are published for deepseek-v4 yet.'),
+    ).toBeTruthy();
     expect(queryByRole('button', { name: 'Save' })).toBeNull();
   });
 
@@ -232,7 +234,9 @@ describe('ModelParamsAffordance', () => {
     const { container, findByText } = render(() => <ModelParamsAffordance {...baseProps} />);
     fireEvent.click(findButton(container) as HTMLButtonElement);
 
-    expect(await findByText('No parameter controls are published for deepseek-v4 yet.')).toBeTruthy();
+    expect(
+      await findByText('No parameter controls are published for deepseek-v4 yet.'),
+    ).toBeTruthy();
   });
 
   it('button is disabled when the parent says so', () => {

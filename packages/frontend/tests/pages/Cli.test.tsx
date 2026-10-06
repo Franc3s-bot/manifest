@@ -82,7 +82,7 @@ describe('CLI page', () => {
 
   it('links to the command reference', () => {
     const { container } = render(() => <Cli />);
-    const link = container.querySelector('a[href="https://manifest.build/docs/cli/"]');
+    const link = container.querySelector('a[href="https://manifest.build/llm-gateway/docs/cli/"]');
     expect(link).not.toBeNull();
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
   });

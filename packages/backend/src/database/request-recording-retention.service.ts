@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DataSource, QueryRunner } from 'typeorm';
 import { isBillingEnabled } from '../billing/billing.config';
+import { PAID_SUBSCRIPTION_STATUS_SQL_LIST } from '../billing/subscription-status';
 import { RequestRecordingStorageService } from '../common/services/request-recording-storage.service';
 
 const FREE_RETENTION_DAYS = 7;
@@ -24,11 +25,20 @@ const SELECT_ALL_EXPIRED_SQL = `
   ORDER BY timestamp ASC
 `;
 
+// The top-level timestamp bound is implied by the OR below (LEAST($1, $2) is
+// the shorter retention, so the later cutoff), but the planner cannot hoist it
+// out of the OR on its own. Stated explicitly it becomes a range scan on the
+// partial index IDX_agent_messages_recording (migration 1802600000000), and the
+// `::int` casts pin $1/$2 to integers, so the retention constants above must
+// stay whole days — a fractional value fails loudly at parse time.
+// Every arm's cutoff must be an argument to `LEAST`, or that arm silently stops
+// matching.
 const SELECT_PLAN_EXPIRED_SQL = `
   SELECT attempt.id AS attempt_id, attempt.recording_key AS storage_key
   FROM agent_messages attempt
   JOIN requests request ON request.id = attempt.request_id
   WHERE attempt.recording_key IS NOT NULL
+    AND attempt.timestamp < CURRENT_TIMESTAMP - (LEAST($1::int, $2::int) * INTERVAL '1 day')
     AND (
     (
       attempt.timestamp < CURRENT_TIMESTAMP - ($1 * INTERVAL '1 day')
@@ -39,7 +49,7 @@ const SELECT_PLAN_EXPIRED_SQL = `
           ON subscription."referenceId" = tenant.owner_user_id
         WHERE tenant.id = request.tenant_id
           AND subscription.plan = 'pro'
-          AND subscription.status IN ('active', 'trialing')
+          AND subscription.status IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
       )
     )
     OR (
@@ -51,7 +61,7 @@ const SELECT_PLAN_EXPIRED_SQL = `
           ON subscription."referenceId" = tenant.owner_user_id
         WHERE tenant.id = request.tenant_id
           AND subscription.plan = 'pro'
-          AND subscription.status IN ('active', 'trialing')
+          AND subscription.status IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
       )
     )
   )

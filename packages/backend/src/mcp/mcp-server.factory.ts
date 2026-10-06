@@ -21,6 +21,13 @@ export function buildMcpServer(deps: McpToolDeps, operator: McpOperator): McpSer
   const server = new McpServer(
     { name: 'manifest', version: '1.0.0' },
     {
+      // A server built per POST and closed with it has no channel to push on,
+      // and replicas share no event bus, so `notifications/tools/list_changed`
+      // can never be sent. Advertising `listChanged` is what invites a client
+      // to open a `subscriptions/listen` stream against this endpoint — one
+      // that could only ever sit open carrying nothing. `McpServer` turns the
+      // bit on by default as soon as a tool is registered, so say no here.
+      capabilities: { tools: { listChanged: false } },
       instructions:
         'Manifest is an LLM gateway control plane. Use these tools to manage harnesses ' +
         '(agents), provider connections, routing, model catalogs, and to read the request ' +

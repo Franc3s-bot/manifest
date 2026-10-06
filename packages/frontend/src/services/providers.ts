@@ -33,6 +33,12 @@ export interface ProviderDef {
   /** Optional note shown near the subscription credential field. */
   subscriptionRequirementNote?: string;
   /**
+   * Set when the provider accepts no new subscription connections. Existing
+   * connections keep working and stay manageable; this note replaces the
+   * connect flow, and catalogs list the provider only where it is connected.
+   */
+  subscriptionClosedNote?: string;
+  /**
    * Credential kind used for subscription auth. Drives the input label and
    * aria-labels in the subscription detail view. Defaults to 'setup-token'
    * for providers that historically used the Anthropic-style setup-token flow.
@@ -95,6 +101,7 @@ interface ProviderUIOverlay {
   subscriptionLabel?: string;
   subscriptionKeyPlaceholder?: string;
   subscriptionRequirementNote?: string;
+  subscriptionClosedNote?: string;
   subscriptionCredentialKind?: 'setup-token' | 'api-key';
   subscriptionCredentialName?: string;
   subscriptionCommand?: string;
@@ -283,6 +290,10 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     supportsSubscription: true,
     subscriptionLabel: 'Sign in with Google',
     subscriptionAuthMode: 'popup_oauth',
+    // Google refuses gemini-cli's OAuth client for Gemini Code Assist for
+    // individuals (google-gemini/gemini-cli#29279), so new sign-ins fail.
+    subscriptionClosedNote:
+      'Google no longer allows new Gemini sign-ins from apps outside Google. Existing connections keep working. To add Gemini, connect a Gemini API key under Usage-based providers.',
     models: [],
   },
   'gemini-free': {
@@ -339,6 +350,10 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   minimax: {
     initial: 'Mm',
     subtitle: 'MiniMax M3, M2.7, M2.5',
+    apiKeyEndpointRegions: [
+      { value: 'global', label: 'Global' },
+      { value: 'cn', label: 'China' },
+    ],
     supportsSubscription: true,
     subscriptionLabel: 'MiniMax Coding Plan',
     subscriptionAuthMode: 'device_code',
@@ -567,6 +582,20 @@ export const PROVIDERS: ProviderDef[] = PROVIDER_ORDER.map((id) => {
   }
   return buildProviderDef(shared);
 });
+
+/**
+ * Providers a subscription catalog lists. One closed to new subscriptions
+ * stays listed only where the workspace already has that subscription, so
+ * existing connections remain reachable.
+ */
+export function subscriptionCatalog(
+  providers: readonly ProviderDef[],
+  hasSubscription: (providerId: string) => boolean,
+): ProviderDef[] {
+  return providers.filter(
+    (p) => p.supportsSubscription && (!p.subscriptionClosedNote || hasSubscription(p.id)),
+  );
+}
 
 /* ── Pipeline stage definitions ────────────────────── */
 

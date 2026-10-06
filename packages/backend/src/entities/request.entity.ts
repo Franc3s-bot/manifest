@@ -52,6 +52,10 @@ export class ManifestRequest {
   @Column('varchar')
   status!: string;
 
+  /** Set after this completed Request has been added to agent_usage_daily. */
+  @Column(timestampType(), { nullable: true })
+  agent_usage_rolled_up_at?: string | null;
+
   /** How Autofix ended for this request. NULL means it was not recorded. */
   @Column('varchar', { nullable: true })
   autofix_status!: AutofixStatus | null;

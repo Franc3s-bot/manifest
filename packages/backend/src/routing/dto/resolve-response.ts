@@ -37,7 +37,7 @@ export interface ResolveResponse {
   /**
    * Model named by a pinned routing override that could not be resolved even
    * though its provider connection exists. The proxy turns this into M302
-   * ("model not available") instead of M101 ("no providers configured").
+   * ("model not available") instead of M101 ("no model to route to").
    */
   override_model_unavailable?: string;
 }

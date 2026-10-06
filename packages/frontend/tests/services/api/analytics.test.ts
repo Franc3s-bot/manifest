@@ -42,6 +42,21 @@ describe('analytics API client', () => {
     expect(url).toContain('agent_name=demo');
   });
 
+  it('getOverview supports the fast response and loads details separately', async () => {
+    let fetchMock = setupFetch({});
+    await analytics.getOverview('365d', 'demo', true);
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview');
+    expect(url).toContain('fast=true');
+
+    fetchMock = setupFetch({});
+    await analytics.getOverviewDetails('365d', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/details');
+    expect(url).toContain('range=365d');
+    expect(url).toContain('agent_name=demo');
+  });
+
   it('getAttemptStats uses the stats route and optional agent scope', async () => {
     const fetchMock = setupFetch({});
     await analytics.getAttemptStats('30d', 'demo');

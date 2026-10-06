@@ -9,7 +9,27 @@ describe('parseArgs', () => {
       positionals: ['my-agent'],
       strings: { name: 'x', url: 'http://h' },
       booleans: { yes: true },
+      lists: {},
     });
+  });
+
+  it('collects every occurrence of a repeatable flag in order', () => {
+    const parsed = parseArgs(['--set', 'a=1', '--set=b=2', '--name', 'x'], {
+      ...spec,
+      repeatables: ['set'],
+    });
+    expect(parsed.lists).toEqual({ set: ['a=1', 'b=2'] });
+    expect(parsed.strings).toEqual({ name: 'x' });
+    expect(() => parseArgs(['--set'], { repeatables: ['set'] })).toThrow('requires a value');
+  });
+
+  it('lists repeatable flags in the unknown-flag hint', () => {
+    try {
+      parseArgs(['--nope'], { repeatables: ['set'] });
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect((e as CliError).hint).toBe('Supported flags: --set');
+    }
   });
 
   it('rejects unknown flags with the supported list as hint', () => {

@@ -43,6 +43,18 @@ describe('buildMcpServer', () => {
     expect(JSON.stringify(server.opts)).toContain('create, update, and delete');
   });
 
+  // A per-POST server can never push a list-changed notification, and the bit
+  // is what makes a client open a `subscriptions/listen` stream against this
+  // endpoint. `McpServer` sets it by default once a tool is registered.
+  it('does not advertise tools.listChanged on the stateless transport', () => {
+    const server = buildMcpServer(deps, {
+      userId: 'u',
+      tenantId: 't',
+      scopes: new Set(['mcp:read']),
+    }) as unknown as FakeServer;
+    expect(server.opts).toMatchObject({ capabilities: { tools: { listChanged: false } } });
+  });
+
   it('hides write tools from a read-only token', () => {
     const server = buildMcpServer(deps, {
       userId: 'u',

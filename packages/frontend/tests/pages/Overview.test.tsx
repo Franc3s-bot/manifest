@@ -14,7 +14,10 @@ const mockNavigate = vi.fn();
 // updates `agentName` in place without remounting the route component — a
 // plain object here would miss that. The getter re-reads the signal on every
 // access, which is enough for Solid's tracking to pick it up as a dependency.
-const agentNameBox = vi.hoisted(() => ({ read: (): string => 'test-agent', set: (_: string) => {} }));
+const agentNameBox = vi.hoisted(() => ({
+  read: (): string => 'test-agent',
+  set: (_: string) => {},
+}));
 vi.mock('@solidjs/router', () => ({
   useParams: () => ({
     get agentName() {
@@ -41,6 +44,7 @@ const mockSetMessageFeedback = vi.fn();
 const mockClearMessageFeedback = vi.fn();
 vi.mock('../../src/services/api.js', () => ({
   getOverview: (...args: unknown[]) => mockGetOverview(...args),
+  getOverviewDetails: () => Promise.resolve({}),
   getCustomProviders: (...args: unknown[]) => mockGetCustomProviders(...args),
   setMessageFeedback: (...args: unknown[]) => mockSetMessageFeedback(...args),
   clearMessageFeedback: (...args: unknown[]) => mockClearMessageFeedback(...args),
@@ -116,7 +120,8 @@ vi.mock('../../src/services/api/analytics.js', () => ({
       fallbacked_attempts: { value: 5, previous: 4 },
     }),
   getAttemptTimeseries: () => Promise.resolve({ range: '7d', by: 'metric', keys: [], buckets: [] }),
-  getWorkspaceAutofixStatus: () => Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
+  getWorkspaceAutofixStatus: () =>
+    Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
   getAutofixStats: (...a: unknown[]) => mockGetAutofixStats(...a),
   getAutofixTimeseries: () =>
     Promise.resolve({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
@@ -354,7 +359,7 @@ describe('Overview', () => {
     expect(container.textContent).not.toContain('$3.50');
   });
 
-  it('keeps the skeleton until the new agent secondary metrics finish loading', async () => {
+  it('renders the new agent before secondary metrics finish loading', async () => {
     const firstAgentStats = {
       success_rate: { value: 0.9, previous: 0.8 },
       autofix_saves: { value: 777, previous: 5 },
@@ -402,8 +407,8 @@ describe('Overview', () => {
     });
     await Promise.resolve();
 
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
-    expect(container.textContent).not.toContain('$9.99');
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).toContain('$9.99');
     expect(container.textContent).not.toContain('777');
 
     resolveSecondAgentStats(secondAgentStats);
@@ -415,7 +420,7 @@ describe('Overview', () => {
     expect(container.textContent).not.toContain('777');
   });
 
-  it('keeps the skeleton when switching back before secondary metrics finish', async () => {
+  it('renders the critical overview when switching back before secondary metrics finish', async () => {
     const firstAgentStats = {
       success_rate: { value: 0.9, previous: 0.8 },
       autofix_saves: { value: 777, previous: 5 },
@@ -467,7 +472,7 @@ describe('Overview', () => {
 
     agentNameBox.set('other-agent');
     await vi.waitFor(() => {
-      expect(mockGetOverview).toHaveBeenCalledWith('30d', 'other-agent');
+      expect(mockGetOverview).toHaveBeenCalledWith('30d', 'other-agent', true);
     });
     agentNameBox.set('test-agent');
     await vi.waitFor(() => {
@@ -475,13 +480,14 @@ describe('Overview', () => {
     });
     await Promise.resolve();
 
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).toContain('$3.50');
     expect(container.textContent).not.toContain('$9.99');
     expect(container.textContent).not.toContain('777');
 
     resolveSecondAgentStats(secondAgentStats);
     await Promise.resolve();
-    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
     expect(container.textContent).not.toContain('888');
 
     resolveReturningAgentStats(returningAgentStats);
@@ -1106,7 +1112,7 @@ describe('Overview', () => {
       const { container } = render(() => <Overview />);
 
       await vi.waitFor(() => {
-        expect(mockGetOverview).toHaveBeenCalledWith('7d', 'test-agent');
+        expect(mockGetOverview).toHaveBeenCalledWith('7d', 'test-agent', true);
       });
       await vi.waitFor(() => {
         expect(localStorage.getItem('manifest_chart_range')).toBe('7d');

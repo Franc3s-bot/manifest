@@ -112,6 +112,39 @@ export function renameProviderKey(
   );
 }
 
+/* -- Tenant-level connection management (no harness required) -- */
+
+export function disconnectConnection(provider: string, authType?: AuthType, label?: string) {
+  const params = new URLSearchParams();
+  if (authType) params.set('authType', authType);
+  if (label) params.set('label', label);
+  const qs = params.toString();
+  const base = `/providers/${encodeURIComponent(provider)}`;
+  return fetchMutate<{ ok: boolean; notifications: string[] }>(qs ? `${base}?${qs}` : base, {
+    method: 'DELETE',
+  });
+}
+
+export function renameConnection(
+  provider: string,
+  currentLabel: string,
+  newLabel: string,
+  authType?: AuthType,
+) {
+  return fetchMutate<{ id: string; label: string; priority: number }>(
+    `/providers/${encodeURIComponent(provider)}/keys/${encodeURIComponent(currentLabel)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newLabel, ...(authType && { authType }) }),
+    },
+  );
+}
+
+export function refreshConnectionModels() {
+  return fetchMutate<{ ok: boolean }>('/providers/refresh-models', { method: 'POST' });
+}
+
 export function reorderProviderKeys(
   agentName: string,
   provider: string,
@@ -530,12 +563,15 @@ export async function probeCustomProvider(
   apiKey?: string,
   api_kind?: CustomProviderApiKind,
   provider_name?: string,
+  // Edit-mode: forwarding the id lets the backend probe with the stored
+  // key (the form never has plaintext). See ProbeCustomProviderDto.
+  provider_id?: string,
 ) {
   const res = await fetch(`${BASE_URL}${routingPath(agentName, 'custom-providers/probe')}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name }),
+    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name, provider_id }),
   });
   if (!res.ok) {
     const message = await parseErrorMessage(res);
