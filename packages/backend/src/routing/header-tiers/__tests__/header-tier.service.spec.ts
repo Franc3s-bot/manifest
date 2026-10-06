@@ -381,7 +381,7 @@ describe('HeaderTierService', () => {
   });
 
   describe('setOverride', () => {
-    it('uses the explicit triple when supplied (skipping discovery)', async () => {
+    it('keeps an explicit triple that discovery does not know', async () => {
       const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
       repo.findOne.mockResolvedValue(row);
 
@@ -393,7 +393,6 @@ describe('HeaderTierService', () => {
         'openai',
         'api_key',
       );
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual(route('openai', 'api_key', 'gpt-4o'));
       expect(repo.save).toHaveBeenCalledWith(row);
       expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
@@ -413,13 +412,33 @@ describe('HeaderTierService', () => {
         'Personal',
       );
 
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual({
         provider: 'openai',
         authType: 'subscription',
         model: 'gpt-4o',
         keyLabel: 'Personal',
       });
+    });
+
+    it('stores the canonical route for a public model id', async () => {
+      const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
+      repo.findOne.mockResolvedValue(row);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('deepseek/deepseek-chat-v3.1:free', 'openrouter', 'api_key'),
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'openrouter/deepseek/deepseek-chat-v3.1:free',
+        'openrouter',
+        'api_key',
+      );
+
+      expect(result.override_route).toEqual(
+        route('openrouter', 'api_key', 'deepseek/deepseek-chat-v3.1:free'),
+      );
     });
 
     it('resolves via discovery when only the model is given', async () => {

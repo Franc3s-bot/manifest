@@ -39,9 +39,9 @@ import {
 } from '../../services/formatters.js';
 import { getAgents, getCustomProviders as fetchCustomProviders } from '../../services/api.js';
 import {
-  renameProviderKey,
-  disconnectProvider,
-  refreshModels,
+  renameConnection,
+  disconnectConnection,
+  refreshConnectionModels,
 } from '../../services/api/routing.js';
 import UnifiedChartCard, { type ChartTab } from '../../components/UnifiedChartCard.jsx';
 import InfoTooltip from '../../components/InfoTooltip.jsx';
@@ -526,6 +526,8 @@ const ConnectionDetail: Component = () => {
   const [showDeleteConfirm, setShowDeleteConfirm] = createSignal(false);
   const [deleteConfirmName, setDeleteConfirmName] = createSignal('');
   const [deletingConnection, setDeletingConnection] = createSignal(false);
+
+  // Only the custom-provider edit form still goes through agent-scoped routes.
   const [agents] = createResource(async () => {
     try {
       const res = await getAgents();
@@ -569,10 +571,6 @@ const ConnectionDetail: Component = () => {
   const handleRename = async () => {
     const c = conn();
     if (!c) return;
-    if (!firstAgentName()) {
-      toast.error('Create at least one harness first.');
-      return;
-    }
     const newLabel = renameValue().trim();
     if (!newLabel) {
       setRenameError('Name cannot be empty');
@@ -585,7 +583,7 @@ const ConnectionDetail: Component = () => {
     setRenaming(true);
     setRenameError('');
     try {
-      await renameProviderKey(firstAgentName(), c.provider, c.label, newLabel, c.auth_type as any);
+      await renameConnection(c.provider, c.label, newLabel, c.auth_type as any);
       toast.success('Connection renamed');
       closeManageModal();
       refetchDetail();
@@ -600,16 +598,9 @@ const ConnectionDetail: Component = () => {
     const c = conn();
     if (!c) return;
     if (!c.is_active && !deleteConfirmMatches()) return;
-    const agent = firstAgentName();
-    if (!agent) {
-      toast.error(
-        `Create at least one harness before ${c.is_active ? 'disconnecting' : 'deleting'} a provider.`,
-      );
-      return;
-    }
     setDeletingConnection(true);
     try {
-      await disconnectProvider(agent, c.provider, c.auth_type as any, c.label);
+      await disconnectConnection(c.provider, c.auth_type as any, c.label);
       toast.success('Connection removed');
       navigate(backLink());
     } catch (e: any) {
@@ -620,13 +611,9 @@ const ConnectionDetail: Component = () => {
   };
 
   const handleRefreshModels = async () => {
-    if (!firstAgentName()) {
-      toast.error('Create at least one harness first.');
-      return;
-    }
     setRefreshingModels(true);
     try {
-      await refreshModels(firstAgentName());
+      await refreshConnectionModels();
       toast.success('Models refreshed');
       refetchDetail();
     } catch {
@@ -1319,14 +1306,17 @@ const ConnectionDetail: Component = () => {
                             <span style="font-size: var(--font-size-sm); color: hsl(var(--muted-foreground));">
                               {c.cached_model_count ?? 0} models
                             </span>
-                            <button
-                              class="btn btn--outline btn--sm"
-                              disabled={refreshingModels()}
-                              onClick={handleRefreshModels}
-                              style="display: inline-flex; align-items: center; gap: 6px;"
-                            >
-                              {refreshingModels() ? 'Refreshing...' : 'Refresh models'}
-                            </button>
+                            {/* Custom provider models are entered by hand; discovery skips them. */}
+                            <Show when={!isCustomProvider()}>
+                              <button
+                                class="btn btn--outline btn--sm"
+                                disabled={refreshingModels()}
+                                onClick={handleRefreshModels}
+                                style="display: inline-flex; align-items: center; gap: 6px;"
+                              >
+                                {refreshingModels() ? 'Refreshing...' : 'Refresh models'}
+                              </button>
+                            </Show>
                           </div>
 
                           {/* Connection info */}
@@ -1341,10 +1331,18 @@ const ConnectionDetail: Component = () => {
 
                           {/* Actions */}
                           <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid hsl(var(--border));">
-                            <button class="btn btn--danger btn--sm" onClick={handleDisconnect}>
-                              Disconnect
+                            <button
+                              class="btn btn--danger btn--sm"
+                              onClick={handleDisconnect}
+                              disabled={deletingConnection()}
+                            >
+                              {deletingConnection() ? 'Disconnecting...' : 'Disconnect'}
                             </button>
-                            <button class="btn btn--outline btn--sm" onClick={closeManageModal}>
+                            <button
+                              class="btn btn--outline btn--sm"
+                              onClick={closeManageModal}
+                              disabled={deletingConnection()}
+                            >
                               Done
                             </button>
                           </div>

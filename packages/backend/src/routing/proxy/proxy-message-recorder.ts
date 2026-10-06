@@ -186,6 +186,21 @@ export interface ManifestBlockedRequestOpts {
    * still names its surface.
    */
   apiMode?: ProxyApiMode;
+  /**
+   * How the request was classified, when Manifest failed after routing ran (a
+   * post-routing M500). Keeps tier and header-tier filters matching the row.
+   * Provider stays null (the row still claims no provider attempt); the
+   * requested model is still recorded in the model field.
+   */
+  routing?: ManifestBlockedRouting;
+}
+
+export interface ManifestBlockedRouting {
+  tier?: string;
+  specificityCategory?: string;
+  headerTierId?: string;
+  headerTierName?: string;
+  headerTierColor?: string;
 }
 
 export interface PendingRequestOpts {
@@ -749,6 +764,34 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
 
+  /**
+   * Cancel Provider Attempts the caller disconnected under. A disconnect in the
+   * middle of the fallback chain throws out of the chain before its local
+   * failure list reaches a terminal writer, so these rows would otherwise stay
+   * `pending` forever. Only rows still pending are touched: a terminal write
+   * that already landed keeps its real outcome. Updates run in parallel and a
+   * failed one never stops the rest.
+   */
+  async cancelPendingProviderAttempts(attempts: ProviderAttemptRef[]): Promise<void> {
+    await Promise.all(
+      attempts.map(async (attempt) => {
+        if (!(await attempt.pendingWrite.catch(() => false))) return;
+        await this.messageRepo
+          .update(
+            { id: attempt.id, status: PENDING_STATUS },
+            {
+              status: CANCELLED_STATUS,
+              error_message: null,
+              error_code: null,
+              error_http_status: null,
+              duration_ms: Math.max(0, (attempt.completedAtMs ?? Date.now()) - attempt.startedAtMs),
+            },
+          )
+          .catch((e) => this.logger.warn(`Failed to cancel Provider Attempt ${attempt.id}: ${e}`));
+      }),
+    );
+  }
+
   /** Complete an intermediate provider call that is retried below the proxy layer. */
   async completePendingProviderFailure(
     attempt: ProviderAttemptRef,
@@ -894,6 +937,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       durationMs,
       attempt,
       apiMode,
+      routing,
     } = opts;
 
     const canonical = await this.customProviders.canonicalizeAgentMessageKeys(
@@ -915,20 +959,20 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       error_http_status: httpStatus ?? null,
       model: canonical.model,
       provider: null,
-      routing_tier: null,
+      routing_tier: routing?.tier ?? null,
       routing_reason: reason,
       fallback_from_model: null,
       fallback_index: null,
       auth_type: null,
-      specificity_category: null,
+      specificity_category: routing?.specificityCategory ?? null,
       provider_key_label: null,
       tenant_provider_id: null,
       caller_attribution: callerAttribution ?? null,
       request_headers: requestHeaders ?? null,
       request_params: null,
-      header_tier_id: null,
-      header_tier_name: null,
-      header_tier_color: null,
+      header_tier_id: routing?.headerTierId ?? null,
+      header_tier_name: routing?.headerTierName ?? null,
+      header_tier_color: routing?.headerTierColor ?? null,
     });
     // An M302 patched retry is real provider work even when Manifest ultimately
     // returns its friendly stub; finish that pending Attempt from the audit.

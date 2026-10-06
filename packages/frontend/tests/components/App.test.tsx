@@ -38,6 +38,10 @@ vi.mock("../../src/components/AuthGuard.jsx", () => ({
   default: (props: any) => <div data-testid="auth-guard">{props.children}</div>,
 }));
 
+vi.mock("../../src/services/dither-ground.js", () => ({
+  mountDither: () => () => {},
+}));
+
 vi.mock("../../src/services/sse.js", () => ({
   connectSse: () => () => {},
   analyticsPing: () => 0,

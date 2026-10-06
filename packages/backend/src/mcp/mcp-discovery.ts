@@ -11,6 +11,18 @@ import {
   MCP_SCOPES,
 } from '../auth/auth.instance';
 
+const PROTECTED_RESOURCE_PATHS = [
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/oauth-protected-resource/api/v1/mcp',
+];
+
+const cors = (res: Response): void => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+  res.set('Access-Control-Max-Age', '86400');
+};
+
 /**
  * Serve the OAuth discovery documents at the well-known ROOT paths.
  *
@@ -27,13 +39,6 @@ import {
 export function mountMcpDiscovery(app: INestApplication): void {
   const expressApp = app.getHttpAdapter().getInstance();
   const authServerMetadata = oauthProviderAuthServerMetadata(authInstance);
-
-  const cors = (res: Response): void => {
-    res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.set('Access-Control-Max-Age', '86400');
-  };
 
   const serveAuthMetadata = async (req: Request, res: Response): Promise<void> => {
     cors(res);
@@ -69,10 +74,7 @@ export function mountMcpDiscovery(app: INestApplication): void {
     res.status(404).json({ statusCode: 404, message: 'OAuth metadata unavailable' });
   });
 
-  for (const path of [
-    '/.well-known/oauth-protected-resource',
-    '/.well-known/oauth-protected-resource/api/v1/mcp',
-  ]) {
+  for (const path of PROTECTED_RESOURCE_PATHS) {
     expressApp.get(path, (req: Request, res: Response) => {
       cors(res);
       res.status(200).json({
@@ -81,6 +83,28 @@ export function mountMcpDiscovery(app: INestApplication): void {
         bearer_methods_supported: ['header'],
         scopes_supported: [...MCP_SCOPES],
       });
+    });
+  }
+}
+
+/**
+ * The same well-known paths, answering a JSON 404, for installs running
+ * without the MCP server.
+ *
+ * Without these the requests fall through to the SPA fallback and an MCP
+ * client discovering this origin gets the dashboard's HTML with a 200 — which
+ * reads as a broken server rather than one that simply does not offer MCP.
+ */
+export function mountMcpUnavailable(app: INestApplication): void {
+  const expressApp = app.getHttpAdapter().getInstance();
+  for (const path of [
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/oauth-authorization-server/api/auth',
+    ...PROTECTED_RESOURCE_PATHS,
+  ]) {
+    expressApp.get(path, (_req: Request, res: Response) => {
+      cors(res);
+      res.status(404).json({ statusCode: 404, message: 'MCP is not enabled on this install' });
     });
   }
 }

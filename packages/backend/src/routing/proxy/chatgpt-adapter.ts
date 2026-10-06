@@ -133,13 +133,64 @@ export function toResponsesRequest(
 
   if (isObjectRecord(body.text)) {
     request.text = body.text;
+  } else {
+    const format = toResponsesTextFormat(body.response_format);
+    if (format) request.text = { format };
   }
 
   if (Array.isArray(body.tools)) {
     request.tools = convertTools(body.tools as Record<string, unknown>[]);
+    if (body.tools.length > 0) {
+      const toolChoice = toResponsesToolChoice(body.tool_choice);
+      if (toolChoice !== undefined) request.tool_choice = toolChoice;
+      if (typeof body.parallel_tool_calls === 'boolean') {
+        request.parallel_tool_calls = body.parallel_tool_calls;
+      }
+    }
   }
 
   return request;
+}
+
+/**
+ * Chat Completions `tool_choice` → Responses `tool_choice`. The string modes
+ * are shared; a named function moves its name up a level, matching the flat
+ * tool shape `convertTools` produces.
+ */
+function toResponsesToolChoice(choice: unknown): unknown {
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (
+    isObjectRecord(choice) &&
+    choice.type === 'function' &&
+    isObjectRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    return { type: 'function', name: choice.function.name };
+  }
+  return undefined;
+}
+
+/**
+ * Chat Completions `response_format` → Responses `text.format`. The Responses
+ * API has no `response_format`, so without this a structured-output request
+ * routed to a /responses endpoint comes back as free-form prose.
+ */
+function toResponsesTextFormat(responseFormat: unknown): Record<string, unknown> | undefined {
+  if (!isObjectRecord(responseFormat)) return undefined;
+  if (responseFormat.type === 'json_object') return { type: 'json_object' };
+  if (responseFormat.type !== 'json_schema' || !isObjectRecord(responseFormat.json_schema)) {
+    return undefined;
+  }
+
+  const jsonSchema = responseFormat.json_schema;
+  const format: Record<string, unknown> = { type: 'json_schema' };
+  if (jsonSchema.name !== undefined) format.name = jsonSchema.name;
+  if (jsonSchema.schema !== undefined) format.schema = jsonSchema.schema;
+  if (jsonSchema.strict !== undefined) format.strict = jsonSchema.strict;
+  if (typeof jsonSchema.description === 'string' && jsonSchema.description) {
+    format.description = jsonSchema.description;
+  }
+  return format;
 }
 
 function textFromReasoningParts(parts: unknown): string {
@@ -282,7 +333,14 @@ export function fromResponsesResponse(
       {
         index: 0,
         message,
-        finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+        // A truncated or filtered response is `status: "incomplete"`; report it
+        // the way the SSE path does rather than as a complete answer.
+        finish_reason:
+          data.status === 'incomplete'
+            ? incompleteFinishReason(data)
+            : toolCalls.length > 0
+              ? 'tool_calls'
+              : 'stop',
       },
     ],
     usage: {

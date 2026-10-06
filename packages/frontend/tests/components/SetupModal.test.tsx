@@ -136,7 +136,7 @@ describe("SetupModal", () => {
   it("uses the app baseUrl on gateway.manifest.build", () => {
     const origLocation = window.location;
     Object.defineProperty(window, "location", {
-      value: { ...origLocation, hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
+      value: { ...origLocation, hostname: "app.manifest.build", origin: "https://app.manifest.build" },
       writable: true,
       configurable: true,
     });

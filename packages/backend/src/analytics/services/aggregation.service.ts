@@ -19,6 +19,7 @@ import {
 } from './query-helpers';
 import { computeCutoff, sqlSanitizeCost } from '../../common/utils/postgres-sql';
 import { ManifestRequest } from '../../entities/request.entity';
+import { AgentUsageDailyService } from './agent-usage-daily.service';
 
 export { MetricWithTrend };
 
@@ -35,6 +36,8 @@ export class AggregationService {
     @Optional()
     @InjectRepository(ManifestRequest)
     private readonly requestRepo?: Repository<ManifestRequest>,
+    @Optional()
+    private readonly agentUsageDaily?: AgentUsageDailyService,
   ) {}
 
   async hasAnyData(
@@ -185,6 +188,27 @@ export class AggregationService {
     excludePlayground = false,
     excludeDirect = false,
   ): Promise<{ tokens: number; cost: number; messages: number }> {
+    if (
+      excludePlayground &&
+      this.agentUsageDaily?.supportsRange(tenantId, range) &&
+      tenantId !== null
+    ) {
+      const rows = await this.agentUsageDaily.getRangeRows(tenantId, range, {
+        agentName,
+        previous: true,
+        excludeDirect,
+      });
+      return rows.reduce(
+        (totals, row) => {
+          totals.tokens += Number(row.input_tokens) + Number(row.output_tokens);
+          totals.cost += Number(row.cost_usd);
+          totals.messages += Number(row.request_count);
+          return totals;
+        },
+        { tokens: 0, cost: 0, messages: 0 },
+      );
+    }
+
     const { cutoff, prevCutoff } = this.computeWindow(range);
     const safeCost = sqlSanitizeCost('at.cost_usd');
     const prev = await this.buildPreviousWindowQuery(

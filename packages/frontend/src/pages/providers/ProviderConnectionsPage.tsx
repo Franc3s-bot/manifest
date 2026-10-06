@@ -26,7 +26,7 @@ import { toggleScrollFade } from '../../services/scroll-fade.js';
 import { renameProviderKey } from '../../services/api/routing.js';
 import type { AuthType, CustomProviderData, RoutingProvider } from '../../services/api.js';
 import type { CustomProviderPrefill, ProviderDeepLink } from '../../services/routing-params.js';
-import { PROVIDERS, type ProviderDef } from '../../services/providers.js';
+import { PROVIDERS, subscriptionCatalog, type ProviderDef } from '../../services/providers.js';
 import {
   customProviderColor,
   formatCost,
@@ -119,9 +119,11 @@ const PAGE_COPY: Record<
 
 const CONNECTIONS_COLLAPSE_THRESHOLD = 6;
 
-const providerListForKind = (kind: ProviderPageKind): ProviderDef[] => {
-  if (kind === 'subscriptions')
-    return PROVIDERS.filter((provider) => provider.supportsSubscription);
+const providerListForKind = (
+  kind: ProviderPageKind,
+  hasConnection: (providerId: string) => boolean,
+): ProviderDef[] => {
+  if (kind === 'subscriptions') return subscriptionCatalog(PROVIDERS, hasConnection);
   if (kind === 'local') return PROVIDERS.filter((provider) => provider.localOnly);
   return PROVIDERS.filter((provider) => !provider.subscriptionOnly && !provider.localOnly);
 };
@@ -410,6 +412,15 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
     for (const summary of connectedSummaries()) map.set(summary.provider, summary);
     return map;
   };
+
+  const catalogProviders = () =>
+    providerListForKind(
+      props.kind,
+      (providerId) =>
+        connectedByProvider()
+          .get(providerId)
+          ?.connections.some((connection) => connection.is_active) ?? false,
+    );
 
   const activeConnectionCount = (providerId: string) =>
     connectedByProvider()
@@ -906,7 +917,7 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
               </tr>
             </thead>
             <tbody>
-              <For each={providerListForKind(props.kind)}>
+              <For each={catalogProviders()}>
                 {(provider) => {
                   const activeCount = () => activeConnectionCount(provider.id);
                   return (
@@ -954,7 +965,7 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
 
       <Show when={viewMode() === 'grid'}>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
-          <For each={providerListForKind(props.kind)}>
+          <For each={catalogProviders()}>
             {(provider) => {
               const activeCount = () => activeConnectionCount(provider.id);
               return (

@@ -1,5 +1,125 @@
 # manifest
 
+## 6.28.4
+
+### Patch Changes
+
+- 92f4a58: List the Claude cross-Region inference profiles that Bedrock Runtime serves (such as `us.anthropic.claude-sonnet-5-5`) in Amazon Bedrock model discovery, so they can be picked for routing.
+
+## 6.28.3
+
+### Patch Changes
+
+- 158e0cd: Forward `tool_choice` and `parallel_tool_calls` when a Chat Completions or Anthropic Messages request is sent to a Responses endpoint (ChatGPT subscription, Responses-only OpenAI models, Copilot and xAI Responses). Both were dropped, so a forced or disabled tool call and a request for one tool call at a time reached the model as the defaults.
+
+## 6.28.2
+
+### Patch Changes
+
+- 340df79: Route Claude cross-Region inference profiles on Amazon Bedrock (such as `us.anthropic.claude-sonnet-5-5`) to the Bedrock Runtime Anthropic Messages API instead of Mantle, which does not serve them.
+- 3c3214a: Translate Anthropic `tool_choice: {type: "none"}` and `disable_parallel_tool_use` on `/v1/messages` requests routed to non-Anthropic providers. Both were dropped, so the model could still call tools, or call several at once, when the client had turned that off.
+- b15b5c2: Forward `response_format` as `text.format` when a Chat Completions request is sent to a Responses endpoint (ChatGPT subscription, Responses-only OpenAI models, Copilot and xAI Responses). It was dropped, so a JSON schema or JSON mode request came back as free-form text.
+
+## 6.28.1
+
+### Patch Changes
+
+- 8f84cf6: Keep Claude prompt caching growing with the conversation on Amazon Bedrock and custom Anthropic providers, instead of stopping at the system prompt and tools.
+- 13ddffd: Count Gemini thinking tokens as output tokens. Google reports them in `thoughtsTokenCount`, apart from `candidatesTokenCount`, so thinking models on Google routes were recorded and priced without them.
+- 82e7c6a: Forward `tool_choice` to Gemini as `toolConfig` on Google routes. It was dropped, so a forced (`required` or named function) or disabled (`none`) tool call was left to the model's own choice.
+- 5fe5150: Model parameters dialog now saves any value you set, even when it equals the provider default, and shows unset params as "Not set" so the client's value is used. Fixes a `max_tokens` set in the dashboard being ignored (#3022).
+
+## 6.28.0
+
+### Minor Changes
+
+- 46f2aca: Serve Amazon Bedrock cross-Region inference profiles such as `global.moonshotai.kimi-k3` and `us.openai.gpt-6-sol` through Bedrock Runtime instead of Mantle, which returned 404 for them. Bedrock connections now discover the profiles their region offers for verified models (Kimi K3, GPT-6 Sol, Luna and Astra, GPT-5.6 Luna) and keep them when the Bedrock control plane is briefly unreachable.
+
+### Patch Changes
+
+- 4f49d67: Keep dashboard usage charts on the daily rollup once its backfill is confirmed, so a lagging rollup worker no longer switches every tenant back to raw scans.
+- a83f083: Announce API Bot in the dashboard with a banner and a sidebar card that link to manifest.build/api-bot/.
+- c83cafa: Fix OpenAI subscription model discovery so `gpt-6.1-sol` appears. The `/backend-api/codex/models` endpoint returns an older model subset for older `client_version` values. Bump `CODEX_CLI_VERSION` from `0.156.1` to `0.159.2`.
+
+## 6.27.0
+
+### Minor Changes
+
+- 9c773fc: Custom providers take several API keys, each a separate connection managed like a native provider's keys.
+
+### Patch Changes
+
+- 60e0365: Forward `tool_choice` and `parallel_tool_calls` to Anthropic when translating Chat Completions or Responses requests. They were dropped, so a forced or disabled tool call was left to the model's own choice.
+- be73101: Route Bedrock GPT-6 models (and later numbered GPT families) through the namespaced OpenAI Responses API path, which Bedrock requires for them.
+- ac51ed8: Keep system prompts sent as content-part arrays when routing to Google Gemini. They were dropped from `systemInstruction`, so Gemini answered without the system prompt (including Responses API `developer` instructions).
+- cbb96fa: Send `developer` messages to Gemini as the system instruction instead of a user turn.
+- 74d8d04: Report a truncated or filtered non-streaming Responses API reply as `finish_reason: "length"` / `"content_filter"` instead of `"stop"`, matching the streaming path.
+- 20208e5: Keep cached-input and reasoning token counts on `/v1/responses` replies served by OpenAI-compatible Chat Completions upstreams, so clients see them and Manifest records and prices cache reads correctly.
+
+## 6.26.1
+
+### Patch Changes
+
+- ce10922: Stop adding five-minute cache breakpoints to Anthropic Messages requests that already use one-hour breakpoints (Claude Code), which Anthropic rejected with a 400, and explain in the Claude Code setup card how to get a 1M context window through the gateway.
+- 9b0a662: Fix a 500 on Chat Completions requests when Autofix heals an OpenAI subscription (Codex) call by switching the model.
+- 6173ff2: Bound routing momentum memory by session count and session-key length.
+- d228930: Bump `CODEX_CLI_VERSION` from `0.154.0` to `0.156.1` to track the current Codex CLI release, so OpenAI subscription model discovery can list the newest Codex models (e.g. `gpt-6-sol`, `gpt-6-luna`). Older `client_version` values receive an older model subset.
+- aa6734c: Make the gateway's per-tenant (M201) and per-IP (M202) rate caps configurable with `MANIFEST_RATE_MAX_REQUESTS` and `MANIFEST_IP_RATE_MAX_REQUESTS`, alongside the in-flight (M203) cap already set by `MANIFEST_CONCURRENCY_MAX`.
+- bf9702c: Editing a custom provider: "Fetch models" now reuses the saved API key when you don't retype it. The saved key is only sent to the provider's own base URL.
+- 64918e7: Make the per-harness enabled-providers endpoints resolve the active harness when a deleted harness had the same name, so reading, enabling, and disabling providers no longer act on the deleted one.
+- 813e058: Show a loading state while a routing fallback reorder is saving, and block further drags on that tier until it lands
+- e458112: Stop the Limits page from flashing the cloud email card on self-hosted installs, and keep the remove-provider confirmation honest when the refresh that follows a successful delete fails.
+- fca2948: Keep Pro while Stripe retries a failed renewal, so the dashboard offers Manage billing instead of a second checkout.
+- 8b4d9d4: Stop showing the "You've used all 10,000 requests" notice on the Upgrade page to Pro users who arrive from an old request-limit link.
+
+## 6.26.0
+
+### Minor Changes
+
+- cff25d5: Read and set model params (reasoning effort, temperature, …) per tier and model from the CLI (`mnfst routing params get|set`) and the MCP server (`manifest_routing_params_get|set`).
+
+### Patch Changes
+
+- ddb7e76: Autofix no longer counts a healed streaming retry as recovered when its stream never delivers data and a fallback serves the request instead.
+- 95e45b0: A provider that sends response headers and then times out or drops the connection mid-body on a non-streaming request now falls back to the next route and is recorded as a provider 503/504, instead of an M500 with no fallback. Manifest errors raised after routing (M500) now keep their tier, specificity and header-tier fields, so tier filters find them.
+- abd760e: Cancel every pending provider attempt when the caller disconnects mid fallback chain, not only the last one.
+- 8c3b4c3: Make harness-scoped Requests filters (status, error origin) fast on a cold cache: the harness index now covers the columns they test, so a large harness no longer reads one row per request in range.
+- 5fbcf53: Refreshing or listing providers through the MCP tools now reports a custom provider's real model count. It always showed 0, which looked like the refresh had wiped the models entered by hand; they were never touched.
+- bc7f9c4: You can now disconnect, rename, or refresh a provider connection when the workspace has no harness. The connection page used to refuse with "Create at least one harness before disconnecting a provider."
+- 11971a7: Fallback routes now get the same stream warm-up as the primary, so a fallback that returns 200 and never streams a byte moves on to the next route.
+- 70dc9c8: Keep chat models without tool calling (e.g. Groq's allam-2-7b) in provider catalogs; discovery now drops only models that cannot take or return text.
+- dbef439: M101 now says a harness has no model to route to and links to picking a default model. It used to say "no providers are set up yet", which was wrong for a new harness whose providers were connected but had no default model selected.
+- 107dfac: Stop overlapping deployments from deadlocking on a concurrent index build: a deployment waiting for the migration lock now polls for it instead of holding a database snapshot while it waits.
+- 298a5a3: Make Requests log filters fast on a cold cache: harness, status, origin, trigger, provider, and model filters no longer scan every request in range one heap page at a time.
+- 7226cec: Remove the public usage stats endpoints (`/api/v1/public/usage`, `/free-models`, `/provider-tokens`, `/agent-tokens`, `/free-providers`). They scanned the whole Provider Attempt table for minutes on every refresh. The public error pages endpoint and `MANIFEST_PUBLIC_STATS` are unchanged.
+- 478b069: Setting a route or fallback now accepts every name Manifest publishes for a model: the id shown in `/v1/models` (including a custom provider's alias), a custom model's bare name next to its provider, or the internal id. Before, a brand-new harness rejected valid custom-provider and OpenRouter models with an unrelated "choose from" list; that hint now lists the named provider's own models.
+- da49b80: A subscription token that a provider rejects with a 401 before its expiry is now actually refreshed and retried. Before, the refresh was skipped because the stored token had not expired yet, so every request failed on the dead token and fell back. A credential that still gets a 401 (refresh rejected, account refused, or a revoked API key) is now skipped for five minutes instead of being retried on every request, and reconnecting or replacing it is picked up at once.
+- 48b5277: Stop offering new Google (Gemini) subscription connections, which Google now refuses, and point users to a Gemini API key instead. Existing Google subscription connections are untouched and stay manageable. OAuth paste forms now show the server's actual error.
+
+## 6.25.5
+
+### Patch Changes
+
+- 22c9525: Precompute daily harness usage so the harness list no longer aggregates raw request history after rollout.
+- e78d3a8: Keep daily usage backfill transactions below the database timeout on large histories.
+- ebd6568: Load Overview and Harness Overview usage from daily rollups for long ranges, without blocking the page on raw model and recent-request queries.
+- f87fba4: Fix remote MCP connections stalling in Claude Code. `subscriptions/listen` is served over SSE whatever the response mode says, and buffering that body held back the acknowledgement the client waits for, so every listen attempt hung until the client timed out and the connection handshake stalled behind it. Stream those responses instead, and stop advertising `tools.listChanged`, which a per-request server can never send.
+- 013d285: Brand the dashboard as Manifest LLM Gateway: new logo sized by height, and the sidebar card now links to Manifest at dashboard.manifest.build instead of the closed waiting list.
+
+  The gateway cloud is app.manifest.build again: CLI and n8n defaults, email links, share previews and the OTLP migration message use it instead of gateway.manifest.build.
+
+- c99e02e: Index Autofix Provider Attempts so filtered Requests loads avoid reading unrelated attempts.
+- 0e84ab5: Index recorded provider attempts so the nightly request-recording retention job reads a short index range instead of scanning the whole attempts table.
+- 83e427c: Switch dashboard usage reads to daily rollups automatically after backfill catch-up.
+
+## 6.25.4
+
+### Patch Changes
+
+- 6727c89: Faster first paint of the dashboard: sessions are validated from a signed cookie (Better Auth cookie cache, 5 minute max age) instead of a database round trip on every request, and the plan lookup no longer waits behind the session probe. A failed plan lookup is no longer remembered for the session.
+- 5c206d7: Fix self-hosted HTTP deployments failing to start after remote MCP became mandatory. `@better-auth/mcp` rejects a non-loopback HTTP resource URL while the plugin is constructed, so an install with a plain-HTTP `BETTER_AUTH_URL` (a LAN or tailnet hostname) exited before listening. Manifest now runs without the MCP surface on such an origin instead of refusing to boot, and `MCP_ENABLED=false` switches MCP off explicitly.
+- 2d80449: Speed up the first Overview load: the notification bell no longer refetches the workspace Autofix status on every gateway request and polls once a minute instead of every 15 seconds, and a partial index over unlinked provider attempts (`request_id IS NULL`) stops the Overview and Autofix analytics from scanning ~300 MB of the `agent_messages` heap twice per call.
+
 ## 6.25.3
 
 ### Patch Changes

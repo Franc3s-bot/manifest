@@ -16,6 +16,8 @@ const FAIL_OPEN: BillingPlanStatus = { enabled: false, plan: 'free' };
 const [planStatus, setPlanStatus] = createSignal<BillingPlanStatus | null>(null);
 
 let inflight: Promise<BillingPlanStatus> | null = null;
+/** Bumped by every reset so a lookup started before it cannot write back. */
+let generation = 0;
 
 /**
  * Resolve the plan once per boot (deduped). Never rejects — a failed lookup
@@ -24,14 +26,24 @@ let inflight: Promise<BillingPlanStatus> | null = null;
 export function loadPlan(): Promise<BillingPlanStatus> {
   const current = planStatus();
   if (current) return Promise.resolve(current);
-  inflight ??= getBillingPlan()
-    .catch(() => FAIL_OPEN)
+  if (inflight) return inflight;
+  // Only a real answer is remembered, and only by the lookup that still owns
+  // the store: a failed lookup (a 401 from a probe that fired before sign-in,
+  // a billing hiccup) falls open for this caller but is retried by the next
+  // one, and a lookup that was outlived by a reset neither writes its stale
+  // answer nor clears the slot the replacement lookup now holds.
+  const owner = generation;
+  const request: Promise<BillingPlanStatus> = getBillingPlan()
     .then((status) => {
-      setPlanStatus(status);
-      inflight = null;
+      if (generation === owner) setPlanStatus(status);
       return status;
+    })
+    .catch(() => FAIL_OPEN)
+    .finally(() => {
+      if (inflight === request) inflight = null;
     });
-  return inflight;
+  inflight = request;
+  return request;
 }
 
 /**
@@ -50,4 +62,5 @@ export { planStatus };
 export function resetPlanStore(next: BillingPlanStatus | null = null): void {
   setPlanStatus(next);
   inflight = null;
+  generation += 1;
 }

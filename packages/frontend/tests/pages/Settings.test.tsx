@@ -635,7 +635,7 @@ describe("Settings", () => {
   it("uses app.manifest.build in setup on the gateway host", async () => {
     const originalLocation = window.location;
     Object.defineProperty(window, "location", {
-      value: { ...originalLocation, hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
+      value: { ...originalLocation, hostname: "app.manifest.build", origin: "https://app.manifest.build" },
       writable: true,
       configurable: true,
     });

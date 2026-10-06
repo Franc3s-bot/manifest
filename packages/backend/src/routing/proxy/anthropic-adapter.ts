@@ -60,6 +60,22 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Whether a native Messages body already places a breakpoint on a message
+ * block, the placement the conversation breakpoint would compete with. Marks
+ * on system or tools alone leave the conversation uncached, and a tool schema
+ * property named `cache_control` is data, not a breakpoint.
+ */
+export function hasMessageCacheControl(body: Record<string, unknown>): boolean {
+  if (!Array.isArray(body.messages)) return false;
+  return body.messages.some(
+    (message) =>
+      isObjectRecord(message) &&
+      Array.isArray(message.content) &&
+      message.content.some((block) => isObjectRecord(block) && block.cache_control !== undefined),
+  );
+}
+
 function countCacheControlBlocks(value: unknown): number {
   if (!value || typeof value !== 'object') return 0;
 
@@ -97,6 +113,47 @@ export function applyAnthropicAutomaticCacheControl(body: Record<string, unknown
   // explicit cache plan instead of risking a provider-side 400.
   if (hasOneHourCacheControl(body)) return;
   body.cache_control = CACHE;
+}
+
+// Anthropic refuses `cache_control` on thinking blocks and on empty text.
+function isCacheableBlock(block: unknown): block is ContentBlock {
+  if (!isObjectRecord(block)) return false;
+  if (block.type === 'thinking' || block.type === 'redacted_thinking') return false;
+  return block.type !== 'text' || (typeof block.text === 'string' && block.text.length > 0);
+}
+
+/**
+ * Explicit counterpart of `applyAnthropicAutomaticCacheControl` for
+ * Anthropic-format upstreams that cache only where a block carries
+ * `cache_control` (Bedrock, custom Anthropic endpoints). Without it only the
+ * system prompt and tools are cached, so the cached prefix stops growing with
+ * the conversation (#3023). Copies the message it marks so the inbound body
+ * stays untouched.
+ */
+export function applyAnthropicLastMessageCacheControl(body: Record<string, unknown>): void {
+  if (body.cache_control !== undefined || hasOneHourCacheControl(body)) return;
+  const budget = { remaining: MAX_CACHE_CONTROL_BLOCKS - countCacheControlBlocks(body) };
+  const messages = body.messages;
+  if (budget.remaining <= 0 || !Array.isArray(messages) || messages.length === 0) return;
+
+  const last: unknown = messages[messages.length - 1];
+  if (!isObjectRecord(last)) return;
+  let content: unknown[];
+  if (typeof last.content === 'string') {
+    content = [{ type: 'text', text: last.content }];
+  } else if (Array.isArray(last.content)) {
+    content = [...last.content];
+  } else {
+    return;
+  }
+
+  let index = content.length - 1;
+  while (index >= 0 && !isCacheableBlock(content[index])) index -= 1;
+  if (index < 0) return;
+  const block = { ...(content[index] as ContentBlock) };
+  tryAddCacheControl(block, budget);
+  content[index] = block;
+  body.messages = [...messages.slice(0, -1), { ...last, content }];
 }
 
 function hasReplayableThinkingSignature(block: ContentBlock): boolean {
@@ -274,6 +331,33 @@ function convertTools(tools?: Array<Record<string, unknown>>): AnthropicTool[] |
 }
 
 /**
+ * chat_completions `tool_choice` + `parallel_tool_calls` → Anthropic
+ * `tool_choice`. Anthropic has no top-level parallel flag: it rides on the
+ * choice as `disable_parallel_tool_use`, which `none` does not take.
+ */
+function toAnthropicToolChoice(
+  choice: unknown,
+  parallelToolCalls: unknown,
+): Record<string, unknown> | undefined {
+  if (choice === 'none') return { type: 'none' };
+  let out: Record<string, unknown> | undefined;
+  if (choice === 'auto') out = { type: 'auto' };
+  else if (choice === 'required') out = { type: 'any' };
+  else if (
+    isObjectRecord(choice) &&
+    choice.type === 'function' &&
+    isObjectRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    out = { type: 'tool', name: choice.function.name };
+  }
+  if (parallelToolCalls === false) {
+    out = { ...(out ?? { type: 'auto' }), disable_parallel_tool_use: true };
+  }
+  return out;
+}
+
+/**
  * JSON Schema keywords whose value is a subschema, an array of subschemas, or a
  * map of subschemas. Only these recurse: `enum`/`default`/`examples`/`const` hold
  * data values that can look like schemas and must pass through untouched.
@@ -426,6 +510,8 @@ export function toAnthropicRequest(
   if (tools.length > 0) {
     tools[tools.length - 1].cache_control = CACHE;
     result.tools = tools;
+    const toolChoice = toAnthropicToolChoice(body.tool_choice, body.parallel_tool_calls);
+    if (toolChoice) result.tool_choice = toolChoice;
   }
 
   const outputConfig = toAnthropicOutputConfig(body.response_format, body.output_config);
@@ -511,8 +597,14 @@ export function applyAnthropicMessagesMutations(
   if (isObjectRecord(result.output_config)) {
     result.output_config = closeOutputConfigObjectSchemas(result.output_config);
   }
+  // Anthropic processes breakpoints in tools → system → messages order and
+  // rejects a one-hour breakpoint that follows a five-minute one. A caller that
+  // uses one-hour TTLs (Claude Code does, on system) has planned its own cache,
+  // so adding our default five-minute breakpoints would only produce a 400.
   const cacheBudget = {
-    remaining: Math.max(0, MAX_CACHE_CONTROL_BLOCKS - countCacheControlBlocks(body)),
+    remaining: hasOneHourCacheControl(body)
+      ? 0
+      : Math.max(0, MAX_CACHE_CONTROL_BLOCKS - countCacheControlBlocks(body)),
   };
 
   // Normalize `system` to a content-block array so cache_control + identity

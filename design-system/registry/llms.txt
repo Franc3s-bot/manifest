@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (314 BEM blocks, 1699 classes)
+## Blocks (318 BEM blocks, 1700 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -116,6 +116,9 @@ agent-type-select (agent-type-select.css): agent-type-select agent-type-select__
 agent-type-select-row (agent-type-select.css): agent-type-select-row
 agents-grid (agents.css): agents-grid
 anthropic-detail (routing-providers.css): anthropic-detail__alt anthropic-detail__alt-divider anthropic-detail__alt-hint anthropic-detail__btn anthropic-detail__primary
+api-bot-banner (api-bot.css): api-bot-banner api-bot-banner__text
+api-bot-btn (api-bot.css): api-bot-btn
+api-bot-close (api-bot.css): api-bot-close
 api-key-display (wizard.css): api-key-display__code api-key-display__prefix api-key-display__value api-key-display__warning
 app-body (layout.css): app-body
 app-layout (theme.css): app-layout
@@ -165,7 +168,7 @@ custom-provider-item (routing-providers.css): custom-provider-item custom-provid
 custom-provider-model-row (routing-providers.css): custom-provider-model-row custom-provider-model-row__name custom-provider-model-row__price custom-provider-model-row__remove
 custom-provider-models (routing-providers.css): custom-provider-models custom-provider-models__column custom-provider-models__column--name custom-provider-models__column--price custom-provider-models__column-spacer custom-provider-models__columns custom-provider-models__label
 custom-select (connection-detail.css, custom-select.css, discovery.css, routing-providers.css): custom-select custom-select__chevron custom-select__dropdown custom-select__dropdown--portal custom-select__dropdown--wide custom-select__option custom-select__option--disabled custom-select__option--selected custom-select__option--top custom-select__option-desc custom-select__option-text custom-select__option-text--inline custom-select__trigger custom-select__trigger--open custom-select__value
-dark (agent-type-select.css, agents.css, analytics-overview.css, auth.css, controls.css, data.css, modals.css, model-filter.css, overview.css, pivot.css, platform-icons.css, request-drawer.css, routing-deprecation.css, routing-providers.css, routing.css, syntax-highlight.css, tokens.css, welcome.css, wizard.css): dark
+dark (agent-type-select.css, agents.css, analytics-overview.css, auth.css, controls.css, data.css, modals.css, model-filter.css, overview.css, platform-icons.css, request-drawer.css, routing-deprecation.css, routing-providers.css, routing.css, syntax-highlight.css, tokens.css, welcome.css, wizard.css): dark
 data-table (data.css, feedback.css, theme.css): data-table data-table__sortable
 data-table-scroll (data.css): data-table-scroll
 demo-dashboard (overview.css): demo-dashboard
@@ -173,6 +176,7 @@ discovery-actions (discovery.css): discovery-actions
 discovery-card (discovery.css): discovery-card discovery-card__desc discovery-card__form discovery-card__intro discovery-card__logo discovery-card__title
 discovery-form (discovery.css): discovery-form
 discovery-select (discovery.css): discovery-select--empty
+dither-ground (api-bot.css): dither-ground
 drawer (request-drawer.css): drawer drawer--open drawer__badge drawer__badge--autofix drawer__badge--fallback drawer__body drawer__close drawer__content drawer__content-empty drawer__header drawer__messages-pane drawer__meta-row drawer__meta-sep drawer__meta-text drawer__sidebar drawer__sidebar-title drawer__split drawer__tabs-full drawer__title drawer__title-row
 drawer-context-card (request-drawer.css): drawer-context-card drawer-context-card--autofix drawer-context-card--error drawer-context-card--fallback
 drawer-kv (request-drawer.css): drawer-kv drawer-kv__key
@@ -228,6 +232,7 @@ hljs-template-tag (syntax-highlight.css): hljs-template-tag
 hljs-title (syntax-highlight.css): hljs-title
 hljs-type (syntax-highlight.css): hljs-type
 hljs-variable (syntax-highlight.css): hljs-variable
+info-card (cards.css): info-card__content info-card__text
 info-tooltip (tooltip.css): info-tooltip info-tooltip__bubble info-tooltip__icon
 integration-grid (wizard.css): integration-grid
 integration-panel (wizard.css): integration-panel__desc integration-panel__header integration-panel__tabs
@@ -249,7 +254,7 @@ mobile-nav-toggle (theme.css): mobile-nav-toggle
 modal (modals.css, theme.css): modal modal__body modal__close modal__footer modal__header modal__title
 modal-back-btn (modals.css): modal-back-btn
 modal-backdrop (modals.css, theme.css): modal-backdrop
-modal-card (limits.css, modals.css, notifications.css, overview.css, pivot.css, routing-header-tiers.css, routing.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
+modal-card (limits.css, modals.css, notifications.css, overview.css, routing-header-tiers.css, routing.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
 modal-key-box (wizard.css): modal-key-box modal-key-box__copy modal-key-box__header modal-key-box__label modal-key-box__value modal-key-box__warning
 modal-overlay (modals.css): modal-overlay
 modal-stepper (modals.css): modal-stepper modal-stepper__circle modal-stepper__label modal-stepper__line modal-stepper__step modal-stepper__step--active modal-stepper__step--done
@@ -259,7 +264,7 @@ model-capability-badge (routing.css): model-capability-badge model-capability-ba
 model-capability-badges (routing.css): model-capability-badges model-capability-badges--compact model-capability-badges--empty
 model-filter (model-filter.css): model-filter model-filter__clear-all model-filter__combobox model-filter__dropdown model-filter__dropdown-group model-filter__dropdown-item model-filter__dropdown-item--highlighted model-filter__dropdown-item-name model-filter__dropdown-item-type model-filter__dropdown-label model-filter__empty model-filter__empty-hint model-filter__empty-title model-filter__input-wrapper model-filter__provider-icon model-filter__provider-icon--mono model-filter__row model-filter__search model-filter__search-icon model-filter__summary model-filter__tag model-filter__tag--provider model-filter__tag-remove model-filter__tag-type model-filter__tag-value model-filter__tags
 model-modality-badges (routing-modal.css): model-modality-badges
-model-params (params-card.css, routing.css): model-params__body model-params__default-hint model-params__dialog model-params__empty model-params__empty-link model-params__field model-params__footer model-params__footer-actions model-params__group model-params__group-card model-params__group-header model-params__help model-params__help-tooltip model-params__label-hint model-params__label-title model-params__number model-params__number--slider model-params__param-key model-params__request-link model-params__row model-params__row--disabled model-params__row-control model-params__row-text model-params__separator model-params__slider model-params__slider-bound model-params__slider-bounds model-params__slider-control model-params__slider-field model-params__slider-field--disabled model-params__slider-tick model-params__slider-track-bg model-params__slider-track-wrapper model-params__status model-params__toggle
+model-params (params-card.css, routing.css): model-params__body model-params__default-hint model-params__dialog model-params__empty model-params__empty-link model-params__field model-params__footer model-params__footer-actions model-params__group model-params__group-card model-params__group-header model-params__help model-params__help-tooltip model-params__label-hint model-params__label-title model-params__number model-params__number--slider model-params__param-key model-params__request-link model-params__reset model-params__row model-params__row--disabled model-params__row-control model-params__row-text model-params__separator model-params__slider model-params__slider-bound model-params__slider-bounds model-params__slider-control model-params__slider-field model-params__slider-field--disabled model-params__slider-tick model-params__slider-track-bg model-params__slider-track-wrapper model-params__status model-params__toggle
 model-params-modal (routing.css): model-params-modal model-params-modal--empty
 msg-detail (data.css): msg-detail msg-detail__cell msg-detail__chevron msg-detail__chevron--open msg-detail__chevron-btn msg-detail__chevron-btn--open msg-detail__chevron-cell msg-detail__chevron-th msg-detail__count msg-detail__count-badge msg-detail__error msg-detail__error-box msg-detail__error-code msg-detail__error-inline msg-detail__eye-btn msg-detail__fallback-banner msg-detail__loader msg-detail__log-body msg-detail__meta msg-detail__meta-item msg-detail__meta-label msg-detail__miscat-btn msg-detail__mono msg-detail__mono-xs msg-detail__param-value msg-detail__row msg-detail__section msg-detail__section-row msg-detail__section-title msg-detail__section-title--inline msg-detail__section-title--toggle msg-detail__severity-dot msg-detail__spinner msg-detail__summary msg-detail__summary-item msg-detail__table
 msg-highlight (data.css): msg-highlight
@@ -338,7 +343,7 @@ rule-menu (limits.css): rule-menu__btn rule-menu__dropdown rule-menu__item rule-
 scroll-panel (analytics-overview.css, routing-providers.css): scroll-panel scroll-panel--at-bottom scroll-panel__body
 security-event (data.css, theme.css): security-event security-event__badge security-event__desc security-event__dot security-event__dot--critical security-event__dot--info security-event__dot--warning security-event__time
 select (controls.css, theme.css): select
-settings-card (agents.css, controls.css, modals.css, notifications.css): settings-card settings-card--danger settings-card--disabled settings-card--flush settings-card--highlight settings-card__body settings-card__control settings-card__control--end settings-card__copy-btn settings-card__desc settings-card__footer settings-card__id-row settings-card__id-value settings-card__input settings-card__key-actions settings-card__key-row settings-card__key-value settings-card__label settings-card__label-desc settings-card__label-desc--meta settings-card__label-title settings-card__legal settings-card__row
+settings-card (agents.css, cards.css, controls.css, modals.css, notifications.css): settings-card settings-card--danger settings-card--disabled settings-card--flush settings-card--highlight settings-card--info settings-card__body settings-card__control settings-card__control--end settings-card__copy-btn settings-card__desc settings-card__footer settings-card__id-row settings-card__id-value settings-card__input settings-card__key-actions settings-card__key-row settings-card__key-value settings-card__label settings-card__label-desc settings-card__label-desc--meta settings-card__label-title settings-card__legal settings-card__row
 settings-section (agents.css, controls.css): settings-section__title settings-section__title--danger
 settings-switch (agents.css, modals.css, welcome.css): settings-switch settings-switch--on settings-switch__thumb settings-switch__track
 setup-agents-card (wizard.css): setup-agents-card setup-agents-card__title
@@ -357,8 +362,7 @@ setup-step (wizard.css): setup-step__desc setup-step__heading
 setup-step-providers (overview.css): setup-step-providers
 setup-steps (controls.css): setup-steps setup-steps__content setup-steps__divider setup-steps__number setup-steps__step
 sidebar (controls.css, theme.css): sidebar sidebar--mobile-open sidebar__badge sidebar__feedback sidebar__feedback-hint sidebar__feedback-title sidebar__footer sidebar__link sidebar__link--disabled sidebar__link-row sidebar__logo sidebar__logo-dot sidebar__section-add sidebar__section-label sidebar__spacer
-sidebar-pivot (pivot.css): sidebar-pivot sidebar-pivot__bottom sidebar-pivot__btn sidebar-pivot__canvas sidebar-pivot__desc sidebar-pivot__dismiss sidebar-pivot__header sidebar-pivot__joined sidebar-pivot__title sidebar-pivot__top
-sidebar-pivot-modal (pivot.css): sidebar-pivot-modal sidebar-pivot-modal__features sidebar-pivot-modal__logo
+sidebar-api-bot (api-bot.css): sidebar-api-bot sidebar-api-bot__close sidebar-api-bot__image sidebar-api-bot__text sidebar-api-bot__title
 sidebar-upgrade (modals.css): sidebar-upgrade
 sidebar-usage (modals.css): sidebar-usage sidebar-usage__alert sidebar-usage__bar sidebar-usage__count sidebar-usage__count--danger sidebar-usage__fill sidebar-usage__fill--danger sidebar-usage__fill--warning sidebar-usage__header sidebar-usage__month sidebar-usage__title
 skeleton (skeleton.css): skeleton skeleton--rect skeleton--text

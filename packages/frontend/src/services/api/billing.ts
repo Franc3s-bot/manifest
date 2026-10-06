@@ -12,9 +12,14 @@ export function getBillingStatus(options?: FetchJsonOptions): Promise<BillingSta
   return fetchJson<BillingStatus>('/billing/status');
 }
 
-/** Light plan lookup — no usage counter, no Stripe price. See plan-store.ts. */
+/**
+ * Light plan lookup — no usage counter, no Stripe price. See plan-store.ts.
+ * AuthGuard fires it before the session is known, so a signed-out 401 must
+ * reject quietly rather than hard-navigate to /login and lose the requested
+ * path the guard is about to preserve.
+ */
 export function getBillingPlan(): Promise<BillingPlanStatus> {
-  return fetchJson<BillingPlanStatus>('/billing/plan');
+  return fetchJson<BillingPlanStatus>('/billing/plan', undefined, { loginRedirect: false });
 }
 
 export function updateBillingEmailPreferences(

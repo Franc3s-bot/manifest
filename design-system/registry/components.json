@@ -513,6 +513,31 @@
         "routing-providers.css"
       ]
     },
+    "api-bot-banner": {
+      "classes": [
+        "api-bot-banner",
+        "api-bot-banner__text"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
+    "api-bot-btn": {
+      "classes": [
+        "api-bot-btn"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
+    "api-bot-close": {
+      "classes": [
+        "api-bot-close"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
     "api-key-display": {
       "classes": [
         "api-key-display__code",
@@ -1101,7 +1126,6 @@
         "modals.css",
         "model-filter.css",
         "overview.css",
-        "pivot.css",
         "platform-icons.css",
         "request-drawer.css",
         "routing-deprecation.css",
@@ -1175,6 +1199,14 @@
       ],
       "files": [
         "discovery.css"
+      ]
+    },
+    "dither-ground": {
+      "classes": [
+        "dither-ground"
+      ],
+      "files": [
+        "api-bot.css"
       ]
     },
     "drawer": {
@@ -1816,6 +1848,15 @@
         "syntax-highlight.css"
       ]
     },
+    "info-card": {
+      "classes": [
+        "info-card__content",
+        "info-card__text"
+      ],
+      "files": [
+        "cards.css"
+      ]
+    },
     "info-tooltip": {
       "classes": [
         "info-tooltip",
@@ -2025,7 +2066,6 @@
         "modals.css",
         "notifications.css",
         "overview.css",
-        "pivot.css",
         "routing-header-tiers.css",
         "routing.css"
       ]
@@ -2186,6 +2226,7 @@
         "model-params__number--slider",
         "model-params__param-key",
         "model-params__request-link",
+        "model-params__reset",
         "model-params__row",
         "model-params__row--disabled",
         "model-params__row-control",
@@ -3378,6 +3419,7 @@
         "settings-card--disabled",
         "settings-card--flush",
         "settings-card--highlight",
+        "settings-card--info",
         "settings-card__body",
         "settings-card__control",
         "settings-card__control--end",
@@ -3399,6 +3441,7 @@
       ],
       "files": [
         "agents.css",
+        "cards.css",
         "controls.css",
         "modals.css",
         "notifications.css"
@@ -3606,31 +3649,16 @@
         "theme.css"
       ]
     },
-    "sidebar-pivot": {
+    "sidebar-api-bot": {
       "classes": [
-        "sidebar-pivot",
-        "sidebar-pivot__bottom",
-        "sidebar-pivot__btn",
-        "sidebar-pivot__canvas",
-        "sidebar-pivot__desc",
-        "sidebar-pivot__dismiss",
-        "sidebar-pivot__header",
-        "sidebar-pivot__joined",
-        "sidebar-pivot__title",
-        "sidebar-pivot__top"
+        "sidebar-api-bot",
+        "sidebar-api-bot__close",
+        "sidebar-api-bot__image",
+        "sidebar-api-bot__text",
+        "sidebar-api-bot__title"
       ],
       "files": [
-        "pivot.css"
-      ]
-    },
-    "sidebar-pivot-modal": {
-      "classes": [
-        "sidebar-pivot-modal",
-        "sidebar-pivot-modal__features",
-        "sidebar-pivot-modal__logo"
-      ],
-      "files": [
-        "pivot.css"
+        "api-bot.css"
       ]
     },
     "sidebar-upgrade": {
@@ -5090,8 +5118,8 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 314,
-    "classes": 1699,
+    "blocks": 318,
+    "classes": 1700,
     "canonicalRules": 46,
     "ghostRules": 46
   }

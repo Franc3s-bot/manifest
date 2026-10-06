@@ -6,6 +6,7 @@ import type { Cache } from 'cache-manager';
 import { Request } from 'express';
 import { UserCacheInterceptor } from './user-cache.interceptor';
 import { AgentListCacheService } from '../services/agent-list-cache.service';
+import { agentUsageDailyReadsEnabled } from '../utils/agent-usage-daily-flags';
 
 /**
  * Cache interceptor for GET /agents. Unlike the generic URL-keyed
@@ -29,6 +30,7 @@ export class AgentListCacheInterceptor extends UserCacheInterceptor {
   protected trackBy(context: ExecutionContext): string | undefined {
     const tenantId = this.resolveTenantId(context);
     if (!tenantId) return undefined;
+    if (agentUsageDailyReadsEnabled(tenantId)) return undefined;
 
     const request = context.switchToHttp().getRequest<Request>();
     const includePlayground =

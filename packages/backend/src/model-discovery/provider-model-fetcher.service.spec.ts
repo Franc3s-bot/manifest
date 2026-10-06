@@ -248,6 +248,212 @@ describe('ProviderModelFetcherService', () => {
     expect(result.map((m) => m.id)).toEqual(['mistral.ministral-3-8b-instruct']);
   });
 
+  describe('AWS Bedrock CRIS profiles', () => {
+    const mantleResponse = (ids: string[]) => ({
+      ok: true,
+      json: async () => ({ data: ids.map((id) => ({ id })) }),
+    });
+    const profilesResponse = (body: Record<string, unknown>) => ({
+      ok: true,
+      json: async () => body,
+    });
+    const routeFetches = (
+      mantle: unknown,
+      controlPlane: unknown | (() => Promise<unknown>),
+    ): void => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (!url.includes('/inference-profiles')) return mantle;
+        return typeof controlPlane === 'function' ? controlPlane() : controlPlane;
+      });
+    };
+    const warnSpy = () => jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+
+    it('adds the active, catalogued CRIS profiles of the connection region', async () => {
+      routeFetches(
+        mantleResponse(['openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6-luna', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6-astra', status: 'INACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-sonnet-4-6', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch(
+        'bedrock',
+        'ABSK-test',
+        'api_key',
+        'https://bedrock-mantle.eu-west-1.api.aws',
+      );
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://bedrock.eu-west-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        expect.objectContaining({ headers: { Authorization: 'Bearer ABSK-test' } }),
+      );
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'global.moonshotai.kimi-k3',
+        'global.openai.gpt-6-luna',
+      ]);
+      expect(result[1]).toMatchObject({
+        provider: 'bedrock',
+        supportedEndpoints: ['/v1/chat/completions', '/v1/responses'],
+      });
+      expect(result[0].supportedEndpoints).toBeUndefined();
+    });
+
+    it('uses the default region and warns when the profile list is truncated', async () => {
+      const warn = warnSpy();
+      routeFetches(
+        mantleResponse(['mistral.ministral-3-8b-instruct']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+          nextToken: 'more',
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://bedrock.us-east-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        expect.anything(),
+      );
+      expect(result.map((m) => m.id)).toEqual([
+        'mistral.ministral-3-8b-instruct',
+        'us.openai.gpt-6-sol',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        'Bedrock listed more than 1000 inference profiles; only the first 1000 were checked',
+      );
+    });
+
+    it('returns nothing when Mantle returns nothing, so discovery keeps its usual fallbacks', async () => {
+      routeFetches(
+        { ok: false, status: 503 },
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      await expect(service.fetch('bedrock', 'ABSK-test', 'api_key')).resolves.toEqual([]);
+    });
+
+    it('keeps the CRIS profiles from the last discovery when the control plane rejects the call', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), { ok: false, status: 403 });
+      const previous = [
+        { id: 'openai.gpt-6-sol' },
+        { id: 'us.moonshotai.kimi-k3' },
+        { id: 'us.anthropic.claude-sonnet-4-6' },
+      ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: previous,
+      });
+
+      expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol', 'us.moonshotai.kimi-k3']);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: HTTP 403); kept 1 from the last discovery',
+      );
+    });
+
+    it('adds the active Claude CRIS profiles that Runtime Messages serves', async () => {
+      routeFetches(
+        mantleResponse(['openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.anthropic.claude-sonnet-5-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+            {
+              inferenceProfileId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+              status: 'ACTIVE',
+            },
+            { inferenceProfileId: 'us.anthropic.claude-fable-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
+            { inferenceProfileId: 'eu.anthropic.claude-opus-5', status: 'INACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5-5',
+        'global.moonshotai.kimi-k3',
+      ]);
+      expect(result[1]).toMatchObject({
+        provider: 'bedrock',
+        supportedEndpoints: ['/v1/chat/completions', '/v1/messages'],
+      });
+      expect(result[2].supportedEndpoints).toEqual(['/v1/chat/completions', '/v1/messages']);
+      expect(result[3].supportedEndpoints).toEqual(['/v1/chat/completions', '/v1/responses']);
+    });
+
+    it('keeps previously discovered Claude profiles when the control plane fails, and drops unsupported ones', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), { ok: false, status: 403 });
+      const previous = [
+        { id: 'openai.gpt-6-sol' },
+        { id: 'us.moonshotai.kimi-k3' },
+        { id: 'us.anthropic.claude-sonnet-5-5' },
+        { id: 'global.anthropic.claude-opus-5' },
+        { id: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' },
+        { id: 'us.anthropic.claude-fable-5' },
+      ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: previous,
+      });
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.moonshotai.kimi-k3',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: HTTP 403); kept 3 from the last discovery',
+      );
+    });
+
+    it('keeps nothing extra when the control plane is unreachable on a first discovery', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), () =>
+        Promise.reject(new Error('socket hang up')),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol']);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: socket hang up); kept 0 from the last discovery',
+      );
+    });
+
+    it('does not duplicate a profile that Mantle also lists', async () => {
+      routeFetches(
+        mantleResponse(['us.openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['us.openai.gpt-6-sol']);
+    });
+  });
+
   it('should fetch Cerebras models from the OpenAI-compatible models endpoint', async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
@@ -1484,6 +1690,25 @@ describe('ProviderModelFetcherService', () => {
         'openai/gpt-oss-20b',
         'openai/gpt-oss-safeguard-20b',
       ]);
+    });
+
+    it('should read the modalities Groq publishes on each model', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'allam-2-7b', input_modalities: ['text'], output_modalities: ['text'] },
+            { id: 'openai/gpt-oss-20b' },
+          ],
+        }),
+      });
+
+      const [allam, gptOss] = await service.fetch('groq', 'gsk_test');
+
+      expect(allam.inputModalities).toEqual(['text']);
+      expect(allam.outputModalities).toEqual(['text']);
+      expect(gptOss.inputModalities).toBeUndefined();
+      expect(gptOss.outputModalities).toBeUndefined();
     });
 
     it('should hit the Groq models endpoint with bearer auth', async () => {
@@ -3567,9 +3792,28 @@ describe('ProviderModelFetcherService', () => {
 
     await service.fetch('minimax', 'api-key', 'api_key');
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining('api.minimaxi.chat'),
-      expect.anything(),
-    );
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
+  });
+
+  it('should use the endpoint override for MiniMax CN API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://api.minimaxi.com/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimaxi.com/v1/models', expect.anything());
+  });
+
+  it('should ignore a non-MiniMax endpoint override for MiniMax API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://attacker.example/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
   });
 });

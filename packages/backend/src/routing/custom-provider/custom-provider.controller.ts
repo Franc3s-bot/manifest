@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { TenantCtx, TenantContext } from '../../common/decorators/tenant-context.decorator';
-import { CustomProviderService } from './custom-provider.service';
+import { CustomProviderService, primaryCustomConnection } from './custom-provider.service';
 import { ProviderService } from '../routing-core/provider.service';
 import { ResolveAgentService } from '../routing-core/resolve-agent.service';
 import {
@@ -34,8 +34,7 @@ export class CustomProviderController {
     if (providers.length === 0) return [];
 
     return providers.map((cp) => {
-      const provKey = CustomProviderService.providerKey(cp.id);
-      const up = tenantProviders.find((u) => u.provider === provKey);
+      const up = primaryCustomConnection(tenantProviders, CustomProviderService.providerKey(cp.id));
       return {
         id: cp.id,
         name: cp.name,
@@ -57,10 +56,25 @@ export class CustomProviderController {
   ) {
     // Resolve for authz — the tenant must own the agent before the server
     // probes anything on its behalf.
-    await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    // Edit-mode fallback: the form has no plaintext key when re-opened
+    // (list() only exposes has_api_key:bool), so it forwards provider_id
+    // and we reuse the stored key. The service only releases it for the
+    // provider's own tenant, base URL and api_kind, so the key can't be
+    // sent to a different server. A user-typed apiKey always wins.
+    const apiKey =
+      body.apiKey ??
+      (body.provider_id
+        ? await this.customProviderService.loadStoredApiKey(
+            agent.tenant_id,
+            body.provider_id,
+            body.base_url,
+            body.api_kind,
+          )
+        : undefined);
     const models = await this.customProviderService.probeModels(
       body.base_url,
-      body.apiKey,
+      apiKey,
       body.api_kind,
       body.provider_name,
     );

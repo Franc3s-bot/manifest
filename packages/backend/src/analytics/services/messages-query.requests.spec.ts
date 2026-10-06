@@ -638,4 +638,129 @@ describe('MessagesQueryService request-first queries', () => {
       expect(legacyClauses.join(' ')).not.toContain('routing_reason');
     });
   });
+
+  describe('attempt lookups for cold-cache performance', () => {
+    async function run(params: Record<string, unknown>, agentLookup = jest.fn()) {
+      const requestQb = makeQb();
+      requestQb.clone.mockReturnValue(makeQb());
+      const legacyBase = makeQb();
+      legacyBase.clone.mockReturnValueOnce(makeQb()).mockReturnValueOnce(makeQb());
+      const service = new MessagesQueryService(
+        {
+          createQueryBuilder: jest.fn(() => legacyBase),
+          query: jest.fn().mockResolvedValue([]),
+        } as never,
+        { find: jest.fn() } as never,
+        { createQueryBuilder: jest.fn(() => requestQb), query: agentLookup } as never,
+      );
+      await service.getMessages({
+        limit: 10,
+        include_total: false,
+        include_filter_options: false,
+        ...params,
+      } as never);
+      return { requestQb, legacyBase };
+    }
+
+    /** Every `agent_messages` alias a request clause opens. */
+    const attemptAliases = (clause: string): string[] =>
+      [...clause.matchAll(/FROM agent_messages (\w+)/g)].map((m) => m[1]);
+
+    it("bounds every attempt lookup by the parent's tenant and range", async () => {
+      const { requestQb } = await run({
+        tenantId: 'tenant-1',
+        range: '7d',
+        provider: 'openai',
+        models: ['gpt-4o'],
+        triggers: ['fallback', 'none'],
+        attemptStatus: ['has_failed'],
+      });
+
+      const clauses = requestQb.andWhere.mock.calls.map((call) => String(call[0]));
+      const withAttempts = clauses.filter((clause) => attemptAliases(clause).length > 0);
+      // provider, model (EXISTS + NOT EXISTS), triggers, attempt status.
+      expect(withAttempts).toHaveLength(4);
+      for (const clause of withAttempts) {
+        for (const alias of attemptAliases(clause)) {
+          expect(clause).toContain(`${alias}.tenant_id = :requestTenantId`);
+          expect(clause).toContain(
+            `${alias}.timestamp >= CAST(:requestCutoff AS timestamp) - interval '1 day'`,
+          );
+        }
+      }
+    });
+
+    it('bounds attempt lookups by tenant alone when the log has no range', async () => {
+      const { requestQb } = await run({ tenantId: 'tenant-1', provider: 'openai' });
+
+      const clause = requestQb.andWhere.mock.calls
+        .map((call) => String(call[0]))
+        .find((c) => c.includes('filtered_attempt.provider'));
+      expect(clause).toContain('filtered_attempt.tenant_id = :requestTenantId');
+      expect(clause).not.toContain('requestCutoff');
+    });
+
+    it('tests "no recovery attempt" as two anti-joins, one per recovery kind', async () => {
+      const { requestQb } = await run({ tenantId: 'tenant-1', range: '7d', triggers: ['none'] });
+
+      const clause = requestQb.andWhere.mock.calls
+        .map((call) => String(call[0]))
+        .find((c) => c.includes('trigger_attempt'));
+      expect(clause?.match(/NOT EXISTS/g)).toHaveLength(2);
+      expect(clause).toMatch(/autofix_applied = true\s+\)\s+AND NOT EXISTS/);
+      expect(clause).not.toContain('autofix_applied = true OR');
+    });
+
+    it('resolves the harness to its id first so Postgres plans with the value', async () => {
+      const agentLookup = jest.fn().mockResolvedValue([{ id: 'agent-9' }]);
+      const { requestQb, legacyBase } = await run(
+        { tenantId: 'tenant-1', range: '7d', agent_name: 'bot-1' },
+        agentLookup,
+      );
+
+      expect(agentLookup).toHaveBeenCalledWith(
+        'SELECT id FROM agents WHERE tenant_id = $1 AND name = $2 AND deleted_at IS NULL LIMIT 1',
+        ['tenant-1', 'bot-1'],
+      );
+      expect(requestQb.andWhere).toHaveBeenCalledWith('r.agent_id = :requestAgentId', {
+        requestAgentId: 'agent-9',
+      });
+      const clauses = requestQb.andWhere.mock.calls.map((call) => String(call[0]));
+      expect(clauses.some((clause) => clause.includes('FROM agents'))).toBe(false);
+
+      // The unlinked legacy branch keeps the tenant-bound lookup.
+      const legacyAgent = legacyBase.andWhere.mock.calls.find((call) =>
+        String(call[0]).includes('at.agent_id = ('),
+      );
+      expect(String(legacyAgent?.[0])).toContain('a.tenant_id = :liveTenantId');
+      expect(legacyAgent?.[1]).toEqual({ liveAgentName: 'bot-1', liveTenantId: 'tenant-1' });
+    });
+
+    it('matches nothing for a harness name with no live agent', async () => {
+      const { requestQb } = await run(
+        { tenantId: 'tenant-1', range: '7d', agent_name: 'gone' },
+        jest.fn().mockResolvedValue([]),
+      );
+
+      expect(requestQb.andWhere).toHaveBeenCalledWith('1 = 0');
+      expect(
+        requestQb.andWhere.mock.calls.some((call) => String(call[0]).includes('r.agent_id')),
+      ).toBe(false);
+    });
+
+    it('still binds the tenant parameter when the caller has no tenant', async () => {
+      const { requestQb, legacyBase } = await run({
+        tenantId: null,
+        agent_name: 'bot-1',
+        provider: 'openai',
+      });
+
+      expect(requestQb.andWhere).toHaveBeenCalledWith('1 = 0', { requestTenantId: null });
+      // The legacy branch is already empty through addTenantFilter.
+      expect(legacyBase.andWhere).toHaveBeenCalledWith('1 = 0');
+      expect(
+        legacyBase.andWhere.mock.calls.some((call) => String(call[0]).includes('at.agent_id')),
+      ).toBe(false);
+    });
+  });
 });

@@ -4,7 +4,7 @@ import CodeBlock from '../../components/CodeBlock.jsx';
 import { installOrigin } from '../../services/install-endpoints.js';
 import { checkIsSelfHosted } from '../../services/setup-status.js';
 
-const DOCS_URL = 'https://manifest.build/docs/cli/';
+const DOCS_URL = 'https://manifest.build/llm-gateway/docs/cli/';
 const PACKAGE = 'mnfst-gateway-cli';
 
 /**

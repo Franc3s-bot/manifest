@@ -270,8 +270,7 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
   const declarations = tools
     .map((t) => {
       const fn = t.function as
-        | { name: string; description?: string; parameters?: unknown }
-        | undefined;
+        { name: string; description?: string; parameters?: unknown } | undefined;
       if (!fn) return null;
       return {
         name: fn.name,
@@ -283,6 +282,26 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
 
   if (declarations.length === 0) return undefined;
   return [{ functionDeclarations: declarations }];
+}
+
+/**
+ * chat_completions `tool_choice` → Gemini `toolConfig`. A named function is
+ * forced with mode `ANY` limited to that one function.
+ */
+function toGoogleToolConfig(choice: unknown): Record<string, unknown> | undefined {
+  let functionCallingConfig: Record<string, unknown> | undefined;
+  if (choice === 'auto') functionCallingConfig = { mode: 'AUTO' };
+  else if (choice === 'none') functionCallingConfig = { mode: 'NONE' };
+  else if (choice === 'required') functionCallingConfig = { mode: 'ANY' };
+  else if (
+    isRecord(choice) &&
+    choice.type === 'function' &&
+    isRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    functionCallingConfig = { mode: 'ANY', allowedFunctionNames: [choice.function.name] };
+  }
+  return functionCallingConfig ? { functionCallingConfig } : undefined;
 }
 
 function applyResponseFormatToGenerationConfig(
@@ -311,6 +330,24 @@ function applyResponseFormatToGenerationConfig(
   genConfig.responseSchema = sanitizeSchema(jsonSchema.schema);
 }
 
+/**
+ * System prompts may arrive as content-part arrays (OpenAI SDK clients,
+ * translated Responses `developer` items), not only as plain strings.
+ */
+function systemContentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (part): part is { text: string } =>
+        isRecord(part) &&
+        typeof part.text === 'string' &&
+        (part.type === 'text' || part.type === 'input_text'),
+    )
+    .map((part) => part.text)
+    .join('\n');
+}
+
 /** Extracted thought_signature entries from a Gemini response. */
 export interface ExtractedSignature {
   toolCallId: string;
@@ -327,14 +364,15 @@ export function toGoogleRequest(
   const toolNamesById = buildToolCallNameMap(messages);
 
   // Extract system instruction
-  const systemMsgs = messages.filter((m) => m.role === 'system');
+  const isSystem = (m: OpenAIMessage) => m.role === 'system' || m.role === 'developer';
+  const systemMsgs = messages.filter(isSystem);
   const systemText = systemMsgs
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .map((m) => systemContentText(m.content))
     .filter(Boolean)
     .join('\n');
 
   for (const msg of messages) {
-    if (msg.role === 'system') continue;
+    if (isSystem(msg)) continue;
     const content = messageToContent(msg, toolNamesById, signatureLookup);
     if (content) contents.push(content);
   }
@@ -369,7 +407,11 @@ export function toGoogleRequest(
   }
 
   const tools = convertTools(body.tools as Record<string, unknown>[] | undefined);
-  if (tools) result.tools = tools;
+  if (tools) {
+    result.tools = tools;
+    const toolConfig = toGoogleToolConfig(body.tool_choice);
+    if (toolConfig) result.toolConfig = toolConfig;
+  }
 
   const genConfig: Record<string, unknown> = isRecord(body.generationConfig)
     ? cloneRecord(body.generationConfig)
@@ -447,17 +489,28 @@ export function fromGoogleResponse(
     choices: [
       { index: 0, message, finish_reason: mapFinishReason(candidate, toolCalls.length > 0) },
     ],
-    usage: usage
-      ? {
-          prompt_tokens: usage.promptTokenCount ?? 0,
-          completion_tokens: usage.candidatesTokenCount ?? 0,
-          total_tokens: usage.totalTokenCount ?? 0,
-          prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-          cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-          cache_creation_tokens: 0,
-        }
-      : undefined,
+    usage: usage ? toChatUsage(usage) : undefined,
     ...(extractedSignatures.length > 0 ? { _extractedSignatures: extractedSignatures } : {}),
+  };
+}
+
+/**
+ * Gemini counts thinking tokens in `thoughtsTokenCount`, apart from
+ * `candidatesTokenCount`, and bills them as output. Fold them into
+ * `completion_tokens` (and report them as `reasoning_tokens`, like OpenAI) so
+ * thinking models are not under-counted and under-priced.
+ */
+function toChatUsage(usage: Record<string, number>): Record<string, unknown> {
+  const reasoningTokens = usage.thoughtsTokenCount ?? 0;
+  const cachedTokens = usage.cachedContentTokenCount ?? 0;
+  return {
+    prompt_tokens: usage.promptTokenCount ?? 0,
+    completion_tokens: (usage.candidatesTokenCount ?? 0) + reasoningTokens,
+    total_tokens: usage.totalTokenCount ?? 0,
+    prompt_tokens_details: { cached_tokens: cachedTokens },
+    completion_tokens_details: { reasoning_tokens: reasoningTokens },
+    cache_read_tokens: cachedTokens,
+    cache_creation_tokens: 0,
   };
 }
 
@@ -560,14 +613,7 @@ export function transformGoogleStreamChunk(chunk: string, model: string): Google
       created: Math.floor(Date.now() / 1000),
       model,
       choices: [],
-      usage: {
-        prompt_tokens: usage.promptTokenCount ?? 0,
-        completion_tokens: usage.candidatesTokenCount ?? 0,
-        total_tokens: usage.totalTokenCount ?? 0,
-        prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-        cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-        cache_creation_tokens: 0,
-      },
+      usage: toChatUsage(usage),
     })}\n\n`;
   }
 

@@ -52,9 +52,10 @@ export const appConfig = registerAs('app', () => ({
   // routing during the post-SIGTERM deregistration lag (the rolling-deploy 5xx
   // spike). Must be shorter than Railway's `drainingSeconds`. 0 disables it.
   shutdownDrainMs: Number(process.env['SHUTDOWN_DRAIN_MS'] ?? 10000),
-  // When true, /api/v1/public/* endpoints expose aggregate stats without auth.
-  // Off by default — only Manifest Cloud's marketing homepage should enable it.
-  publicStatsEnabled: process.env['MANIFEST_PUBLIC_STATS'] === 'true',
+  // When true, /api/v1/public/error-pages serves the published error pages
+  // without auth. Off by default; only Manifest Cloud's marketing site uses it.
+  // The variable keeps its historical name so existing deployments stay on.
+  publicErrorPagesEnabled: process.env['MANIFEST_PUBLIC_STATS'] === 'true',
   // Optional instance-wide override. When unset, request recordings follow the
   // Cloud plan policy (Free 7 days, Pro 365 days); non-billing deployments use
   // the 365-day default.

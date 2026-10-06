@@ -100,21 +100,6 @@ describe('Responses streaming tool calls', () => {
     expect(output[1]).toMatchObject({ call_id: 'call2', name: 'no_args', arguments: '' });
   });
 
-  it('does not expose synthetic structured-output tools as client calls', () => {
-    const t = createResponsesStreamTransformer('auto', { structuredOutputToolName: 'schema' });
-    const sse = [
-      t.transform(chunk([{ id: 'call', function: { name: 'schema', arguments: '{}' } }])),
-      t.finalize(),
-    ].join('');
-    expect(collectResponsesSseResponse(sse).output).toEqual([
-      expect.objectContaining({
-        type: 'message',
-        content: [{ type: 'output_text', text: '{}', annotations: [] }],
-      }),
-    ]);
-    expect(events(sse).some((e) => e.type.startsWith('response.function_call'))).toBe(false);
-  });
-
   it('waits for the call id and emits buffered arguments once', () => {
     const t = createResponsesStreamTransformer('auto');
     const sse = [

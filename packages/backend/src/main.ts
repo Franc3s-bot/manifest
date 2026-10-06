@@ -6,9 +6,9 @@ import helmet from 'helmet';
 import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
-import { auth, mcpEnabled } from './auth/auth.instance';
+import { auth, mcpDisabledReason, mcpEnabled } from './auth/auth.instance';
 import { mcpOAuthResponse } from './auth/mcp-oauth-response';
-import { mountMcpDiscovery } from './mcp/mcp-discovery';
+import { mountMcpDiscovery, mountMcpUnavailable } from './mcp/mcp-discovery';
 import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
 import { httpErrorLogger } from './common/middleware/http-error-logger.middleware';
 import {
@@ -18,7 +18,6 @@ import {
   createProxyBodyBudgetMiddleware,
 } from './common/middleware/body-parser-limits';
 import {
-  PIVOT_CLAIM_CLOUD_ORIGIN,
   applyPivotClaimCors,
   applyPrivateNetworkAllow,
   buildCorsOptions,
@@ -62,9 +61,7 @@ export async function bootstrap() {
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
           imgSrc: ["'self'", 'data:'],
-          // The pivot waiting-list claim is posted cross-origin to the cloud
-          // from self-hosted dashboards; the CSP must allow that connection.
-          connectSrc: ["'self'", PIVOT_CLAIM_CLOUD_ORIGIN],
+          connectSrc: ["'self'"],
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameSrc,
@@ -233,10 +230,16 @@ export async function bootstrap() {
   expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
   expressApp.use(bodyParserErrorHandler);
 
-  // Only advertise MCP discovery when the MCP/OAuth plugins are registered:
-  // on a plain-HTTP origin they are skipped, and publishing resource metadata
-  // for an endpoint that cannot verify tokens would mislead clients.
-  if (mcpEnabled) mountMcpDiscovery(app);
+  // Both the OAuth discovery documents and the MCP module go together: with the
+  // Better Auth MCP plugin unloaded there is no authorization server to
+  // advertise, and publishing metadata for an endpoint that does not exist
+  // sends clients into a flow that cannot complete.
+  if (mcpEnabled) {
+    mountMcpDiscovery(app);
+  } else {
+    mountMcpUnavailable(app);
+    logger.warn(`Remote MCP server disabled: ${mcpDisabledReason}`);
+  }
 
   const port = Number(process.env['PORT'] ?? 3001);
   const host = process.env['BIND_ADDRESS'] ?? '127.0.0.1';

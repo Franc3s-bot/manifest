@@ -12,12 +12,12 @@ import {
 import { HeaderTier } from '../../entities/header-tier.entity';
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
+import { explicitRoute, readFallbackRoutes } from '../routing-core/route-helpers';
 import {
-  explicitRoute,
-  readFallbackRoutes,
-  unambiguousRoute,
-  routeMatches,
-} from '../routing-core/route-helpers';
+  describeUnresolvedFallback,
+  resolveFallbackRoutes,
+  resolveModelRoute,
+} from '../routing-core/resolve-model-route';
 import { assertStreamableResponseMode } from '../routing-core/response-mode-guard';
 
 export const RESERVED_HEADER_KEYS = new Set<string>([
@@ -207,16 +207,17 @@ export class HeaderTierService {
     providerKeyLabel?: string | null,
   ): Promise<HeaderTier> {
     const row = await this.findOrThrow(agentId, id);
-    // When the caller passes an explicit (provider, authType) the route is
-    // already unambiguous — skip the discovery fetch.
-    const explicit = explicitRoute(model, provider, authType, providerKeyLabel);
-    const route =
-      explicit ??
-      unambiguousRoute(
-        model,
-        await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
-        providerKeyLabel,
-      );
+    // Store the canonical route whichever published name the caller used. An
+    // explicit (provider, authType) the discovery list does not know is kept
+    // as given, as before.
+    const resolution = resolveModelRoute(
+      model,
+      await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
+      { provider, authType, keyLabel: providerKeyLabel },
+    );
+    const route = resolution.ok
+      ? resolution.route
+      : explicitRoute(model, provider, authType, providerKeyLabel);
     assertStreamableResponseMode(
       row.response_mode,
       `custom tier "${row.name}"`,
@@ -295,45 +296,11 @@ export class HeaderTierService {
   ): Promise<ModelRoute[] | null> {
     if (models.length === 0) return null;
     const available = await this.discoveryService.getModelsForAgent(tenantId, agentId);
-    if (routes && routes.length === models.length) {
-      const aligned = routes.every((r, i) => r.model === models[i]);
-      const pool = [...(storedRoutes ?? [])];
-      const validated =
-        aligned &&
-        routes.every((r) => {
-          const kept = pool.findIndex((s) => routeMatches(s, r));
-          if (kept >= 0) {
-            pool.splice(kept, 1);
-            return true;
-          }
-          return available.some(
-            (m) =>
-              m.id === r.model &&
-              m.provider.toLowerCase() === r.provider.toLowerCase() &&
-              m.authType === r.authType,
-          );
-        });
-      if (validated) return routes;
+    const resolution = resolveFallbackRoutes(models, available, routes, storedRoutes);
+    if (!resolution.ok) {
+      throw new BadRequestException(describeUnresolvedFallback(resolution.model));
     }
-    const pool = [...(storedRoutes ?? [])];
-    const resolved: ModelRoute[] = [];
-    for (const m of models) {
-      const kept = pool.findIndex((s) => s.model === m);
-      if (kept >= 0) {
-        resolved.push(pool[kept]);
-        pool.splice(kept, 1);
-        continue;
-      }
-      const route = unambiguousRoute(m, available);
-      if (!route) {
-        throw new BadRequestException(
-          `Cannot resolve fallback model "${m}" to a single connected provider. ` +
-            `Pass an explicit (provider, authType, model) route, or connect exactly one provider that offers this model.`,
-        );
-      }
-      resolved.push(route);
-    }
-    return resolved;
+    return resolution.routes;
   }
 
   private async findOrThrow(agentId: string, id: string): Promise<HeaderTier> {

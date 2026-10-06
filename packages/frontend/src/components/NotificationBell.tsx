@@ -12,7 +12,7 @@ import '../styles/notifications-bell.css';
 import { A } from '@solidjs/router';
 import { getWorkspaceAutofixStatus } from '../services/api/analytics.js';
 import { getAgents } from '../services/api.js';
-import { messagePing, agentPing, routingPing } from '../services/sse.js';
+import { agentPing, routingPing } from '../services/sse.js';
 
 const READ_KEY = 'manifest_notif_read';
 
@@ -55,13 +55,17 @@ const NotificationBell: Component = () => {
     onCleanup(() => document.removeEventListener('mousedown', handler));
   }
 
-  // Poll every 15s to catch autofix toggle changes (no SSE for this mutation)
+  // Poll once a minute to catch autofix toggle changes (no SSE for this
+  // mutation). The status only changes on a toggle, never on traffic, so it
+  // must not key on messagePing: every gateway request fires that ping, and
+  // refetching on each one made this bell the busiest dashboard endpoint in
+  // production, competing with the Overview for the same database pool.
   const [tick, setTick] = createSignal(0);
-  const interval = setInterval(() => setTick((n) => n + 1), 15_000);
+  const interval = setInterval(() => setTick((n) => n + 1), 60_000);
   onCleanup(() => clearInterval(interval));
 
   const [status] = createResource(
-    () => ({ _a: agentPing(), _m: messagePing(), _r: routingPing(), _t: tick() }),
+    () => ({ _a: agentPing(), _r: routingPing(), _t: tick() }),
     async () => {
       try {
         return await getWorkspaceAutofixStatus();

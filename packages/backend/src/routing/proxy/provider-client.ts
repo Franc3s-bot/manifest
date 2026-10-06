@@ -15,7 +15,9 @@ import { isAnthropicHost, mergeAnthropicBeta } from './anthropic-beta';
 import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
 import {
   applyAnthropicAutomaticCacheControl,
+  applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  hasMessageCacheControl,
   toGoogleRequest,
   toAnthropicRequest,
   toResponsesRequest,
@@ -48,6 +50,8 @@ import { qualifyChatGptResponse } from './chatgpt-response-qualifier';
 import { isProviderAvailableForDeployment } from '../../common/utils/provider-availability';
 import { ManifestError } from '../../common/errors/manifest-error';
 import { MANAGED_FREE_PROVIDER_BY_ID } from '../../common/constants/managed-free-providers';
+import { isBedrockProvider } from '../bedrock-region';
+import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 
 export interface ForwardResult {
   response: Response;
@@ -82,8 +86,6 @@ export interface ForwardResult {
    * passing the inner body to the standard Google converters.
    */
   isCodeAssist?: boolean;
-  /** Internal: Anthropic synthetic tool used to emulate Responses structured output. */
-  structuredOutputToolName?: string;
   /** Internal: original Responses text.format metadata for synthesized Responses bodies. */
   responsesTextFormat?: Record<string, unknown>;
   responsesToolNames?: ResponsesToolNames;
@@ -116,7 +118,6 @@ interface BuiltProviderRequest {
   url: string;
   headers: Record<string, string>;
   requestBody: Record<string, unknown>;
-  structuredOutputToolName?: string;
 }
 
 /**
@@ -149,12 +150,35 @@ const COPILOT_RESPONSES_ENDPOINTS = new Set(['/responses', 'ws:/responses']);
  * Forwarding a beta header the caller already chose is additive: the request
  * either keeps working or starts working. Injecting a cache breakpoint edits
  * the body, changes prompt-caching behaviour and moves what the tenant is
- * billed. Extending that to custom-Anthropic endpoints is a real behaviour
- * change for people who do not get it today, so it belongs in its own change
- * with its own evidence, not folded into header forwarding.
+ * billed. Top-level automatic caching is an Anthropic API feature, so every
+ * other Anthropic-format upstream (Bedrock, custom rows, including ones
+ * pointed at Anthropic) gets an explicit breakpoint on the last message
+ * instead, which is part of the Messages API itself (#3023).
  */
 function shouldApplyAnthropicAutomaticCacheControl(endpointKey: string): boolean {
   return endpointKey === 'anthropic';
+}
+
+/**
+ * The last-message breakpoint costs a cache write, so add it only where it
+ * pays back: a Claude model (the family that caches only where marked), a
+ * caller that has not placed its own message breakpoints, and a request that
+ * is part of a conversation. A lone message without tools is usually a
+ * one-shot call (a title, a summary) whose cache would never be read.
+ */
+function shouldAddConversationCacheBreakpoint(
+  model: string,
+  apiMode: ForwardOptions['apiMode'],
+  inboundBody: Record<string, unknown>,
+  requestBody: Record<string, unknown>,
+): boolean {
+  if (!/claude/i.test(model)) return false;
+  // Only native Messages callers reach the upstream with their own message
+  // breakpoints; translating Chat Completions drops them.
+  if (apiMode === 'messages' && hasMessageCacheControl(inboundBody)) return false;
+  const { messages, tools } = requestBody;
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  return hasTools || (Array.isArray(messages) && messages.length > 1);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -227,23 +251,6 @@ function responsesTextFormat(
     out.description = format.description;
   }
   return out;
-}
-
-function isStructuredResponseFormat(responseFormat: unknown): boolean {
-  return (
-    isRecord(responseFormat) &&
-    (responseFormat.type === 'json_object' || responseFormat.type === 'json_schema')
-  );
-}
-
-function structuredOutputToolName(
-  requestSource: Record<string, unknown>,
-  requestBody: Record<string, unknown>,
-): string | undefined {
-  if (!isStructuredResponseFormat(requestSource.response_format)) return undefined;
-  const toolChoice = requestBody.tool_choice;
-  if (!isRecord(toolChoice) || toolChoice.type !== 'tool') return undefined;
-  return typeof toolChoice.name === 'string' ? toolChoice.name : undefined;
 }
 
 function buildPromptCacheKey(sessionKey: string): string {
@@ -502,7 +509,7 @@ export class ProviderClient {
         responsesTextFormat: textFormat,
       };
     }
-    const { url, headers, requestBody, structuredOutputToolName } = this.buildRequest({
+    const { url, headers, requestBody } = this.buildRequest({
       endpoint,
       endpointKey,
       provider,
@@ -578,7 +585,6 @@ export class ProviderClient {
         isChatGpt,
         isResponses,
         isCodeAssist,
-        structuredOutputToolName,
         responsesTextFormat: textFormat,
         responsesToolNames:
           opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
@@ -639,7 +645,7 @@ export class ProviderClient {
       if (override) resolved = override;
     }
     if (resolved === 'bedrock') {
-      resolved = resolveBedrockEndpointKey(model);
+      resolved = resolveBedrockEndpointKey(model, apiMode);
     }
     if (resolved === 'qwen-subscription') {
       const bareQwenModel = stripVendorPrefix(model);
@@ -865,14 +871,12 @@ export class ProviderClient {
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
             });
-      const syntheticToolName =
-        ctx.apiMode === 'responses'
-          ? structuredOutputToolName(requestSource, requestBody)
-          : undefined;
       requestBody.model = bareModel;
       if (stream) requestBody.stream = true;
       if (shouldApplyAnthropicAutomaticCacheControl(endpointKey)) {
         applyAnthropicAutomaticCacheControl(requestBody);
+      } else if (shouldAddConversationCacheBreakpoint(bareModel, ctx.apiMode, body, requestBody)) {
+        applyAnthropicLastMessageCacheControl(requestBody);
       }
       return {
         url: `${endpoint.baseUrl}${endpoint.buildPath(bareModel)}`,
@@ -895,7 +899,6 @@ export class ProviderClient {
             : undefined,
         ),
         requestBody,
-        structuredOutputToolName: syntheticToolName,
       };
     }
 
@@ -942,7 +945,7 @@ export class ProviderClient {
               mapReasoningEffort:
                 endpointKey === 'openai-subscription' || endpointKey === 'openai-responses',
             });
-      if (endpointKey === 'xai-responses') {
+      if (endpointKey === 'xai-responses' || endpoint.acceptsPromptCacheKey) {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
       }
       if (endpointKey === 'openai-responses' && ctx.apiMode === 'messages') {
@@ -984,7 +987,12 @@ export class ProviderClient {
     }
 
     // OpenAI-compatible path (default)
-    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model);
+    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model, {
+      // GPT models on Bedrock Runtime reject `max_tokens`.
+      requireMaxCompletionTokens:
+        isBedrockProvider(ctx.provider) &&
+        getBedrockRuntimeCapabilities(ctx.model)?.chatTokenParameter === 'max_completion_tokens',
+    });
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =
         typeof sanitized.stream_options === 'object' && sanitized.stream_options !== null
@@ -1004,6 +1012,9 @@ export class ProviderClient {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'mistral') {
+      applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
+    }
+    if (endpoint.acceptsPromptCacheKey) {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'moonshot') {
@@ -1043,7 +1054,6 @@ export class ProviderClient {
       isChatGpt: boolean;
       isResponses?: boolean;
       isCodeAssist?: boolean;
-      structuredOutputToolName?: string;
       responsesTextFormat?: Record<string, unknown>;
       responsesToolNames?: ResponsesToolNames;
     },
