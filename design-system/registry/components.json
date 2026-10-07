@@ -2728,6 +2728,7 @@
         "playground-column__placeholder",
         "playground-column__remove",
         "playground-column__response",
+        "playground-column__route",
         "playground-column__skeleton",
         "playground-column__title",
         "playground-column__title--readonly",
@@ -2768,6 +2769,43 @@
         "playground-headers__rows",
         "playground-headers__title",
         "playground-headers__warning"
+      ],
+      "files": [
+        "playground.css"
+      ]
+    },
+    "playground-media": {
+      "classes": [
+        "playground-media",
+        "playground-media--images",
+        "playground-media__image",
+        "playground-media__spinner",
+        "playground-media__status",
+        "playground-media__video"
+      ],
+      "files": [
+        "playground.css"
+      ]
+    },
+    "playground-options": {
+      "classes": [
+        "playground-options",
+        "playground-options__attach",
+        "playground-options__caret",
+        "playground-options__caret--open",
+        "playground-options__field",
+        "playground-options__field--wide",
+        "playground-options__file-input",
+        "playground-options__item",
+        "playground-options__kind",
+        "playground-options__list",
+        "playground-options__name",
+        "playground-options__panel",
+        "playground-options__remove",
+        "playground-options__row",
+        "playground-options__thumb",
+        "playground-options__toggle",
+        "playground-options__url"
       ],
       "files": [
         "playground.css"
@@ -2817,6 +2855,7 @@
         "playground-recent__menu-anchor",
         "playground-recent__menu-backdrop",
         "playground-recent__menu-item",
+        "playground-recent__menu-item--danger",
         "playground-recent__more",
         "playground-recent__new",
         "playground-recent__new-icon",
@@ -2824,6 +2863,7 @@
         "playground-recent__new-left",
         "playground-recent__new-shortcut",
         "playground-recent__prompt",
+        "playground-recent__rename",
         "playground-recent__title",
         "playground-recent__toggle"
       ],
@@ -5342,8 +5382,8 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 331,
-    "classes": 1753,
+    "blocks": 333,
+    "classes": 1779,
     "canonicalRules": 50,
     "ghostRules": 50
   }
