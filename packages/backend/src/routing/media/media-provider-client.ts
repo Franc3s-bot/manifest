@@ -213,8 +213,9 @@ export class MediaProviderClient {
   private async forwardOpenAiImage(opts: MediaForwardOptions): Promise<MediaForwardResult> {
     const base = OPENAI_IMAGE_BASES[opts.provider.toLowerCase()];
     if (!base) return this.unsupported(opts, 'image');
+    // The OpenAI images API takes the model in the body; keep every caller
+    // field (`n`, `size`, `quality`, `response_format`, …) as-is.
     const body = { ...opts.body };
-    delete body.model;
     const res = await this.request('POST', base, opts.apiKey, body, opts.signal, IMAGE_TIMEOUT_MS);
     return {
       ok: res.ok,

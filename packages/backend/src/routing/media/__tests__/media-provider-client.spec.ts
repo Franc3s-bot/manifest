@@ -207,4 +207,34 @@ describe('MediaProviderClient', () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
   });
+
+  it('passes the model and caller fields through to an OpenAI-compatible image API', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ created: 1, data: [{ url: 'u' }] }));
+
+    const result = await client.forward({
+      provider: 'openai',
+      apiKey: 'k',
+      model: 'gpt-image-1',
+      apiMode: 'images',
+      body: { model: 'gpt-image-1', prompt: 'x', n: 2, size: '1024x1024' },
+    });
+
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://api.openai.com/v1/images/generations');
+    const sent = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(sent).toEqual({ model: 'gpt-image-1', prompt: 'x', n: 2, size: '1024x1024' });
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not support video for a non-Agnes provider', async () => {
+    const result = await client.forward({
+      provider: 'openai',
+      apiKey: 'k',
+      model: 'sora',
+      apiMode: 'videos',
+      body: { prompt: 'x' },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
