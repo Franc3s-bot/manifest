@@ -1490,3 +1490,219 @@
   white-space: nowrap;
   border: 0;
 }
+
+/* ── Resolved route badge (synthetic auto-* models) ─────────────── */
+
+.playground-column__route {
+  flex: 0 1 auto;
+  max-width: 140px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground, var(--foreground)));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Generated media ────────────────────────────────────────────── */
+
+.playground-media {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.playground-media--images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.playground-media__image {
+  display: block;
+  border-radius: calc(var(--radius) - 2px);
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  aspect-ratio: 1 / 1;
+}
+
+.playground-media__image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.playground-media__video {
+  width: 100%;
+  max-height: 320px;
+  border-radius: calc(var(--radius) - 2px);
+  background: #000;
+}
+
+.playground-media__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+}
+
+.playground-media__spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid hsl(var(--muted));
+  border-top-color: hsl(var(--primary));
+  animation: playground-media-spin 0.8s linear infinite;
+}
+
+@keyframes playground-media-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Run options (attachments + media controls) ─────────────────── */
+
+.playground-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.playground-options__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.playground-options__attach,
+.playground-options__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast, 120ms ease);
+}
+
+.playground-options__attach:hover,
+.playground-options__toggle:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
+.playground-options__attach:disabled,
+.playground-options__toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.playground-options__file-input {
+  display: none;
+}
+
+.playground-options__thumb {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+}
+
+.playground-options__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.playground-options__thumb-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 0 0 0 6px;
+  background: hsl(var(--foreground) / 0.7);
+  color: hsl(var(--background));
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.playground-options__caret {
+  transition: transform var(--transition-fast, 120ms ease);
+}
+
+.playground-options__caret--open {
+  transform: rotate(180deg);
+}
+
+.playground-options__panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  background: hsl(var(--muted) / 0.4);
+}
+
+.playground-options__field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+}
+
+.playground-options__field--wide {
+  grid-column: 1 / -1;
+}
+
+.playground-options__field input,
+.playground-options__field select {
+  padding: 4px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+}
+
+/* ── History rename / delete ────────────────────────────────────── */
+
+.playground-recent__rename {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) - 2px);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 13px;
+}
+
+.playground-recent__menu-item--danger {
+  color: hsl(var(--destructive, 0 84% 60%));
+}

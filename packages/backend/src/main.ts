@@ -13,6 +13,7 @@ import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
 import { httpErrorLogger } from './common/middleware/http-error-logger.middleware';
 import {
   API_BODY_LIMIT,
+  PLAYGROUND_BODY_LIMIT,
   PROXY_BODY_LIMIT,
   bodyParserErrorHandler,
   createProxyBodyBudgetMiddleware,
@@ -226,6 +227,10 @@ export async function bootstrap() {
   expressApp.use('/v1', createProxyBodyBudgetMiddleware());
   expressApp.use('/v1', express.json({ limit: PROXY_BODY_LIMIT }));
   expressApp.use('/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
+  // The Playground run endpoint carries inline image attachments / reference
+  // images as data URIs, so it gets its own larger parser. express.json skips
+  // a body that is already parsed, so the global parser below is a no-op here.
+  expressApp.use('/api/v1/playground/run', express.json({ limit: PLAYGROUND_BODY_LIMIT }));
   expressApp.use(express.json({ limit: API_BODY_LIMIT }));
   expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
   expressApp.use(bodyParserErrorHandler);

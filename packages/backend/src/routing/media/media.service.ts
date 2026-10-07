@@ -56,6 +56,28 @@ export interface MediaCallInput {
 export interface MediaCallResult {
   status: number;
   body: unknown;
+  /**
+   * The concrete route the request resolved to. A synthetic `auto-{tier}`
+   * request picks a real provider/model at request time; callers (the
+   * Playground) surface this so the operator sees which model served it.
+   * Absent when resolution failed before a route was chosen.
+   */
+  resolvedRoute?: MediaResolvedRoute | null;
+  /**
+   * Cost in USD the run was billed. Null for an asynchronous video create
+   * (unknown until the task completes) and when pricing is unknown.
+   */
+  costUsd?: number | null;
+}
+
+/** The concrete provider/model a media request resolved to. */
+export interface MediaResolvedRoute {
+  provider: string;
+  model: string;
+  tier: string;
+  reason: string;
+  headerTierName?: string;
+  headerTierColor?: string;
 }
 
 interface ResolvedMediaRoute {
@@ -305,7 +327,12 @@ export class MediaService {
         }).catch((e) => this.logger.warn(`Failed to attach media task id: ${e}`));
       }
 
-      return { status: forward.status, body: forward.body };
+      return {
+        status: forward.status,
+        body: forward.body,
+        resolvedRoute: this.toResolvedRoute(resolved),
+        costUsd: isVideo ? null : costUsd,
+      };
     } catch (err) {
       return this.recordManifestFailure(err, {
         ctx,
@@ -393,12 +420,24 @@ export class MediaService {
         status.videoStatus ?? 'queued',
         costUsd,
       ).catch((e) => this.logger.warn(`Failed to finalize video task: ${e}`));
+      return { status: status.status, body: status.body, costUsd };
     }
 
     return { status: status.status, body: status.body };
   }
 
   /* ── Resolution ─────────────────────────────────────────────────── */
+
+  private toResolvedRoute(resolved: ResolvedMediaRoute): MediaResolvedRoute {
+    return {
+      provider: resolved.route.provider,
+      model: resolved.route.model,
+      tier: resolved.tier,
+      reason: resolved.reason,
+      ...(resolved.headerTierName ? { headerTierName: resolved.headerTierName } : {}),
+      ...(resolved.headerTierColor ? { headerTierColor: resolved.headerTierColor } : {}),
+    };
+  }
 
   private async resolveRoute(
     ctx: IngestionContext,

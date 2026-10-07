@@ -3,6 +3,13 @@ import * as express from 'express';
 export const API_BODY_LIMIT = '1mb';
 export const PROXY_BODY_LIMIT = '512mb';
 export const PROXY_BODY_LIMIT_BYTES = 512 * 1024 * 1024;
+/**
+ * The Playground run endpoint accepts inline image attachments (multimodal
+ * prompts) and media reference images as data URIs, so it needs far more than
+ * the regular Manifest API limit. Scoped to that one route so every other
+ * dashboard endpoint stays small.
+ */
+export const PLAYGROUND_BODY_LIMIT = '64mb';
 
 interface BodyParserError extends Error {
   status?: number;

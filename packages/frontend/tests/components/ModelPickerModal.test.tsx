@@ -1630,5 +1630,61 @@ describe('ModelPickerModal', () => {
       expect(container.textContent).not.toContain('GPT-4o 199');
     });
   });
+});
 
+describe('ModelPickerModal — synthetic auto-* models', () => {
+  const syntheticModel: AvailableModel = {
+    model_name: 'auto-standard',
+    provider: 'manifest',
+    auth_type: 'api_key',
+    input_price_per_token: null,
+    output_price_per_token: null,
+    context_window: 200000,
+    capability_reasoning: false,
+    capability_code: false,
+    quality_score: 0,
+    display_name: 'Auto · Standard',
+    synthetic: true,
+    tier_name: 'Standard',
+  };
+
+  it('groups synthetic models under a dedicated section and keeps them selectable', async () => {
+    const onSelect = vi.fn();
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="default"
+        models={[...baseModels, syntheticModel]}
+        tiers={[]}
+        connectedProviders={apiKeyOnly}
+        onSelect={onSelect}
+        onClose={vi.fn()}
+      />
+    ));
+
+    await waitFor(() => expect(container.textContent).toContain('Synthetic (auto)'));
+    expect(container.textContent).toContain('Auto · Standard');
+
+    const row = Array.from(container.querySelectorAll('button')).find((el) =>
+      el.textContent?.includes('Auto · Standard'),
+    )!;
+    fireEvent.click(row);
+
+    expect(onSelect).toHaveBeenCalledWith('default', 'auto-standard', 'manifest', 'api_key');
+  });
+
+  it('hides synthetic models when no providers are connected (they need no connection)', async () => {
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="default"
+        models={[syntheticModel]}
+        tiers={[]}
+        connectedProviders={[]}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+
+    // With no connected providers the picker shows only synthetic entries.
+    await waitFor(() => expect(container.textContent).toContain('Auto · Standard'));
+  });
 });

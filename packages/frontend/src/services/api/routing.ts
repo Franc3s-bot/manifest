@@ -373,6 +373,12 @@ export interface AvailableModel {
   quality_score: number;
   display_name?: string | null;
   provider_display_name?: string | null;
+  /** True for a synthetic `auto-{tier}` model listed only by the Playground. */
+  synthetic?: boolean;
+  /** Header-tier name for a synthetic model. */
+  tier_name?: string | null;
+  /** Header-tier badge color for a synthetic model. */
+  tier_color?: string | null;
 }
 
 export function getAvailableModels(agentName: string) {

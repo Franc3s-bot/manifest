@@ -7,6 +7,9 @@ import type {
   PlaygroundHistoryColumn,
   PlaygroundHistoryRunDetail,
   PlaygroundHistoryRunSummary,
+  PlaygroundMediaOutput,
+  PlaygroundOutputKind,
+  PlaygroundResolvedRoute,
 } from 'manifest-shared';
 import { PlaygroundRun } from '../entities/playground-run.entity';
 import { PlaygroundColumn } from '../entities/playground-column.entity';
@@ -33,6 +36,12 @@ export interface SaveColumnInput {
     cost: number | null;
     durationMs: number;
   } | null;
+  /** Output modality of the column. Defaults to `text`. */
+  kind?: PlaygroundOutputKind;
+  /** Generated media for an image/video column. */
+  media?: PlaygroundMediaOutput | null;
+  /** Concrete route that served the column (synthetic → real model). */
+  route?: PlaygroundResolvedRoute | null;
 }
 
 /** Soft cap on stored runs per (tenant, agent) pair; oldest pruned on insert. */
@@ -73,6 +82,9 @@ export class PlaygroundHistoryService {
         cost_usd: input.metrics?.cost ?? null,
         duration_ms: input.metrics?.durationMs ?? null,
         position: input.position,
+        output_kind: input.kind ?? 'text',
+        media: (input.media ?? null) as never,
+        route: (input.route ?? null) as never,
         created_at: new Date().toISOString(),
       });
     } catch (err) {
@@ -217,6 +229,9 @@ export class PlaygroundHistoryService {
               }
             : null,
           position: c.position,
+          kind: (c.output_kind as PlaygroundHistoryColumn['kind']) ?? 'text',
+          media: (c.media as PlaygroundHistoryColumn['media']) ?? null,
+          route: (c.route as PlaygroundHistoryColumn['route']) ?? null,
         };
       }),
     };
@@ -277,6 +292,118 @@ export class PlaygroundHistoryService {
     }
 
     return result.raw[0].best_column_id ?? null;
+  }
+
+  /**
+   * Delete a run and every column under it. Scoped by tenant + agent so a
+   * guessed id from another tenant is indistinguishable from a missing one.
+   */
+  async deleteRun(
+    tenantId: string | null,
+    agentId: string,
+    runId: string,
+  ): Promise<{ deleted: boolean }> {
+    const result = await this.runRepo.delete({
+      id: runId,
+      tenant_id: tenantId ?? undefined,
+      agent_id: agentId,
+    });
+    if (!result.affected) {
+      throw new NotFoundException(`Playground run "${runId}" not found`);
+    }
+    return { deleted: true };
+  }
+
+  /**
+   * Delete one column of a run. When it was the last column, the now-empty run
+   * row is removed too so the history drawer never shows an empty entry.
+   */
+  async deleteColumn(
+    tenantId: string | null,
+    agentId: string,
+    columnId: string,
+  ): Promise<{ deleted: boolean; runDeleted: boolean }> {
+    const column = await this.columnRepo.findOne({ where: { id: columnId } });
+    if (!column) throw new NotFoundException(`Playground column "${columnId}" not found`);
+    const run = await this.runRepo.findOne({
+      where: { id: column.playground_run_id, tenant_id: tenantId ?? undefined, agent_id: agentId },
+    });
+    if (!run) throw new NotFoundException(`Playground column "${columnId}" not found`);
+
+    await this.columnRepo.delete({ id: columnId });
+    const remaining = await this.columnRepo.count({
+      where: { playground_run_id: run.id },
+    });
+    if (remaining === 0) {
+      await this.runRepo.delete({ id: run.id });
+      return { deleted: true, runDeleted: true };
+    }
+    return { deleted: true, runDeleted: false };
+  }
+
+  /** Rename a run (its prompt doubles as the history title). */
+  async renameRun(
+    tenantId: string | null,
+    agentId: string,
+    runId: string,
+    prompt: string,
+  ): Promise<{ prompt: string }> {
+    const trimmed = prompt.trim().slice(0, 10_000);
+    if (!trimmed) throw new NotFoundException(`Playground run "${runId}" not found`);
+    const result = await this.runRepo.update(
+      { id: runId, tenant_id: tenantId ?? undefined, agent_id: agentId },
+      { prompt: trimmed },
+    );
+    if (!result.affected) {
+      throw new NotFoundException(`Playground run "${runId}" not found`);
+    }
+    return { prompt: trimmed };
+  }
+
+  /**
+   * Whether a column belongs to a run owned by this tenant + agent. Used to
+   * authorize a video-status callback that finalizes a persisted column.
+   */
+  async columnBelongsToAgent(
+    tenantId: string | null,
+    agentId: string,
+    columnId: string,
+  ): Promise<boolean> {
+    const column = await this.columnRepo.findOne({
+      where: { id: columnId },
+      select: ['id', 'playground_run_id'],
+    });
+    if (!column) return false;
+    const run = await this.runRepo.findOne({
+      where: { id: column.playground_run_id, tenant_id: tenantId ?? undefined, agent_id: agentId },
+      select: ['id'],
+    });
+    return !!run;
+  }
+
+  /**
+   * Patch a persisted column after an async media task settles (video). The
+   * column is looked up by id only — the caller already resolved it through
+   * the tenant-scoped run.
+   */
+  async updateColumnMedia(
+    columnId: string,
+    update: {
+      media?: PlaygroundMediaOutput | null;
+      status?: 'success' | 'error';
+      costUsd?: number | null;
+      durationMs?: number | null;
+    },
+  ): Promise<void> {
+    const patch: Partial<PlaygroundColumn> = {};
+    if (update.media !== undefined) {
+      patch.media = update.media ?? null;
+    }
+    if (update.status !== undefined) patch.status = update.status;
+    if (update.costUsd !== undefined) patch.cost_usd = update.costUsd;
+    if (update.durationMs !== undefined) patch.duration_ms = update.durationMs;
+    if (Object.keys(patch).length === 0) return;
+    await this.columnRepo.update({ id: columnId }, patch as never);
   }
 
   private async pruneOldRuns(tenantId: string, agentId: string): Promise<void> {

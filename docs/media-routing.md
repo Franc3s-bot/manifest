@@ -186,3 +186,25 @@ Key points:
 - Provider-attempt payload recording (`attempt_recording`) is not yet wired for
   media: image base64 can be large. The media Request/Attempt rows, cost, and
   attribution are recorded; the raw payload is not.
+
+## Playground
+
+The dashboard Playground (`packages/backend/src/playground`) reuses this
+surface for its media columns instead of calling providers directly:
+
+- `POST /api/v1/playground/run` branches on the selected model's output
+  modality. Text runs keep the chat-completions path; image / video runs
+  delegate to `MediaService.handle`, so routing (synthetic `auto-*` tiers,
+  header tiers, direct), credentials, recording, and pricing are identical to
+  the public `/v1/images/generations` and `/v1/videos` endpoints. The result
+  reaches the client over the same SSE stream, with a terminal `done` event
+  carrying `kind`, `media`, and the resolved `route`.
+- `GET /api/v1/playground/models` lists discovered models plus one synthetic
+  `auto-{tier}` entry per enabled header tier, so a harness's tier behaviour can
+  be exercised without a harness. A synthetic run reports the concrete
+  provider/model that served it.
+- `GET /api/v1/playground/videos/{taskId}` polls an asynchronous video task and
+  finalizes the persisted playground column on a terminal status.
+- Media runs count against the same plan request limit and rate limits as text
+  (they are Manifest Requests like any other), and `MediaService` owns their
+  recording — the Playground does not double-record them.

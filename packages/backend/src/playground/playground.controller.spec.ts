@@ -14,27 +14,45 @@ const AGENT = { id: 'agent-1', tenant_id: 'tenant-1', name: 'Playground' };
 describe('PlaygroundController', () => {
   let controller: PlaygroundController;
   let runStream: jest.Mock;
+  let listModels: jest.Mock;
+  let videoStatus: jest.Mock;
   let listRuns: jest.Mock;
   let getRun: jest.Mock;
   let toggleStar: jest.Mock;
   let setBestColumn: jest.Mock;
+  let deleteRun: jest.Mock;
+  let deleteColumn: jest.Mock;
+  let renameRun: jest.Mock;
   let playgroundAgentResolve: jest.Mock;
 
   beforeEach(async () => {
     runStream = jest.fn();
+    listModels = jest.fn();
+    videoStatus = jest.fn();
     listRuns = jest.fn();
     getRun = jest.fn();
     toggleStar = jest.fn();
     setBestColumn = jest.fn();
+    deleteRun = jest.fn();
+    deleteColumn = jest.fn();
+    renameRun = jest.fn();
     playgroundAgentResolve = jest.fn().mockResolvedValue(AGENT);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [PlaygroundController],
       providers: [
-        { provide: PlaygroundService, useValue: { runStream } },
+        { provide: PlaygroundService, useValue: { runStream, listModels, videoStatus } },
         {
           provide: PlaygroundHistoryService,
-          useValue: { listRuns, getRun, toggleStar, setBestColumn },
+          useValue: {
+            listRuns,
+            getRun,
+            toggleStar,
+            setBestColumn,
+            deleteRun,
+            deleteColumn,
+            renameRun,
+          },
         },
         {
           provide: PlaygroundAgentService,
@@ -136,6 +154,51 @@ describe('PlaygroundController', () => {
       const err = new Error('cross-run');
       setBestColumn.mockRejectedValue(err);
       await expect(controller.setBest(CTX, { runId: 'r1' }, { columnId: 'bad' })).rejects.toBe(err);
+    });
+  });
+
+  describe('GET /playground/models', () => {
+    it('delegates to PlaygroundService.listModels', async () => {
+      listModels.mockResolvedValue([{ model_name: 'auto-standard', synthetic: true }]);
+      const out = await controller.listModels(CTX);
+      expect(listModels).toHaveBeenCalledWith(CTX);
+      expect(out).toHaveLength(1);
+    });
+  });
+
+  describe('GET /playground/videos/:taskId', () => {
+    it('forwards the task id and optional column id', async () => {
+      videoStatus.mockResolvedValue({ status: 200, media: { kind: 'video' }, costUsd: null });
+      const out = await controller.videoStatus(CTX, 'task-1', 'col-1');
+      expect(videoStatus).toHaveBeenCalledWith(CTX, 'task-1', 'col-1');
+      expect(out.status).toBe(200);
+    });
+  });
+
+  describe('PATCH /playground/runs/:runId', () => {
+    it('renames the run via the resolved agent', async () => {
+      renameRun.mockResolvedValue({ prompt: 'new title' });
+      const out = await controller.renameRun(CTX, { runId: 'r1' }, { prompt: 'new title' });
+      expect(renameRun).toHaveBeenCalledWith('tenant-1', 'agent-1', 'r1', 'new title');
+      expect(out).toEqual({ prompt: 'new title' });
+    });
+  });
+
+  describe('DELETE /playground/runs/:runId', () => {
+    it('deletes the run via the resolved agent', async () => {
+      deleteRun.mockResolvedValue({ deleted: true });
+      const out = await controller.deleteRun(CTX, { runId: 'r1' });
+      expect(deleteRun).toHaveBeenCalledWith('tenant-1', 'agent-1', 'r1');
+      expect(out).toEqual({ deleted: true });
+    });
+  });
+
+  describe('DELETE /playground/runs/:runId/columns/:columnId', () => {
+    it('deletes the column via the resolved agent', async () => {
+      deleteColumn.mockResolvedValue({ deleted: true, runDeleted: false });
+      const out = await controller.deleteColumn(CTX, { runId: 'r1', columnId: 'col-1' });
+      expect(deleteColumn).toHaveBeenCalledWith('tenant-1', 'agent-1', 'col-1');
+      expect(out).toEqual({ deleted: true, runDeleted: false });
     });
   });
 });

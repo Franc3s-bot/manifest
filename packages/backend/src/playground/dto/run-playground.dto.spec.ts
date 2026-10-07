@@ -42,7 +42,9 @@ describe('RunPlaygroundDto', () => {
       const errors = await validate(dto);
       expect(errors.length).toBeGreaterThan(0);
       const flat = JSON.stringify(errors);
-      expect(flat).toContain('exactly one of `messages` or `rawRequestBody` must be provided');
+      expect(flat).toContain(
+        'exactly one of `messages`, `prompt`, or `rawRequestBody` must be provided',
+      );
     });
 
     // The XOR constraint is attached to `model` (a non-optional field)

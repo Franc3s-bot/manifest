@@ -1,11 +1,23 @@
 import { createRoot, createSignal } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
-import type { AuthType, AvailableModel, RoutingProvider } from './api.js';
+import type {
+  AuthType,
+  AvailableModel,
+  PlaygroundContentPart,
+  PlaygroundMediaOutput,
+  PlaygroundOutputKind,
+  PlaygroundResolvedRoute,
+  PlaygroundVideoOutput,
+  RoutingProvider,
+} from './api.js';
 import {
   streamPlayground,
   setPlaygroundRunBest,
+  deletePlaygroundColumn,
+  getPlaygroundVideoStatus,
   type PlaygroundHistoryRunDetail,
   type PlaygroundRunResult,
+  type RunPlaygroundRequest,
 } from './api.js';
 import { resolveProviderId, inferProviderFromModel } from './routing-utils.js';
 
@@ -18,8 +30,14 @@ export interface PlaygroundColumn {
   authType: AuthType;
   providerKeyLabel?: string;
   displayName: string;
+  /** Output modality this column produces. */
+  kind: PlaygroundOutputKind;
   status: ColumnStatus;
   response?: string;
+  /** Generated media for an image / video column. */
+  media?: PlaygroundMediaOutput | null;
+  /** Concrete route that served the column (synthetic → real model). */
+  route?: PlaygroundResolvedRoute | null;
   metrics?: PlaygroundRunResult['metrics'];
   headers?: Record<string, string>;
   error?: string;
@@ -28,6 +46,19 @@ export interface PlaygroundColumn {
    * mark this column the best answer without a history round-trip.
    */
   columnDbId?: string | null;
+}
+
+/** Run-level media generation options, shared by every media column. */
+export interface PlaygroundMediaOptions {
+  n?: number;
+  size?: string;
+  ratio?: string;
+  responseFormat?: 'url' | 'b64_json';
+  seconds?: number;
+  mode?: 'text' | 'keyframe' | 'reference';
+  firstFrame?: string;
+  lastFrame?: string;
+  referenceImages?: string[];
 }
 
 export interface PlaygroundStore {
@@ -40,6 +71,7 @@ export interface PlaygroundStore {
     authType: AuthType,
     displayName: string,
     providerKeyLabel?: string,
+    kind?: PlaygroundOutputKind,
   ) => void;
   removeColumn: (id: string) => void;
   replaceColumnModel: (
@@ -49,6 +81,7 @@ export interface PlaygroundStore {
     authType: AuthType,
     displayName: string,
     providerKeyLabel?: string,
+    kind?: PlaygroundOutputKind,
   ) => void;
   setColumnKeyLabel: (id: string, providerKeyLabel?: string) => void;
   runAll: (options?: RunOptions) => string | undefined;
@@ -67,9 +100,15 @@ export interface PlaygroundStore {
 }
 
 export const MAX_COLUMNS = 6;
+/** Interval between video-task polls. */
+export const VIDEO_POLL_INTERVAL_MS = 5_000;
 
 export interface RunOptions {
   requestHeaders?: Record<string, string>;
+  /** Multimodal attachments applied to text columns. */
+  attachments?: PlaygroundContentPart[];
+  /** Media generation options applied to image / video columns. */
+  media?: PlaygroundMediaOptions;
 }
 
 let columnCounter = 0;
@@ -92,6 +131,18 @@ function newRunId(): string {
 /** Resolve a display name for an AvailableModel (falls back to the model id). */
 function displayNameFor(m: AvailableModel): string {
   return m.display_name ?? m.model_name;
+}
+
+/** The output modality a catalog model produces (defaults to text). */
+export function outputKindForModel(m: AvailableModel | undefined): PlaygroundOutputKind {
+  const mods = m?.output_modalities ?? [];
+  if (mods.includes('video')) return 'video';
+  if (mods.includes('image')) return 'image';
+  return 'text';
+}
+
+function isTerminalVideo(media: PlaygroundMediaOutput | null | undefined): boolean {
+  return media?.kind === 'video' && (media.status === 'completed' || media.status === 'failed');
 }
 
 /**
@@ -134,6 +185,41 @@ function modelBrandId(modelName: string): string | undefined {
   return inferProviderFromModel(modelName);
 }
 
+/** Build a user message content value, folding in any image attachments. */
+function buildUserContent(
+  prompt: string,
+  attachments: PlaygroundContentPart[],
+): string | PlaygroundContentPart[] {
+  if (attachments.length === 0) return prompt;
+  return [{ type: 'text', text: prompt }, ...attachments];
+}
+
+/** Pick the media options that apply to a given output kind, dropping empties. */
+function mediaPayload(
+  kind: Exclude<PlaygroundOutputKind, 'text'>,
+  options: PlaygroundMediaOptions | undefined,
+): Partial<RunPlaygroundRequest> {
+  const o = options ?? {};
+  const payload: Partial<RunPlaygroundRequest> = { outputKind: kind };
+  if (kind === 'image') {
+    if (o.n != null) payload.n = o.n;
+    if (o.size) payload.size = o.size;
+    if (o.ratio) payload.ratio = o.ratio;
+    if (o.responseFormat) payload.responseFormat = o.responseFormat;
+  } else {
+    if (o.size) payload.size = o.size;
+    if (o.ratio) payload.ratio = o.ratio;
+    if (o.seconds != null) payload.seconds = o.seconds;
+    if (o.mode) payload.mode = o.mode;
+    if (o.firstFrame) payload.firstFrame = o.firstFrame;
+    if (o.lastFrame) payload.lastFrame = o.lastFrame;
+  }
+  if (o.referenceImages && o.referenceImages.length > 0) {
+    payload.referenceImages = o.referenceImages;
+  }
+  return payload;
+}
+
 export function createPlaygroundStore(agentName: string): PlaygroundStore {
   const [columns, setColumns] = createStore<PlaygroundColumn[]>([]);
   const [prompt, setPrompt] = createSignal('');
@@ -145,8 +231,17 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
   // Per-column AbortController. Set when a column starts loading, cleared
   // when it settles. Lives outside the store so it doesn't trigger reactivity.
   const inflight = new Map<string, AbortController>();
+  // Per-column video poll timers. Cleared when the column settles or is removed.
+  const pollers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const clearPoller = (id: string): void => {
+    const handle = pollers.get(id);
+    if (handle != null) clearTimeout(handle);
+    pollers.delete(id);
+  };
 
   const abortColumn = (id: string): void => {
+    clearPoller(id);
     const ctrl = inflight.get(id);
     if (!ctrl) return;
     ctrl.abort();
@@ -159,6 +254,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     authType,
     displayName,
     providerKeyLabel,
+    kind = 'text',
   ) => {
     if (columns.length >= MAX_COLUMNS) return;
     setColumns((prev) => [
@@ -170,14 +266,23 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         authType,
         providerKeyLabel,
         displayName,
+        kind,
         status: 'idle',
       },
     ]);
   };
 
   const removeColumn: PlaygroundStore['removeColumn'] = (id) => {
+    const col = columns.find((c) => c.id === id);
     abortColumn(id);
     setColumns((prev) => prev.filter((c) => c.id !== id));
+    // A persisted column (history run or a finished live run) is deleted
+    // server-side so it doesn't come back on the next history load.
+    if (col?.columnDbId && currentRunId) {
+      void deletePlaygroundColumn(currentRunId, col.columnDbId).catch(() => {
+        /* best-effort: the UI already dropped it */
+      });
+    }
   };
 
   const replaceColumnModel: PlaygroundStore['replaceColumnModel'] = (
@@ -187,6 +292,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     authType,
     displayName,
     providerKeyLabel,
+    kind = 'text',
   ) => {
     abortColumn(id);
     setColumns(
@@ -198,8 +304,11 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         col.authType = authType;
         col.displayName = displayName;
         col.providerKeyLabel = providerKeyLabel;
+        col.kind = kind;
         col.status = 'idle';
         col.response = undefined;
+        col.media = undefined;
+        col.route = undefined;
         col.metrics = undefined;
         col.headers = undefined;
         col.error = undefined;
@@ -217,12 +326,57 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     );
   };
 
+  const pollVideo = (colId: string, taskId: string): void => {
+    const tick = async (): Promise<void> => {
+      const col = columns.find((c) => c.id === colId);
+      if (!col) {
+        clearPoller(colId);
+        return;
+      }
+      let media: PlaygroundVideoOutput;
+      let costUsd: number | null = null;
+      try {
+        const res = await getPlaygroundVideoStatus(taskId, col.columnDbId ?? undefined);
+        media = res.media;
+        costUsd = res.costUsd;
+      } catch {
+        // Transient failure — keep polling until the column is removed.
+        pollers.set(colId, setTimeout(tick, VIDEO_POLL_INTERVAL_MS));
+        return;
+      }
+      if (!columns.some((c) => c.id === colId)) {
+        clearPoller(colId);
+        return;
+      }
+      const terminal = media.status === 'completed' || media.status === 'failed';
+      setColumns(
+        (c) => c.id === colId,
+        produce((c) => {
+          c.media = media;
+          if (media.status === 'completed') {
+            c.status = 'success';
+            if (c.metrics) c.metrics = { ...c.metrics, cost: costUsd ?? c.metrics.cost };
+          } else if (media.status === 'failed') {
+            c.status = 'error';
+            c.error = media.error ?? 'Video generation failed';
+          }
+        }),
+      );
+      if (terminal) {
+        clearPoller(colId);
+        return;
+      }
+      pollers.set(colId, setTimeout(tick, VIDEO_POLL_INTERVAL_MS));
+    };
+    pollers.set(colId, setTimeout(tick, VIDEO_POLL_INTERVAL_MS));
+  };
+
   const runSingle = async (
     colId: string,
     promptText: string,
     runId: string,
     position: number,
-    requestHeaders: Record<string, string> | undefined,
+    options: RunOptions | undefined,
   ): Promise<void> => {
     const col = columns.find((c) => c.id === colId);
     if (!col) return;
@@ -234,52 +388,82 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
       produce((c) => {
         c.status = 'loading';
         c.response = undefined;
+        c.media = undefined;
+        c.route = undefined;
         c.metrics = undefined;
         c.headers = undefined;
         c.error = undefined;
         c.columnDbId = undefined;
       }),
     );
+
+    const base: RunPlaygroundRequest = {
+      agentName,
+      model: col.model,
+      provider: col.provider,
+      authType: col.authType,
+      providerKeyLabel: col.providerKeyLabel,
+      runId,
+      position,
+      ...(options?.requestHeaders && Object.keys(options.requestHeaders).length > 0
+        ? { requestHeaders: options.requestHeaders }
+        : {}),
+    };
+    const request: RunPlaygroundRequest =
+      col.kind === 'text'
+        ? {
+            ...base,
+            messages: [
+              { role: 'user', content: buildUserContent(promptText, options?.attachments ?? []) },
+            ],
+          }
+        : { ...base, prompt: promptText, ...mediaPayload(col.kind, options?.media) };
+
     try {
-      const result = await streamPlayground(
-        {
-          agentName,
-          model: col.model,
-          provider: col.provider,
-          authType: col.authType,
-          providerKeyLabel: col.providerKeyLabel,
-          messages: [{ role: 'user', content: promptText }],
-          runId,
-          position,
-          ...(requestHeaders && Object.keys(requestHeaders).length > 0 ? { requestHeaders } : {}),
+      const result = await streamPlayground(request, {
+        signal: ctrl.signal,
+        onDelta: (text) => {
+          // Drop late deltas if the column was removed/replaced mid-stream.
+          if (inflight.get(colId) !== ctrl) return;
+          setColumns(
+            (c) => c.id === colId,
+            produce((c) => {
+              c.response = (c.response ?? '') + text;
+            }),
+          );
         },
-        {
-          signal: ctrl.signal,
-          onDelta: (text) => {
-            // Drop late deltas if the column was removed/replaced mid-stream.
-            if (inflight.get(colId) !== ctrl) return;
-            setColumns(
-              (c) => c.id === colId,
-              produce((c) => {
-                c.response = (c.response ?? '') + text;
-              }),
-            );
-          },
+        onProgress: (media) => {
+          if (inflight.get(colId) !== ctrl) return;
+          setColumns(
+            (c) => c.id === colId,
+            produce((c) => {
+              c.media = media;
+            }),
+          );
         },
-      );
+      });
       // The user may have removed/replaced the column while we were waiting;
       // drop the result silently rather than re-instate a column that's gone.
       if (inflight.get(colId) !== ctrl) return;
+      const videoInFlight =
+        result.kind === 'video' && result.media?.kind === 'video' && !isTerminalVideo(result.media);
       setColumns(
         (c) => c.id === colId,
         produce((c) => {
-          c.status = 'success';
           c.response = result.content;
           c.metrics = result.metrics;
           c.headers = result.headers;
           c.columnDbId = result.columnId;
+          c.kind = result.kind;
+          c.media = result.media;
+          c.route = result.route;
+          // A queued video keeps the column "loading" until the task settles.
+          c.status = videoInFlight ? 'loading' : 'success';
         }),
       );
+      if (videoInFlight && result.media?.kind === 'video') {
+        pollVideo(colId, result.media.taskId);
+      }
     } catch (err) {
       if (inflight.get(colId) !== ctrl) return;
       // AbortError is the user's intent (cancel/replace/remove) — don't paint
@@ -306,9 +490,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     // New submit = a fresh run with no best pick yet.
     currentRunId = runId;
     setBestColumnId(null);
-    void Promise.allSettled(
-      columns.map((c, i) => runSingle(c.id, promptText, runId, i, options?.requestHeaders)),
-    );
+    void Promise.allSettled(columns.map((c, i) => runSingle(c.id, promptText, runId, i, options)));
     return runId;
   };
 
@@ -316,7 +498,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     const promptText = prompt().trim() || history()[0];
     if (!promptText) return;
     const position = columns.findIndex((c) => c.id === id);
-    await runSingle(id, promptText, newRunId(), Math.max(position, 0), options?.requestHeaders);
+    await runSingle(id, promptText, newRunId(), Math.max(position, 0), options);
   };
 
   const cancelColumn: PlaygroundStore['cancelColumn'] = (id) => {
@@ -331,6 +513,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
 
   const cancelAll: PlaygroundStore['cancelAll'] = () => {
     for (const id of Array.from(inflight.keys())) cancelColumn(id);
+    for (const id of Array.from(pollers.keys())) clearPoller(id);
   };
 
   const loadHistoryRun: PlaygroundStore['loadHistoryRun'] = (detail) => {
@@ -344,8 +527,11 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
       authType: (c.authType ?? 'api_key') as AuthType,
       providerKeyLabel: c.providerKeyLabel ?? undefined,
       displayName: c.displayName ?? c.model,
+      kind: c.kind ?? 'text',
       status: c.status,
       response: c.content ?? undefined,
+      media: c.media ?? undefined,
+      route: c.route ?? undefined,
       metrics: c.metrics ?? undefined,
       headers: c.headers ?? undefined,
       error: c.errorMessage ?? undefined,
@@ -358,6 +544,18 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     setHistory((prev) =>
       prev[0] === detail.prompt ? prev : [detail.prompt, ...prev].slice(0, 20),
     );
+    // A video column that was still processing when the page closed resumes
+    // polling here, so its task finalizes without a fresh submit.
+    for (const col of next) {
+      if (
+        col.media?.kind === 'video' &&
+        col.media.status !== 'completed' &&
+        col.media.status !== 'failed' &&
+        col.media.taskId
+      ) {
+        pollVideo(col.id, col.media.taskId);
+      }
+    }
   };
 
   const recallPreviousPrompt: PlaygroundStore['recallPreviousPrompt'] = () => {
@@ -384,9 +582,12 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     // Ignore prefix inference here — aggregators (ollama-cloud / openrouter)
     // list brand-named models like gemini-3-flash-preview that rightfully
     // route through them, and the connected-provider match is the real test
-    // of whether a call can succeed.
+    // of whether a call can succeed. Media-only and synthetic models are also
+    // excluded so the initial chat columns are runnable text models.
     const eligible = available.filter((m) => {
       if (!m.auth_type) return false;
+      if (m.synthetic) return false;
+      if (outputKindForModel(m) !== 'text') return false;
       const dbId = resolveProviderId(m.provider) ?? m.provider.toLowerCase();
       return activeProviderIds.has(dbId) || activeProviderIds.has(m.provider.toLowerCase());
     });
@@ -453,6 +654,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         provider: m.provider,
         authType: (m.auth_type ?? 'api_key') as AuthType,
         displayName: displayNameFor(m),
+        kind: outputKindForModel(m),
         status: 'idle',
       })),
     );

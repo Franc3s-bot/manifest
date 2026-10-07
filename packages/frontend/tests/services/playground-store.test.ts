@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // streamPlayground(req, { signal, onDelta }) → Promise<PlaygroundStreamResult>
 const streamPlaygroundMock = vi.fn();
 const setPlaygroundRunBestMock = vi.fn();
+const deletePlaygroundColumnMock = vi.fn();
+const getPlaygroundVideoStatusMock = vi.fn();
 
 vi.mock('../../src/services/api.js', () => ({
   streamPlayground: (...args: unknown[]) => streamPlaygroundMock(...args),
   setPlaygroundRunBest: (...args: unknown[]) => setPlaygroundRunBestMock(...args),
+  deletePlaygroundColumn: (...args: unknown[]) => deletePlaygroundColumnMock(...args),
+  getPlaygroundVideoStatus: (...args: unknown[]) => getPlaygroundVideoStatusMock(...args),
 }));
 
 import {
@@ -24,6 +28,9 @@ function okResult(over: Record<string, unknown> = {}) {
     content: 'hello',
     metrics: { cost: 0.001, inputTokens: 5, outputTokens: 3, durationMs: 120 },
     headers: { 'x-request-id': 'abc' },
+    kind: 'text',
+    media: null,
+    route: null,
     ...over,
   };
 }
@@ -61,6 +68,8 @@ describe('createPlaygroundStore', () => {
   beforeEach(() => {
     streamPlaygroundMock.mockReset();
     setPlaygroundRunBestMock.mockReset();
+    deletePlaygroundColumnMock.mockReset().mockResolvedValue(undefined);
+    getPlaygroundVideoStatusMock.mockReset();
   });
 
   describe('pickDefaults', () => {
@@ -653,9 +662,7 @@ describe('createPlaygroundStore', () => {
       store.setPrompt('hi');
 
       let resolveFirst: ((v: unknown) => void) | null = null;
-      streamPlaygroundMock.mockImplementationOnce(
-        () => new Promise((res) => (resolveFirst = res)),
-      );
+      streamPlaygroundMock.mockImplementationOnce(() => new Promise((res) => (resolveFirst = res)));
       streamPlaygroundMock.mockImplementationOnce(async () => okResult({ content: 'second' }));
 
       const colId = store.columns[0]!.id;
@@ -999,9 +1006,7 @@ describe('createPlaygroundStore', () => {
       store.addColumn('openai/gpt-4o-mini', 'openai', 'api_key', 'A');
       store.setPrompt('hi');
       let resolveStream: ((v: unknown) => void) | null = null;
-      streamPlaygroundMock.mockImplementation(
-        () => new Promise((res) => (resolveStream = res)),
-      );
+      streamPlaygroundMock.mockImplementation(() => new Promise((res) => (resolveStream = res)));
       const p = store.runAll();
       await Promise.resolve();
       expect(store.isAnyRunning()).toBe(true);
@@ -1009,5 +1014,224 @@ describe('createPlaygroundStore', () => {
       await p;
       expect(store.isAnyRunning()).toBe(false);
     });
+  });
+});
+
+describe('createPlaygroundStore — media, attachments, persistence', () => {
+  beforeEach(() => {
+    streamPlaygroundMock.mockReset();
+    deletePlaygroundColumnMock.mockReset().mockResolvedValue(undefined);
+    getPlaygroundVideoStatusMock.mockReset();
+  });
+
+  it('sends prompt + outputKind + image options for an image column', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn('agnes-image-2.1-flash', 'agnes', 'api_key', 'Agnes Image', undefined, 'image');
+    store.setPrompt('a red cube');
+    streamPlaygroundMock.mockResolvedValue(
+      okResult({
+        kind: 'image',
+        content: '',
+        media: { kind: 'image', images: [{ url: 'https://cdn/x.png' }] },
+        route: { provider: 'agnes', model: 'agnes-image-2.1-flash', synthetic: false },
+      }),
+    );
+
+    await store.runAll({ media: { n: 2, size: '1K', ratio: '1:1', responseFormat: 'b64_json' } });
+
+    const req = streamPlaygroundMock.mock.calls[0][0];
+    expect(req).toMatchObject({
+      model: 'agnes-image-2.1-flash',
+      prompt: 'a red cube',
+      outputKind: 'image',
+      n: 2,
+      size: '1K',
+      ratio: '1:1',
+      responseFormat: 'b64_json',
+    });
+    expect(req.messages).toBeUndefined();
+    expect(store.columns[0]!.media).toMatchObject({ kind: 'image' });
+    expect(store.columns[0]!.status).toBe('success');
+  });
+
+  it('sends video options and keeps a queued task loading until it settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createPlaygroundStore('demo');
+      store.addColumn('agnes-video-v2.0', 'agnes', 'api_key', 'Agnes Video', undefined, 'video');
+      store.setPrompt('a cat surfing');
+      streamPlaygroundMock.mockResolvedValue(
+        okResult({
+          kind: 'video',
+          content: '',
+          media: { kind: 'video', taskId: 'task-1', status: 'queued' },
+          route: { provider: 'agnes', model: 'agnes-video-v2.0', synthetic: false },
+        }),
+      );
+      getPlaygroundVideoStatusMock.mockResolvedValue({
+        status: 200,
+        media: { kind: 'video', taskId: 'task-1', status: 'completed', url: 'https://cdn/v.mp4' },
+        costUsd: 0.4,
+      });
+
+      await store.runAll({ media: { seconds: 5, size: '720P', mode: 'reference' } });
+
+      const req = streamPlaygroundMock.mock.calls[0][0];
+      expect(req).toMatchObject({
+        outputKind: 'video',
+        prompt: 'a cat surfing',
+        seconds: 5,
+        size: '720P',
+        mode: 'reference',
+      });
+      expect(store.columns[0]!.status).toBe('loading');
+      expect(store.isAnyRunning()).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(getPlaygroundVideoStatusMock).toHaveBeenCalledWith('task-1', 'db-col-1');
+      expect(store.columns[0]!.status).toBe('success');
+      expect(store.columns[0]!.media).toMatchObject({
+        status: 'completed',
+        url: 'https://cdn/v.mp4',
+      });
+      expect(store.columns[0]!.metrics?.cost).toBe(0.4);
+      expect(store.isAnyRunning()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('folds image attachments into the text message content parts', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn('openai/gpt-4o', 'openai', 'api_key', 'GPT-4o');
+    store.setPrompt('what is this?');
+    streamPlaygroundMock.mockResolvedValue(okResult());
+
+    await store.runAll({
+      attachments: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } }],
+    });
+
+    const req = streamPlaygroundMock.mock.calls[0][0];
+    expect(req.messages[0].content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+    ]);
+  });
+
+  it('keeps a plain string content when there are no attachments', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn('openai/gpt-4o', 'openai', 'api_key', 'GPT-4o');
+    store.setPrompt('hello');
+    streamPlaygroundMock.mockResolvedValue(okResult());
+
+    await store.runAll();
+
+    expect(streamPlaygroundMock.mock.calls[0][0].messages[0].content).toBe('hello');
+  });
+
+  it('deletes a persisted column server-side when removed', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn('openai/gpt-4o', 'openai', 'api_key', 'GPT-4o');
+    store.setPrompt('hi');
+    streamPlaygroundMock.mockResolvedValue(okResult({ columnId: 'db-col-1' }));
+    await store.runAll();
+
+    store.removeColumn(store.columns[0]!.id);
+
+    expect(store.columns).toHaveLength(0);
+    expect(deletePlaygroundColumnMock).toHaveBeenCalledWith(expect.any(String), 'db-col-1');
+  });
+
+  it('maps kind/media/route when loading a history run', () => {
+    const store = createPlaygroundStore('demo');
+    store.loadHistoryRun({
+      id: 'run-1',
+      prompt: 'a red cube',
+      createdAt: new Date().toISOString(),
+      modelCount: 1,
+      models: ['Agnes Image'],
+      starred: false,
+      bestColumnId: null,
+      columns: [
+        {
+          id: 'db-col-9',
+          model: 'agnes-image-2.1-flash',
+          provider: 'agnes',
+          authType: 'api_key',
+          providerKeyLabel: null,
+          displayName: 'Agnes Image',
+          status: 'success',
+          content: null,
+          headers: null,
+          errorMessage: null,
+          metrics: null,
+          position: 0,
+          kind: 'image',
+          media: { kind: 'image', images: [{ url: 'https://cdn/x.png' }] },
+          route: { provider: 'agnes', model: 'agnes-image-2.1-flash', synthetic: false },
+        },
+      ],
+    });
+
+    expect(store.columns[0]!.kind).toBe('image');
+    expect(store.columns[0]!.media).toMatchObject({ kind: 'image' });
+    expect(store.columns[0]!.route).toMatchObject({ model: 'agnes-image-2.1-flash' });
+  });
+});
+
+describe('createPlaygroundStore — resume video polling', () => {
+  beforeEach(() => {
+    streamPlaygroundMock.mockReset();
+    deletePlaygroundColumnMock.mockReset().mockResolvedValue(undefined);
+    getPlaygroundVideoStatusMock.mockReset();
+  });
+
+  it('resumes polling a non-terminal video column loaded from history', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createPlaygroundStore('demo');
+      getPlaygroundVideoStatusMock.mockResolvedValue({
+        status: 200,
+        media: { kind: 'video', taskId: 't1', status: 'completed', url: 'https://cdn/v.mp4' },
+        costUsd: 0.2,
+      });
+
+      store.loadHistoryRun({
+        id: 'run-1',
+        prompt: 'a cat',
+        createdAt: new Date().toISOString(),
+        modelCount: 1,
+        models: ['Agnes Video'],
+        starred: false,
+        bestColumnId: null,
+        columns: [
+          {
+            id: 'db-col-9',
+            model: 'agnes-video-v2.0',
+            provider: 'agnes',
+            authType: 'api_key',
+            providerKeyLabel: null,
+            displayName: 'Agnes Video',
+            status: 'success',
+            content: null,
+            headers: null,
+            errorMessage: null,
+            metrics: null,
+            position: 0,
+            kind: 'video',
+            media: { kind: 'video', taskId: 't1', status: 'processing' },
+            route: null,
+          },
+        ],
+      });
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(getPlaygroundVideoStatusMock).toHaveBeenCalledWith('t1', 'db-col-9');
+      expect(store.columns[0]!.media).toMatchObject({ status: 'completed' });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

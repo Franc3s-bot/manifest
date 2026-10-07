@@ -89,6 +89,10 @@ const asRes = (r: MockRes): ExpressResponse => r as unknown as ExpressResponse;
 interface Mocks {
   customProviders: { canonicalizeAgentMessageKeys: jest.Mock };
   opencodeGoCatalog: { resolveCostPerRequest: jest.Mock };
+  resolveService: { resolveAutoTierModel: jest.Mock };
+  headerTiers: { list: jest.Mock };
+  modelDiscovery: { getModelsForAgent: jest.Mock };
+  mediaService: { handle: jest.Mock; videoStatus: jest.Mock };
   playgroundAgent: { resolve: jest.Mock };
   providerKeyService: {
     hasActiveProvider: jest.Mock;
@@ -158,6 +162,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
         ),
     },
     opencodeGoCatalog: { resolveCostPerRequest: jest.fn().mockResolvedValue(null) },
+    resolveService: { resolveAutoTierModel: jest.fn().mockResolvedValue(null) },
+    headerTiers: { list: jest.fn().mockResolvedValue([]) },
+    modelDiscovery: { getModelsForAgent: jest.fn().mockResolvedValue([]) },
+    mediaService: { handle: jest.fn(), videoStatus: jest.fn() },
     ...mocks,
   };
   const service = new PlaygroundService(
@@ -177,6 +185,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     full.customProviderRepo as unknown as Repository<CustomProvider>,
     full.customProviders as unknown as CustomProviderService,
     full.opencodeGoCatalog as unknown as OpencodeGoCatalogService,
+    full.resolveService as never,
+    full.headerTiers as never,
+    full.modelDiscovery as never,
+    full.mediaService as never,
   );
   return { service, mocks: full };
 }
