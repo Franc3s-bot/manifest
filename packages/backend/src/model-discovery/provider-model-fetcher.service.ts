@@ -333,6 +333,12 @@ const parseCommandCode = createModelParser<CommandCodeModelEntry>({
   contextWindow: (entry) => entry.context_length ?? DEFAULT_CONTEXT_WINDOW,
   contextWindowSource: (entry) =>
     entry.context_length ? ('provider' as const) : ('provider_default' as const),
+  // Flat monthly subscription: no per-token rate. Zeroing the price (rather
+  // than leaving it null) also short-circuits pricing enrichment, so the
+  // vendor identity resolved for capabilities cannot leak the vendor's
+  // per-token rate onto a flat-fee connection.
+  inputPricePerToken: 0,
+  outputPricePerToken: 0,
   capabilityCode: true,
 });
 

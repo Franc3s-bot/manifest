@@ -3075,6 +3075,8 @@ describe('ProviderModelFetcherService', () => {
           displayName: 'Claude Sonnet 4.6',
           provider: 'commandcode',
           contextWindow: 1000000,
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
           capabilityCode: true,
         }),
         expect.objectContaining({
@@ -3102,6 +3104,8 @@ describe('ProviderModelFetcherService', () => {
           id: 'commandcode/gpt-5.4',
           contextWindow: DEFAULT_CONTEXT_WINDOW,
           contextWindowSource: 'provider_default',
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
           capabilityCode: true,
         }),
       ]);

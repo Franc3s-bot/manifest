@@ -143,23 +143,31 @@ function modeGenerous(values: Array<number | undefined>): number | undefined {
   return best?.value;
 }
 
-/** Capability lists where a capability held by more than half of models is kept. */
+/**
+ * Capability lists where a capability held by more than half of the models
+ * with KNOWN metadata is kept.
+ *
+ * A model whose metadata is unknown (`undefined`) abstains. Counting it in the
+ * denominator would make it a silent "no" vote, so one uncatalogued model in
+ * the chain could suppress a capability every known model supports.
+ */
 function majorityCapabilities<T extends string>(
   lists: readonly (readonly T[] | undefined)[],
 ): readonly T[] {
-  const known: T[] = [];
+  const known = lists.filter((list): list is readonly T[] => list !== undefined);
+  const candidates: T[] = [];
   const seen = new Set<string>();
-  for (const list of lists) {
-    for (const value of list ?? []) {
+  for (const list of known) {
+    for (const value of list) {
       if (seen.has(value)) continue;
       seen.add(value);
-      known.push(value);
+      candidates.push(value);
     }
   }
   const kept: T[] = [];
-  for (const candidate of known) {
-    const supporters = lists.filter((list) => list?.includes(candidate)).length;
-    if (lists.length > 0 && supporters > lists.length / 2) kept.push(candidate);
+  for (const candidate of candidates) {
+    const supporters = known.filter((list) => list.includes(candidate)).length;
+    if (known.length > 0 && supporters > known.length / 2) kept.push(candidate);
   }
   return kept;
 }
@@ -188,7 +196,9 @@ export function buildSyntheticTierProfile(
   const inputModalities = majorityCapabilities(models.map((m) => m.inputModalities));
   const outputModalities = majorityCapabilities(models.map((m) => m.outputModalities));
   const features = majorityCapabilities(
-    models.map((m) => (m.capabilities?.filter(isFeature) ?? []) as readonly FeatureCapability[]),
+    models.map(
+      (m) => m.capabilities?.filter(isFeature) as readonly FeatureCapability[] | undefined,
+    ),
   );
   const supportedEndpoints = majorityCapabilities(models.map((m) => m.supportedEndpoints));
 

@@ -148,6 +148,37 @@ describe('buildSyntheticTierProfile', () => {
     expect(profile.supportedEndpoints).toEqual(['/responses']);
   });
 
+  it('lets models with unknown metadata abstain instead of voting no', () => {
+    const tier = makeTier({
+      override_route: { provider: 'openai', authType: 'api_key', model: 'known-1' },
+      fallback_routes: [
+        { provider: 'openai', authType: 'api_key', model: 'known-2' },
+        { provider: 'commandcode', authType: 'subscription', model: 'unknown-1' },
+        { provider: 'commandcode', authType: 'subscription', model: 'unknown-2' },
+      ],
+    });
+    const models = [
+      makeModel({
+        id: 'known-1',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        capabilities: ['text', 'image', 'stream', 'tools'],
+      }),
+      makeModel({
+        id: 'known-2',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        capabilities: ['text', 'image', 'stream', 'tools'],
+      }),
+      // Discovered, but no catalog knows their modalities: they must abstain.
+      makeModel({ id: 'unknown-1', provider: 'commandcode', authType: 'subscription' }),
+      makeModel({ id: 'unknown-2', provider: 'commandcode', authType: 'subscription' }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.inputModalities).toEqual(['text', 'image']);
+    expect(profile.features).toContain('tools');
+  });
+
   it('falls back to the default window and text-only modalities when the chain is unresolvable', () => {
     const tier = makeTier({
       override_route: { provider: 'openai', authType: 'api_key', model: 'ghost-model' },

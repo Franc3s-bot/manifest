@@ -1447,6 +1447,47 @@ describe('ModelDiscoveryService', () => {
       expect(result[0].inputModalities).toEqual(['text', 'image']);
     });
 
+    it('should read Command Code capabilities from the vendor the id namespaces', async () => {
+      // Command Code publishes no modalities and models.dev has no
+      // `commandcode` catalog, so its models stayed text-only. The id names the
+      // vendor (`commandcode/moonshotai/Kimi-K3`), so enrichment must resolve
+      // the vendor identity before asking the capability catalog.
+      mockModelsDevSync.lookupModelCapabilities.mockImplementation(
+        (providerId: string, modelId: string) =>
+          providerId === 'moonshot' && modelId === 'kimi-k3'
+            ? {
+                id: 'kimi-k3',
+                name: 'Kimi K3',
+                toolCall: true,
+                inputModalities: ['text', 'image', 'video'],
+                outputModalities: ['text'],
+                capabilities: ['text', 'image', 'video', 'tools'],
+              }
+            : null,
+      );
+      fetcher.fetch.mockResolvedValue([
+        makeModel({
+          id: 'commandcode/moonshotai/Kimi-K3',
+          provider: 'commandcode',
+          contextWindow: 1000000,
+          contextWindowSource: 'provider',
+          inputPricePerToken: 0,
+          outputPricePerToken: 0,
+        }),
+      ]);
+
+      const result = await service.discoverModels(
+        makeProvider({ provider: 'commandcode', auth_type: 'subscription' }),
+      );
+
+      expect(mockModelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith('moonshot', 'kimi-k3');
+      expect(result[0].inputModalities).toEqual(['text', 'image', 'video']);
+      // Capability-only: the vendor's per-token rate must not reach the
+      // flat-fee subscription connection.
+      expect(result[0].inputPricePerToken).toBe(0);
+      expect(result[0].outputPricePerToken).toBe(0);
+    });
+
     it('should give a provider-default context window the catalog value', async () => {
       // opencode-go publishes no per-model windows, so the fetcher records only a
       // nominal default and marks it `provider_default`. models.dev keys the same
