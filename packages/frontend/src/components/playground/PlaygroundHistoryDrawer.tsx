@@ -79,6 +79,8 @@ interface Props {
   onToggle: () => void;
   onSelect: (runId: string) => void;
   onStarToggle?: (runId: string, starred: boolean) => void;
+  onRename?: (runId: string, prompt: string) => void;
+  onDelete?: (runId: string) => void;
   onNewPlayground?: () => void;
 }
 
@@ -92,9 +94,13 @@ const RunItem: Component<{
   isActive: boolean;
   onSelect: () => void;
   onStarToggle?: (runId: string, starred: boolean) => void;
+  onRename?: (runId: string, prompt: string) => void;
+  onDelete?: (runId: string) => void;
 }> = (props) => {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [starred, setStarred] = createSignal(props.run.starred);
+  const [editing, setEditing] = createSignal(false);
+  const [draft, setDraft] = createSignal(props.run.prompt);
 
   const handleStar = async (e: MouseEvent) => {
     e.stopPropagation();
@@ -108,14 +114,43 @@ const RunItem: Component<{
     }
   };
 
+  const commitRename = () => {
+    const next = draft().trim();
+    setEditing(false);
+    setMenuOpen(false);
+    if (next && next !== props.run.prompt) props.onRename?.(props.run.id, next);
+  };
+
   return (
     <li
       class="playground-recent__item-wrapper"
       classList={{ 'playground-recent__item--active': props.isActive }}
     >
-      <button type="button" class="playground-recent__item" onClick={props.onSelect}>
-        <span class="playground-recent__prompt">{truncate(props.run.prompt, 50)}</span>
-      </button>
+      <Show
+        when={editing()}
+        fallback={
+          <button type="button" class="playground-recent__item" onClick={props.onSelect}>
+            <span class="playground-recent__prompt">{truncate(props.run.prompt, 50)}</span>
+          </button>
+        }
+      >
+        <input
+          class="playground-recent__rename"
+          value={draft()}
+          autofocus
+          onClick={(e) => e.stopPropagation()}
+          onInput={(e) => setDraft(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') {
+              setEditing(false);
+              setDraft(props.run.prompt);
+            }
+          }}
+          onBlur={commitRename}
+          aria-label="Rename run"
+        />
+      </Show>
       <div class="playground-recent__fade" />
       <div class="playground-recent__menu-anchor">
         <button
@@ -136,6 +171,33 @@ const RunItem: Component<{
               <StarIcon size={14} filled={starred()} />
               {starred() ? 'Unstar' : 'Star'}
             </button>
+            <Show when={props.onRename}>
+              <button
+                type="button"
+                class="playground-recent__menu-item"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDraft(props.run.prompt);
+                  setEditing(true);
+                  setMenuOpen(false);
+                }}
+              >
+                Rename
+              </button>
+            </Show>
+            <Show when={props.onDelete}>
+              <button
+                type="button"
+                class="playground-recent__menu-item playground-recent__menu-item--danger"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen(false);
+                  props.onDelete?.(props.run.id);
+                }}
+              >
+                Delete
+              </button>
+            </Show>
           </div>
         </Show>
       </div>
@@ -225,6 +287,8 @@ const PlaygroundRecentSidebar: Component<Props> = (props) => {
                         isActive={run.id === props.activeRunId}
                         onSelect={() => props.onSelect(run.id)}
                         onStarToggle={props.onStarToggle}
+                        onRename={props.onRename}
+                        onDelete={props.onDelete}
                       />
                     )}
                   </For>
@@ -244,6 +308,8 @@ const PlaygroundRecentSidebar: Component<Props> = (props) => {
                           isActive={run.id === props.activeRunId}
                           onSelect={() => props.onSelect(run.id)}
                           onStarToggle={props.onStarToggle}
+                          onRename={props.onRename}
+                          onDelete={props.onDelete}
                         />
                       )}
                     </For>

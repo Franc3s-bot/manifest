@@ -196,8 +196,14 @@ export {
   getSubscriptionCapabilities,
 } from './subscription';
 export type { SubscriptionCapabilities, SubscriptionProviderConfig } from './subscription';
+export { PLAYGROUND_OUTPUT_KINDS, isPlaygroundOutputKind } from './playground';
 export type {
+  PlaygroundOutputKind,
   PlaygroundMetrics,
+  PlaygroundResolvedRoute,
+  PlaygroundImageOutput,
+  PlaygroundVideoOutput,
+  PlaygroundMediaOutput,
   PlaygroundRunResult,
   PlaygroundStreamEvent,
   PlaygroundHistoryColumn,

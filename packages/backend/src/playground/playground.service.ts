@@ -3,7 +3,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
 import type { Response as ExpressResponse } from 'express';
-import type { AuthType, PlaygroundStreamEvent } from 'manifest-shared';
+import type {
+  AuthType,
+  PlaygroundImageOutput,
+  PlaygroundMediaOutput,
+  PlaygroundMetrics,
+  PlaygroundOutputKind,
+  PlaygroundResolvedRoute,
+  PlaygroundStreamEvent,
+  PlaygroundVideoOutput,
+  VideoStatus,
+} from 'manifest-shared';
 import { AgentMessage } from '../entities/agent-message.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
 import { ProviderClient } from '../routing/proxy/provider-client';
@@ -17,6 +27,7 @@ import {
 import { ProviderKeyService } from '../routing/routing-core/provider-key.service';
 import { isLocalOnlyProvider } from '../common/utils/provider-availability';
 import { OpencodeGoCatalogService } from '../model-discovery/opencode-go-catalog.service';
+import { ModelDiscoveryService } from '../model-discovery/model-discovery.service';
 import { PROVIDER_BY_ID_OR_ALIAS } from '../common/constants/providers';
 import { PlaygroundAgentService } from './playground-agent.service';
 import { OpenaiOauthService } from '../routing/oauth/openai/openai-oauth.service';
@@ -38,6 +49,50 @@ import { buildForwardBody, derivePromptForHistory } from './playground-payload';
 import { consumeProviderStream } from './playground-stream';
 import type { RunPlaygroundDto } from './dto/run-playground.dto';
 import { ManifestRequest } from '../entities/request.entity';
+import { ResolveService } from '../routing/resolve/resolve.service';
+import { HeaderTierService } from '../routing/header-tiers/header-tier.service';
+import { MediaService, type MediaResolvedRoute } from '../routing/media/media.service';
+import { buildSyntheticTierProfile } from '../routing/proxy/synthetic-model-profile';
+
+/**
+ * A row the Playground model picker can render. Mirrors the routing
+ * `available-models` row and adds `synthetic` for the `auto-{tier}` entries
+ * that only the Playground lists (the routing UI never offers them).
+ */
+export interface PlaygroundCatalogModel {
+  model_name: string;
+  provider: string;
+  auth_type: AuthType;
+  input_price_per_token: number | null;
+  output_price_per_token: number | null;
+  context_window: number;
+  capability_reasoning: boolean;
+  capability_code: boolean;
+  capabilities?: readonly string[];
+  input_modalities: readonly string[];
+  output_modalities: readonly string[];
+  quality_score: number;
+  display_name: string | null;
+  synthetic: boolean;
+  tier_name?: string | null;
+  tier_color?: string | null;
+}
+
+/** The concrete provider/model a text run should forward to. */
+interface ResolvedTextRoute {
+  provider: string;
+  model: string;
+  authType?: AuthType;
+  keyLabel?: string;
+  route: PlaygroundResolvedRoute;
+  /**
+   * True when the request named a synthetic `auto-*` model and it resolved to
+   * a real route. False for a real model and for an unresolvable synthetic one.
+   */
+  syntheticResolved: boolean;
+}
+
+const AUTO_TIER_PATTERN = /^auto-(.+)$/i;
 
 @Injectable()
 export class PlaygroundService {
@@ -62,7 +117,72 @@ export class PlaygroundService {
     private readonly customProviderRepo: Repository<CustomProvider>,
     private readonly customProviders: CustomProviderService,
     private readonly opencodeGoCatalog: OpencodeGoCatalogService,
+    private readonly resolveService: ResolveService,
+    private readonly headerTiers: HeaderTierService,
+    private readonly modelDiscovery: ModelDiscoveryService,
+    private readonly mediaService: MediaService,
   ) {}
+
+  /**
+   * Models the Playground can run: every discovered model plus one synthetic
+   * `auto-{tier}` entry per enabled header tier that has an override route.
+   * The synthetic entries execute through the real routing resolver, so the
+   * Playground can test a harness's tier behaviour (primary + fallbacks)
+   * without a harness.
+   */
+  async listModels(ctx: TenantContext): Promise<PlaygroundCatalogModel[]> {
+    const agent = await this.playgroundAgent.resolve(ctx);
+    const discovered = await this.modelDiscovery.getModelsForAgent(agent.tenant_id, agent.id);
+
+    const rows: PlaygroundCatalogModel[] = discovered.map((m) => ({
+      model_name: m.id,
+      provider: m.provider,
+      auth_type: (m.authType ?? 'api_key') as AuthType,
+      input_price_per_token: m.inputPricePerToken,
+      output_price_per_token: m.outputPricePerToken,
+      context_window: m.contextWindow,
+      capability_reasoning: m.capabilityReasoning,
+      capability_code: m.capabilityCode,
+      ...(m.capabilities && m.capabilities.length > 0
+        ? { capabilities: m.capabilities as readonly string[] }
+        : {}),
+      input_modalities: m.inputModalities ?? ['text'],
+      output_modalities: m.outputModalities?.length ? m.outputModalities : ['text'],
+      quality_score: m.qualityScore,
+      display_name: m.displayName ?? null,
+      synthetic: false,
+    }));
+
+    const tiers = await this.headerTiers.list(agent.id);
+    for (const tier of tiers) {
+      if (!tier.enabled || !tier.override_route) continue;
+      const id = `auto-${tier.name.toLowerCase()}`;
+      if (rows.some((r) => r.model_name === id)) continue;
+      const profile = buildSyntheticTierProfile(tier, discovered);
+      rows.push({
+        model_name: id,
+        provider: 'manifest',
+        auth_type: 'api_key',
+        input_price_per_token: null,
+        output_price_per_token: null,
+        context_window: profile.contextWindow,
+        capability_reasoning: false,
+        capability_code: false,
+        ...(profile.features.length > 0
+          ? { capabilities: profile.features as readonly string[] }
+          : {}),
+        input_modalities: profile.inputModalities,
+        output_modalities: profile.outputModalities,
+        quality_score: 0,
+        display_name: `Auto · ${tier.name}`,
+        synthetic: true,
+        tier_name: tier.name,
+        tier_color: tier.badge_color,
+      });
+    }
+
+    return rows;
+  }
 
   /**
    * Streams one model's response over SSE. Failures *before* the stream opens
@@ -72,7 +192,32 @@ export class PlaygroundService {
    */
   async runStream(ctx: TenantContext, dto: RunPlaygroundDto, res: ExpressResponse): Promise<void> {
     let agent: { id: string; tenant_id: string; name: string };
-    let resolvedAgent: { id: string; tenant_id: string; name: string } | null = null;
+    try {
+      // The Playground always runs under the reserved per-tenant "Playground"
+      // agent (created on first use), so runs record under it in global Messages
+      // and route against the whole global provider pool — regardless of any
+      // agentName the client sends.
+      agent = await this.playgroundAgent.resolve(ctx);
+    } catch (err) {
+      const status = err instanceof HttpException ? err.getStatus() : 500;
+      const message = err instanceof Error ? err.message : String(err);
+      return this.sendPreStreamError(res, status, message);
+    }
+
+    const kind = await this.resolveOutputKind(agent, dto);
+    if (kind !== 'text') {
+      return this.runMedia(ctx, agent, dto, kind, res);
+    }
+    return this.runText(ctx, agent, dto, res);
+  }
+
+  /** Text / chat-completions path (the original Playground behaviour). */
+  private async runText(
+    ctx: TenantContext,
+    agent: { id: string; tenant_id: string; name: string },
+    dto: RunPlaygroundDto,
+    res: ExpressResponse,
+  ): Promise<void> {
     let authType: AuthType;
     let apiKey: string;
     let rawApiKey: string;
@@ -83,40 +228,53 @@ export class PlaygroundService {
     // with the proxy for minimax/qwen/zai/copilot/custom.
     let oauthResourceUrl: string | undefined;
     let providerRegion: string | null | undefined;
+    // The concrete provider/model the run forwards to. For a real model these
+    // equal the DTO values; for a synthetic `auto-*` model they are the route
+    // the tier resolver picked.
+    let fwdProvider = dto.provider;
+    let fwdModel = dto.model;
+    let route: PlaygroundResolvedRoute = this.directRoute(dto);
     try {
-      // The Playground always runs under the reserved per-tenant "Playground"
-      // agent (created on first use), so runs record under it in global Messages
-      // and route against the whole global provider pool — regardless of any
-      // agentName the client sends.
-      agent = await this.playgroundAgent.resolve(ctx);
-      resolvedAgent = agent;
+      const resolvedRoute = await this.resolveTextRoute(agent, dto);
+      fwdProvider = resolvedRoute.provider;
+      fwdModel = resolvedRoute.model;
+      route = resolvedRoute.route;
+
+      // A synthetic `auto-*` model that resolves to no available route is a
+      // configuration problem, not a missing provider connection — say so.
+      if (AUTO_TIER_PATTERN.test(dto.model) && !resolvedRoute.syntheticResolved) {
+        const message = `Synthetic model "${dto.model}" has no available route for this agent`;
+        await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
+        return this.sendPreStreamError(res, 404, message);
+      }
+
       const hasProvider = await this.providerKeyService.hasActiveProvider(
         agent.tenant_id,
-        dto.provider,
+        fwdProvider,
         agent.id,
       );
       if (!hasProvider) {
-        const message = `Provider "${dto.provider}" is not connected for this agent`;
+        const message = `Provider "${fwdProvider}" is not connected for this agent`;
         await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
         return this.sendPreStreamError(res, 404, message);
       }
       authType =
-        dto.authType ??
+        resolvedRoute.authType ??
         (await this.providerKeyService.getAuthType(
           agent.tenant_id,
-          dto.provider,
+          fwdProvider,
           undefined,
           agent.id,
         ));
       const key = await this.providerKeyService.selectProviderKey(
         agent.tenant_id,
-        dto.provider,
+        fwdProvider,
         authType,
-        dto.providerKeyLabel,
+        resolvedRoute.keyLabel ?? dto.providerKeyLabel,
         agent.id,
       );
       if (!key || key.apiKey === null) {
-        const message = `No usable API key found for provider "${dto.provider}"`;
+        const message = `No usable API key found for provider "${fwdProvider}"`;
         await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
         return this.sendPreStreamError(res, 404, message);
       }
@@ -124,7 +282,7 @@ export class PlaygroundService {
       providerKeyLabel = key.label;
       providerRegion = key.region;
       const resolved = await resolveApiKey(
-        dto.provider,
+        fwdProvider,
         rawApiKey,
         authType,
         agent.id,
@@ -138,7 +296,7 @@ export class PlaygroundService {
         providerKeyLabel,
       );
       if (resolved.apiKey === null) {
-        const message = `No usable API key found for provider "${dto.provider}"`;
+        const message = `No usable API key found for provider "${fwdProvider}"`;
         await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
         return this.sendPreStreamError(res, 404, message);
       }
@@ -147,7 +305,7 @@ export class PlaygroundService {
         rawApiKey =
           (await this.providerKeyService.getProviderApiKey(
             agent.tenant_id,
-            dto.provider,
+            fwdProvider,
             authType,
             providerKeyLabel,
             agent.id,
@@ -158,22 +316,20 @@ export class PlaygroundService {
       // field; it is forwarded as providerResource. MiniMax's resource URL is
       // applied as a base-URL override below, not here.
       providerResource =
-        authType === 'subscription' && dto.provider.toLowerCase() === 'gemini'
+        authType === 'subscription' && fwdProvider.toLowerCase() === 'gemini'
           ? resolved.resourceUrl
           : undefined;
     } catch (err) {
       const status = err instanceof HttpException ? err.getStatus() : 500;
       const message = err instanceof Error ? err.message : String(err);
-      if (resolvedAgent) {
-        await this.recordRequestRejection(
-          ctx.userId,
-          resolvedAgent,
-          dto,
-          status,
-          message,
-          status >= 500 ? 'internal' : 'config',
-        );
-      }
+      await this.recordRequestRejection(
+        ctx.userId,
+        agent,
+        dto,
+        status,
+        message,
+        status >= 500 ? 'internal' : 'config',
+      );
       return this.sendPreStreamError(res, status, message);
     }
 
@@ -185,15 +341,15 @@ export class PlaygroundService {
     // the proxy uses, so region overrides (minimax/qwen/zai) and vendor-prefix
     // stripping (copilot/minimax/zai/custom) match. Custom providers store their
     // endpoint on a DB row, fetched here and passed in.
-    const customProvider = CustomProviderService.isCustom(dto.provider)
+    const customProvider = CustomProviderService.isCustom(fwdProvider)
       ? await this.customProviderRepo.findOne({
-          where: { id: CustomProviderService.extractId(dto.provider), tenant_id: agent.tenant_id },
+          where: { id: CustomProviderService.extractId(fwdProvider), tenant_id: agent.tenant_id },
         })
       : null;
     const { customEndpoint, forwardModel } = resolveForwardEndpoint({
-      provider: dto.provider,
+      provider: fwdProvider,
       authType,
-      model: dto.model,
+      model: fwdModel,
       providerRegion,
       resourceUrl: oauthResourceUrl,
       customProvider,
@@ -204,7 +360,7 @@ export class PlaygroundService {
     let forward;
     try {
       const forwardOptions = {
-        provider: dto.provider,
+        provider: fwdProvider,
         apiKey,
         model: forwardModel,
         body: buildForwardBody(dto),
@@ -218,7 +374,7 @@ export class PlaygroundService {
       forward = await this.providerClient.forward(forwardOptions);
       if (forward.response.status === 401 && authType === 'subscription') {
         const refreshed = await refreshRejectedOAuthCredential(
-          dto.provider,
+          fwdProvider,
           rawApiKey,
           agent.id,
           agent.tenant_id,
@@ -234,11 +390,11 @@ export class PlaygroundService {
         );
         if (refreshed?.apiKey && refreshed.apiKey !== apiKey) {
           this.logger.log(
-            `OAuth token rejected upstream in Playground; refreshed provider=${dto.provider} agent=${agent.id}`,
+            `OAuth token rejected upstream in Playground; refreshed provider=${fwdProvider} agent=${agent.id}`,
           );
           apiKey = refreshed.apiKey;
           providerResource =
-            authType === 'subscription' && dto.provider.toLowerCase() === 'gemini'
+            authType === 'subscription' && fwdProvider.toLowerCase() === 'gemini'
               ? (refreshed.resourceUrl ?? providerResource)
               : providerResource;
           forward = await this.providerClient.forward({
@@ -254,7 +410,7 @@ export class PlaygroundService {
         await this.recordError(
           ctx.userId,
           agent,
-          dto,
+          this.recordDto(dto, fwdProvider, fwdModel),
           authType,
           502,
           message,
@@ -280,14 +436,23 @@ export class PlaygroundService {
       await this.recordError(
         ctx.userId,
         agent,
-        dto,
+        this.recordDto(dto, fwdProvider, fwdModel),
         authType,
         forward.response.status,
         bodyText,
         durationMs,
       );
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, errorSummary, providerKeyLabel),
+        this.errorColumn(
+          ctx.userId,
+          agent,
+          dto,
+          authType,
+          headers,
+          errorSummary,
+          providerKeyLabel,
+          route,
+        ),
       );
       return this.sendPreStreamError(res, 502, errorSummary);
     }
@@ -304,14 +469,23 @@ export class PlaygroundService {
       await this.recordError(
         ctx.userId,
         agent,
-        dto,
+        this.recordDto(dto, fwdProvider, fwdModel),
         authType,
         502,
         message,
         Date.now() - startedAt,
       );
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, message, providerKeyLabel),
+        this.errorColumn(
+          ctx.userId,
+          agent,
+          dto,
+          authType,
+          headers,
+          message,
+          providerKeyLabel,
+          route,
+        ),
       );
       send({ type: 'error', message });
       res.end();
@@ -322,7 +496,7 @@ export class PlaygroundService {
       const { content, usage, ttftMs, totalMs } = await consumeProviderStream(
         forward.response.body,
         forward,
-        dto.model,
+        fwdModel,
         this.providerClient,
         (text) => send({ type: 'delta', text }),
         startedAt,
@@ -341,16 +515,16 @@ export class PlaygroundService {
       // into an error one. It only refines the cost inputs below, and the raw
       // name is where the lookup starts from anyway.
       const canonicalProvider = await this.customProviders
-        .canonicalizeAgentMessageKeys(ctx.tenantId ?? '', dto.provider, dto.model)
-        .then(({ provider }) => provider ?? dto.provider)
-        .catch(() => dto.provider);
+        .canonicalizeAgentMessageKeys(ctx.tenantId ?? '', fwdProvider, fwdModel)
+        .then(({ provider }) => provider ?? fwdProvider)
+        .catch(() => fwdProvider);
       const cost = computeTokenCost({
         inputTokens,
         outputTokens,
         cacheReadTokens,
         cacheCreationTokens,
-        model: dto.model,
-        pricing: this.pricingCache.getByModel(dto.model, dto.provider),
+        model: fwdModel,
+        pricing: this.pricingCache.getByModel(fwdModel, fwdProvider),
         isSubscription: authType === 'subscription',
         // Same source order as the proxy recorder: a playground run against
         // the same provider must not report a different cost. That parity is
@@ -362,7 +536,7 @@ export class PlaygroundService {
         perRequestCostUsd:
           authType === 'subscription' &&
           PROVIDER_BY_ID_OR_ALIAS.get(canonicalProvider.toLowerCase())?.id === 'opencode-go'
-            ? await this.opencodeGoCatalog.resolveCostPerRequest(dto.model)
+            ? await this.opencodeGoCatalog.resolveCostPerRequest(fwdModel)
             : null,
         reportedCostUsd: usage?.reported_cost_usd,
         // The request start, not the completion time. A stream that opens at
@@ -374,14 +548,20 @@ export class PlaygroundService {
       });
       const tokensPerSec = outputTokens > 0 ? outputTokens / (Math.max(totalMs, 1) / 1000) : null;
 
-      await this.recordSuccess(ctx.userId, agent, dto, authType, {
-        inputTokens,
-        outputTokens,
-        cacheReadTokens,
-        cacheCreationTokens,
-        cost,
-        durationMs: totalMs,
-      });
+      await this.recordSuccess(
+        ctx.userId,
+        agent,
+        this.recordDto(dto, fwdProvider, fwdModel),
+        authType,
+        {
+          inputTokens,
+          outputTokens,
+          cacheReadTokens,
+          cacheCreationTokens,
+          cost,
+          durationMs: totalMs,
+        },
+      );
 
       const columnId = await this.history.saveColumn({
         createdByUserId: ctx.userId,
@@ -399,6 +579,8 @@ export class PlaygroundService {
         headers,
         errorMessage: null,
         metrics: { inputTokens, outputTokens, cost, durationMs: totalMs },
+        kind: 'text',
+        route,
       });
 
       send({
@@ -407,6 +589,8 @@ export class PlaygroundService {
         content,
         metrics: { cost, inputTokens, outputTokens, durationMs: totalMs, ttftMs, tokensPerSec },
         headers,
+        kind: 'text',
+        route,
       });
       res.end();
     } catch (err) {
@@ -418,13 +602,381 @@ export class PlaygroundService {
       }
       const message = err instanceof Error ? err.message : String(err);
       const durationMs = Date.now() - startedAt;
-      await this.recordError(ctx.userId, agent, dto, authType, 502, message, durationMs);
+      await this.recordError(
+        ctx.userId,
+        agent,
+        this.recordDto(dto, fwdProvider, fwdModel),
+        authType,
+        502,
+        message,
+        durationMs,
+      );
       await this.history.saveColumn(
-        this.errorColumn(ctx.userId, agent, dto, authType, headers, message, providerKeyLabel),
+        this.errorColumn(
+          ctx.userId,
+          agent,
+          dto,
+          authType,
+          headers,
+          message,
+          providerKeyLabel,
+          route,
+        ),
       );
       send({ type: 'error', message });
       if (!res.writableEnded) res.end();
     }
+  }
+
+  /**
+   * Image / video path. Delegates to MediaService so routing (synthetic
+   * `auto-*` tiers, header tiers, direct), credential resolution, recording
+   * and pricing are identical to the real `/v1/images|videos` surface — the
+   * Playground only differs in how the result reaches the client (SSE).
+   */
+  private async runMedia(
+    ctx: TenantContext,
+    agent: { id: string; tenant_id: string; name: string },
+    dto: RunPlaygroundDto,
+    kind: 'image' | 'video',
+    res: ExpressResponse,
+  ): Promise<void> {
+    const abort = new AbortController();
+    res.on('close', () => abort.abort());
+    const apiMode = kind === 'image' ? 'images' : 'videos';
+    const startedAt = Date.now();
+
+    let result: Awaited<ReturnType<MediaService['handle']>>;
+    try {
+      result = await this.mediaService.handle({
+        ctx: {
+          tenantId: agent.tenant_id,
+          agentId: agent.id,
+          agentName: agent.name,
+          userId: ctx.userId,
+        },
+        body: this.buildMediaBody(dto, kind),
+        headers: {},
+        apiMode,
+        signal: abort.signal,
+      });
+    } catch (err) {
+      if (abort.signal.aborted) {
+        if (!res.writableEnded) res.end();
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      return this.sendPreStreamError(res, 502, `Media request failed: ${message}`);
+    }
+
+    if (abort.signal.aborted) {
+      if (!res.writableEnded) res.end();
+      return;
+    }
+
+    const route = this.mediaRoute(result.resolvedRoute, dto);
+    const durationMs = Date.now() - startedAt;
+
+    if (result.status >= 400) {
+      const message = extractMediaErrorMessage(result.body);
+      // MediaService already recorded the failure in requests/agent_messages.
+      await this.history.saveColumn({
+        createdByUserId: ctx.userId,
+        agent,
+        runId: dto.runId,
+        prompt: derivePromptForHistory(dto),
+        model: dto.model,
+        provider: dto.provider,
+        authType: dto.authType ?? null,
+        providerKeyLabel: dto.providerKeyLabel ?? null,
+        displayName: null,
+        position: dto.position ?? 0,
+        status: 'error',
+        content: null,
+        headers: null,
+        errorMessage: message,
+        metrics: null,
+        kind,
+        route,
+      });
+      return this.sendPreStreamError(res, result.status, message);
+    }
+
+    const media =
+      kind === 'image'
+        ? this.imageOutput(result.body, dto.responseFormat)
+        : this.videoOutput(result.body);
+    const metrics = this.mediaMetrics(media, result.costUsd ?? null, durationMs, dto);
+
+    const columnId = await this.history.saveColumn({
+      createdByUserId: ctx.userId,
+      agent,
+      runId: dto.runId,
+      prompt: derivePromptForHistory(dto),
+      model: dto.model,
+      provider: dto.provider,
+      authType: dto.authType ?? null,
+      providerKeyLabel: dto.providerKeyLabel ?? null,
+      displayName: null,
+      position: dto.position ?? 0,
+      status: 'success',
+      content: null,
+      headers: null,
+      errorMessage: null,
+      metrics: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cost: metrics.cost,
+        durationMs,
+      },
+      kind,
+      media,
+      route,
+    });
+
+    initSseHeaders(res, {});
+    if (!res.writableEnded) {
+      const event: PlaygroundStreamEvent = {
+        type: 'done',
+        columnId,
+        content: '',
+        metrics,
+        headers: {},
+        kind,
+        media,
+        route,
+      };
+      res.write(`event: done\ndata: ${JSON.stringify(event)}\n\n`);
+      res.end();
+    }
+  }
+
+  /**
+   * Poll an asynchronous video task and, once it reaches a terminal status,
+   * finalize the playground column's media + cost. Delegates to
+   * MediaService.videoStatus for the provider call and the recording-side
+   * cost finalization.
+   */
+  async videoStatus(
+    ctx: TenantContext,
+    taskId: string,
+    columnId?: string,
+  ): Promise<{ status: number; media: PlaygroundVideoOutput; costUsd: number | null }> {
+    const agent = await this.playgroundAgent.resolve(ctx);
+    const result = await this.mediaService.videoStatus(
+      {
+        tenantId: agent.tenant_id,
+        agentId: agent.id,
+        agentName: agent.name,
+        userId: ctx.userId,
+      },
+      taskId,
+    );
+    const media = this.videoOutput(result.body);
+    const terminal = media.status === 'completed' || media.status === 'failed';
+    if (columnId && terminal) {
+      const owns = await this.history.columnBelongsToAgent(agent.tenant_id, agent.id, columnId);
+      if (owns) {
+        await this.history.updateColumnMedia(columnId, {
+          media,
+          status: media.status === 'failed' ? 'error' : 'success',
+          costUsd: result.costUsd ?? null,
+          durationMs: null,
+        });
+      }
+    }
+    return { status: result.status, media, costUsd: result.costUsd ?? null };
+  }
+
+  /* ── Modality / route resolution ───────────────────────────────── */
+
+  /**
+   * Decide whether a run is text, image or video. An explicit `outputKind`
+   * always wins; otherwise the selected model's advertised output modality
+   * (or, for a synthetic `auto-*` model, its tier's configured modality)
+   * decides. A prompt-only payload with no known modality defaults to image.
+   */
+  private async resolveOutputKind(
+    agent: { id: string; tenant_id: string },
+    dto: RunPlaygroundDto,
+  ): Promise<PlaygroundOutputKind> {
+    if (dto.outputKind) return dto.outputKind;
+    try {
+      if (AUTO_TIER_PATTERN.test(dto.model)) {
+        const resolved = await this.resolveService.resolveAutoTierModel(
+          agent.id,
+          agent.tenant_id,
+          dto.model,
+        );
+        if (resolved?.output_modality === 'image' || resolved?.output_modality === 'video') {
+          return resolved.output_modality;
+        }
+        if (resolved) return 'text';
+      }
+      const models = await this.modelDiscovery.getModelsForAgent(agent.tenant_id, agent.id);
+      const match =
+        models.find(
+          (m) => m.id === dto.model && m.provider.toLowerCase() === dto.provider.toLowerCase(),
+        ) ?? models.find((m) => m.id === dto.model);
+      const modalities = match?.outputModalities ?? [];
+      if (modalities.includes('video')) return 'video';
+      if (modalities.includes('image')) return 'image';
+    } catch (err) {
+      this.logger.warn(
+        `Playground modality inference failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return dto.prompt ? 'image' : 'text';
+  }
+
+  /**
+   * Resolve the concrete provider/model a text run forwards to. A synthetic
+   * `auto-{tier}` model is resolved through the same tier resolver the proxy
+   * uses (override route → available fallbacks); everything else passes
+   * through unchanged.
+   */
+  private async resolveTextRoute(
+    agent: { id: string; tenant_id: string },
+    dto: RunPlaygroundDto,
+  ): Promise<ResolvedTextRoute> {
+    if (AUTO_TIER_PATTERN.test(dto.model)) {
+      const resolved = await this.resolveService.resolveAutoTierModel(
+        agent.id,
+        agent.tenant_id,
+        dto.model,
+      );
+      if (resolved?.route) {
+        return {
+          provider: resolved.route.provider,
+          model: resolved.route.model,
+          authType: resolved.route.authType ?? dto.authType,
+          keyLabel: resolved.route.keyLabel ?? undefined,
+          route: {
+            provider: resolved.route.provider,
+            model: resolved.route.model,
+            tier: resolved.header_tier_name ?? null,
+            tierColor: resolved.header_tier_color ?? null,
+            synthetic: true,
+            requestedModel: dto.model,
+          },
+          syntheticResolved: true,
+        };
+      }
+    }
+    return {
+      provider: dto.provider,
+      model: dto.model,
+      authType: dto.authType,
+      keyLabel: dto.providerKeyLabel,
+      route: this.directRoute(dto),
+      syntheticResolved: false,
+    };
+  }
+
+  private directRoute(dto: RunPlaygroundDto): PlaygroundResolvedRoute {
+    return {
+      provider: dto.provider,
+      model: dto.model,
+      tier: null,
+      tierColor: null,
+      synthetic: AUTO_TIER_PATTERN.test(dto.model),
+      requestedModel: dto.model,
+    };
+  }
+
+  private mediaRoute(
+    resolved: MediaResolvedRoute | null | undefined,
+    dto: RunPlaygroundDto,
+  ): PlaygroundResolvedRoute | null {
+    if (!resolved) return null;
+    return {
+      provider: resolved.provider,
+      model: resolved.model,
+      tier: resolved.headerTierName ?? resolved.tier ?? null,
+      tierColor: resolved.headerTierColor ?? null,
+      synthetic: AUTO_TIER_PATTERN.test(dto.model),
+      requestedModel: dto.model,
+    };
+  }
+
+  /* ── Media helpers ─────────────────────────────────────────────── */
+
+  private buildMediaBody(dto: RunPlaygroundDto, kind: 'image' | 'video'): Record<string, unknown> {
+    const body: Record<string, unknown> = { model: dto.model, prompt: dto.prompt ?? '' };
+    if (kind === 'image') {
+      if (dto.n != null) body.n = dto.n;
+      if (dto.size) body.size = dto.size;
+      if (dto.ratio) body.ratio = dto.ratio;
+      if (dto.responseFormat) body.response_format = dto.responseFormat;
+      if (dto.referenceImages?.length) body.image = dto.referenceImages;
+      return body;
+    }
+    if (dto.size) body.size = dto.size;
+    if (dto.ratio) body.ratio = dto.ratio;
+    if (dto.seconds != null) body.seconds = dto.seconds;
+    if (dto.mode) body.mode = dto.mode;
+    if (dto.firstFrame) body.first_frame = dto.firstFrame;
+    if (dto.lastFrame) body.last_frame = dto.lastFrame;
+    if (dto.referenceImages?.length) body.images = dto.referenceImages;
+    return body;
+  }
+
+  private imageOutput(body: unknown, responseFormat?: string): PlaygroundImageOutput {
+    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+    const data = record['data'];
+    const images = Array.isArray(data)
+      ? data.filter((d): d is Record<string, unknown> => !!d && typeof d === 'object')
+      : [];
+    return {
+      kind: 'image',
+      images: images as PlaygroundImageOutput['images'],
+      responseFormat: responseFormat ?? null,
+    };
+  }
+
+  private videoOutput(body: unknown): PlaygroundVideoOutput {
+    const record = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
+    const status = (
+      typeof record['status'] === 'string' ? record['status'] : 'queued'
+    ) as VideoStatus;
+    const errorRecord = record['error'];
+    const error =
+      typeof errorRecord === 'string'
+        ? errorRecord
+        : errorRecord && typeof errorRecord === 'object'
+          ? (((errorRecord as { message?: unknown }).message as string | undefined) ?? null)
+          : null;
+    return {
+      kind: 'video',
+      taskId: typeof record['id'] === 'string' ? record['id'] : '',
+      status,
+      ...(typeof record['url'] === 'string' ? { url: record['url'] } : {}),
+      ...(typeof record['seconds'] === 'number' ? { seconds: record['seconds'] } : {}),
+      ...(typeof record['size'] === 'string' ? { size: record['size'] } : {}),
+      ...(typeof record['progress'] === 'number' ? { progress: record['progress'] } : {}),
+      error,
+    };
+  }
+
+  private mediaMetrics(
+    media: PlaygroundMediaOutput,
+    cost: number | null,
+    durationMs: number,
+    dto: RunPlaygroundDto,
+  ): PlaygroundMetrics {
+    return {
+      cost,
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs,
+      ...(media.kind === 'image' ? { imageCount: media.images.length } : {}),
+      ...(media.kind === 'video' ? { videoSeconds: media.seconds ?? dto.seconds ?? null } : {}),
+    };
+  }
+
+  /** A DTO copy that records the concrete provider/model that served the run. */
+  private recordDto(dto: RunPlaygroundDto, provider: string, model: string): RunPlaygroundDto {
+    return { ...dto, provider, model };
   }
 
   private sendPreStreamError(res: ExpressResponse, status: number, message: string): void {
@@ -440,6 +992,7 @@ export class PlaygroundService {
     headers: Record<string, string>,
     errorMessage: string,
     providerKeyLabel?: string,
+    route?: PlaygroundResolvedRoute | null,
   ): Parameters<PlaygroundHistoryService['saveColumn']>[0] {
     return {
       createdByUserId,
@@ -457,6 +1010,8 @@ export class PlaygroundService {
       headers,
       errorMessage,
       metrics: null,
+      kind: 'text',
+      route: route ?? null,
     };
   }
 
@@ -693,4 +1248,18 @@ export class PlaygroundService {
     const snippet = scrubSecrets(bodyText).slice(0, 500).trim();
     return snippet ? `Provider returned ${status}: ${snippet}` : `Provider returned ${status}`;
   }
+}
+
+/** Best-effort human-readable message from a media error envelope. */
+function extractMediaErrorMessage(body: unknown): string {
+  if (typeof body === 'string' && body.length > 0) return body;
+  if (body && typeof body === 'object') {
+    const error = (body as { error?: unknown }).error;
+    if (typeof error === 'string' && error.length > 0) return error;
+    if (error && typeof error === 'object') {
+      const message = (error as { message?: unknown }).message;
+      if (typeof message === 'string' && message.length > 0) return message;
+    }
+  }
+  return 'Media provider request failed';
 }

@@ -40,9 +40,7 @@ describe('PlaygroundRecentSidebar (history)', () => {
         onSelect={noop}
       />
     ));
-    expect(container.textContent).toContain(
-      'No runs yet. Send a prompt to see your history here.',
-    );
+    expect(container.textContent).toContain('No runs yet. Send a prompt to see your history here.');
   });
 
   it('shows a "Loading…" indicator while loading is true', () => {
@@ -323,5 +321,74 @@ describe('PlaygroundRecentSidebar (history)', () => {
       />
     ));
     expect(container.textContent).toContain('solo');
+  });
+});
+
+describe('PlaygroundRecentSidebar — rename / delete', () => {
+  it('offers Rename and Delete in the run menu when handlers are provided', () => {
+    const { container } = render(() => (
+      <PlaygroundRecentSidebar
+        open
+        loading={false}
+        runs={[run({ id: 'r-1' })]}
+        activeRunId={null}
+        onToggle={noop}
+        onSelect={noop}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+      />
+    ));
+    fireEvent.click(container.querySelector('.playground-recent__more')!);
+    expect(container.textContent).toContain('Rename');
+    expect(container.textContent).toContain('Delete');
+  });
+
+  it('commits a rename on Enter', async () => {
+    const onRename = vi.fn();
+    const { container } = render(() => (
+      <PlaygroundRecentSidebar
+        open
+        loading={false}
+        runs={[run({ id: 'r-1', prompt: 'old title' })]}
+        activeRunId={null}
+        onToggle={noop}
+        onSelect={noop}
+        onRename={onRename}
+      />
+    ));
+    fireEvent.click(container.querySelector('.playground-recent__more')!);
+    const renameItem = Array.from(container.querySelectorAll('.playground-recent__menu-item')).find(
+      (el) => el.textContent?.includes('Rename'),
+    )!;
+    fireEvent.click(renameItem);
+
+    const input = container.querySelector<HTMLInputElement>('.playground-recent__rename')!;
+    expect(input).not.toBeNull();
+    fireEvent.input(input, { target: { value: 'new title' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(onRename).toHaveBeenCalledWith('r-1', 'new title'));
+  });
+
+  it('calls onDelete when Delete is clicked', () => {
+    const onDelete = vi.fn();
+    const { container } = render(() => (
+      <PlaygroundRecentSidebar
+        open
+        loading={false}
+        runs={[run({ id: 'r-9' })]}
+        activeRunId={null}
+        onToggle={noop}
+        onSelect={noop}
+        onDelete={onDelete}
+      />
+    ));
+    fireEvent.click(container.querySelector('.playground-recent__more')!);
+    const deleteItem = Array.from(container.querySelectorAll('.playground-recent__menu-item')).find(
+      (el) => el.textContent?.includes('Delete'),
+    )!;
+    fireEvent.click(deleteItem);
+
+    expect(onDelete).toHaveBeenCalledWith('r-9');
   });
 });

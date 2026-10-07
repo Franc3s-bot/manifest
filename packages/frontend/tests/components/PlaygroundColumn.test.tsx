@@ -84,11 +84,7 @@ describe('PlaygroundColumn', () => {
 
   it('hides the Retry button in read-only mode', () => {
     const { queryByText } = render(() => (
-      <PlaygroundColumn
-        {...baseProps}
-        readOnly
-        column={col({ status: 'error', error: 'boom' })}
-      />
+      <PlaygroundColumn {...baseProps} readOnly column={col({ status: 'error', error: 'boom' })} />
     ));
     expect(queryByText('Retry')).toBeNull();
   });
@@ -155,13 +151,11 @@ describe('PlaygroundColumn', () => {
 
     it('disables key badge in read-only mode', () => {
       const { container } = render(() => (
-        <PlaygroundColumn
-          {...baseProps}
-          readOnly
-          column={col({ providerKeyLabel: 'Work Key' })}
-        />
+        <PlaygroundColumn {...baseProps} readOnly column={col({ providerKeyLabel: 'Work Key' })} />
       ));
-      const badge = container.querySelector('button.playground-column__key-badge') as HTMLButtonElement;
+      const badge = container.querySelector(
+        'button.playground-column__key-badge',
+      ) as HTMLButtonElement;
       expect(badge).not.toBeNull();
       expect(badge.disabled).toBe(true);
       expect(badge.classList.contains('playground-column__key-badge--readonly')).toBe(true);
@@ -224,9 +218,7 @@ describe('PlaygroundColumn', () => {
       const staticStar = container.querySelector('.playground-column__best--static');
       expect(staticStar).not.toBeNull();
       expect(staticStar!.tagName.toLowerCase()).toBe('span');
-      expect(staticStar!.getAttribute('aria-label')).toBe(
-        'GPT-4o Mini was marked the best answer',
-      );
+      expect(staticStar!.getAttribute('aria-label')).toBe('GPT-4o Mini was marked the best answer');
       expect(container.querySelector('button.playground-column__best')).toBeNull();
     });
 
@@ -350,8 +342,115 @@ describe('PlaygroundColumn', () => {
       <PlaygroundColumn {...baseProps} column={col({ provider: 'SomeWeirdProvider' })} />
     ));
     // Component still renders the title/name without throwing.
-    expect(container.querySelector('.playground-column__name')?.textContent).toBe(
-      'GPT-4o Mini',
+    expect(container.querySelector('.playground-column__name')?.textContent).toBe('GPT-4o Mini');
+  });
+});
+
+describe('PlaygroundColumn — media output', () => {
+  it('renders an image gallery for an image column', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          kind: 'image',
+          status: 'success',
+          media: {
+            kind: 'image',
+            images: [{ url: 'https://cdn/a.png' }, { url: 'https://cdn/b.png' }],
+          },
+        })}
+      />
+    ));
+    const images = container.querySelectorAll('.playground-media__image img');
+    expect(images).toHaveLength(2);
+    expect(images[0]!.getAttribute('src')).toBe('https://cdn/a.png');
+  });
+
+  it('renders a b64 image as a data URI', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          kind: 'image',
+          status: 'success',
+          media: { kind: 'image', images: [{ b64_json: 'AAAA' }] },
+        })}
+      />
+    ));
+    expect(container.querySelector('.playground-media__image img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,AAAA',
     );
+  });
+
+  it('renders a video player once the task completes', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          kind: 'video',
+          status: 'success',
+          media: { kind: 'video', taskId: 't1', status: 'completed', url: 'https://cdn/v.mp4' },
+        })}
+      />
+    ));
+    expect(container.querySelector('.playground-media__video')?.getAttribute('src')).toBe(
+      'https://cdn/v.mp4',
+    );
+  });
+
+  it('renders an in-progress status while the video task is queued', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          kind: 'video',
+          status: 'loading',
+          media: { kind: 'video', taskId: 't1', status: 'processing' },
+        })}
+      />
+    ));
+    expect(container.textContent).toContain('Generating video');
+    expect(container.querySelector('.playground-media__video')).toBeNull();
+  });
+
+  it('shows the resolved route badge for a synthetic model', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          status: 'success',
+          response: 'hi',
+          route: {
+            provider: 'anthropic',
+            model: 'claude-sonnet-4',
+            tier: 'Standard',
+            synthetic: true,
+            requestedModel: 'auto-standard',
+          },
+        })}
+      />
+    ));
+    const badge = container.querySelector('.playground-column__route');
+    expect(badge?.textContent).toContain('claude-sonnet-4');
+    expect(badge?.textContent).toContain('Standard');
+  });
+
+  it('hides the route badge for a direct (non-synthetic) route', () => {
+    const { container } = render(() => (
+      <PlaygroundColumn
+        {...baseProps}
+        column={col({
+          status: 'success',
+          response: 'hi',
+          route: {
+            provider: 'openai',
+            model: 'gpt-4o',
+            synthetic: false,
+            requestedModel: 'gpt-4o',
+          },
+        })}
+      />
+    ));
+    expect(container.querySelector('.playground-column__route')).toBeNull();
   });
 });

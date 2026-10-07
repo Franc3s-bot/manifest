@@ -8,7 +8,9 @@ interface RepoMock {
   find: jest.Mock;
   findOne: jest.Mock;
   insert: jest.Mock;
+  update: jest.Mock;
   delete: jest.Mock;
+  count: jest.Mock;
   createQueryBuilder: jest.Mock;
 }
 
@@ -125,14 +127,18 @@ function buildRepos(): {
     find: jest.fn(),
     findOne: jest.fn(),
     insert: jest.fn().mockResolvedValue(undefined),
-    delete: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    count: jest.fn().mockResolvedValue(0),
     createQueryBuilder: qb,
   };
   const columnRepo: RepoMock = {
     find: jest.fn(),
     findOne: jest.fn(),
     insert: jest.fn().mockResolvedValue(undefined),
-    delete: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    count: jest.fn().mockResolvedValue(0),
     createQueryBuilder: jest.fn(),
   };
   return { runRepo, columnRepo, insertQb, selectQb, updateQb };
@@ -718,6 +724,143 @@ describe('PlaygroundHistoryService', () => {
       updateQb.execute.mockResolvedValueOnce({ affected: 1, raw: [{}] });
       const best = await service.setBestColumn('tenant-1', 'run-1', null);
       expect(best).toBeNull();
+    });
+  });
+});
+
+describe('PlaygroundHistoryService — delete / rename / media', () => {
+  describe('deleteRun', () => {
+    it('deletes the run scoped by tenant + agent', async () => {
+      const { service, runRepo } = buildService();
+      runRepo.delete.mockResolvedValueOnce({ affected: 1 });
+
+      const out = await service.deleteRun('tenant-1', 'agent-1', 'run-1');
+
+      expect(out).toEqual({ deleted: true });
+      expect(runRepo.delete).toHaveBeenCalledWith({
+        id: 'run-1',
+        tenant_id: 'tenant-1',
+        agent_id: 'agent-1',
+      });
+    });
+
+    it('throws NotFound when nothing was deleted', async () => {
+      const { service, runRepo } = buildService();
+      runRepo.delete.mockResolvedValueOnce({ affected: 0 });
+      await expect(service.deleteRun('tenant-1', 'agent-1', 'run-x')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('deleteColumn', () => {
+    it('deletes the column and removes an emptied run', async () => {
+      const { service, runRepo, columnRepo } = buildService();
+      columnRepo.findOne.mockResolvedValueOnce({ id: 'col-1', playground_run_id: 'run-1' });
+      runRepo.findOne.mockResolvedValueOnce({ id: 'run-1' });
+      columnRepo.count.mockResolvedValueOnce(0);
+
+      const out = await service.deleteColumn('tenant-1', 'agent-1', 'col-1');
+
+      expect(out).toEqual({ deleted: true, runDeleted: true });
+      expect(columnRepo.delete).toHaveBeenCalledWith({ id: 'col-1' });
+      expect(runRepo.delete).toHaveBeenCalledWith({ id: 'run-1' });
+    });
+
+    it('keeps the run when other columns remain', async () => {
+      const { service, runRepo, columnRepo } = buildService();
+      columnRepo.findOne.mockResolvedValueOnce({ id: 'col-1', playground_run_id: 'run-1' });
+      runRepo.findOne.mockResolvedValueOnce({ id: 'run-1' });
+      columnRepo.count.mockResolvedValueOnce(2);
+
+      const out = await service.deleteColumn('tenant-1', 'agent-1', 'col-1');
+
+      expect(out).toEqual({ deleted: true, runDeleted: false });
+      expect(runRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFound when the column belongs to another agent', async () => {
+      const { service, runRepo, columnRepo } = buildService();
+      columnRepo.findOne.mockResolvedValueOnce({ id: 'col-1', playground_run_id: 'run-1' });
+      runRepo.findOne.mockResolvedValueOnce(null);
+      await expect(service.deleteColumn('tenant-1', 'agent-1', 'col-1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('renameRun', () => {
+    it('trims and persists the new prompt', async () => {
+      const { service, runRepo } = buildService();
+      const out = await service.renameRun('tenant-1', 'agent-1', 'run-1', '  new title  ');
+      expect(out).toEqual({ prompt: 'new title' });
+      expect(runRepo.update).toHaveBeenCalledWith(
+        { id: 'run-1', tenant_id: 'tenant-1', agent_id: 'agent-1' },
+        { prompt: 'new title' },
+      );
+    });
+
+    it('rejects an empty title', async () => {
+      const { service } = buildService();
+      await expect(service.renameRun('tenant-1', 'agent-1', 'run-1', '   ')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('columnBelongsToAgent', () => {
+    it('is true when the run is owned by the agent', async () => {
+      const { service, runRepo, columnRepo } = buildService();
+      columnRepo.findOne.mockResolvedValueOnce({ id: 'col-1', playground_run_id: 'run-1' });
+      runRepo.findOne.mockResolvedValueOnce({ id: 'run-1' });
+      await expect(service.columnBelongsToAgent('tenant-1', 'agent-1', 'col-1')).resolves.toBe(
+        true,
+      );
+    });
+
+    it('is false when the column is unknown', async () => {
+      const { service, columnRepo } = buildService();
+      columnRepo.findOne.mockResolvedValueOnce(null);
+      await expect(service.columnBelongsToAgent('tenant-1', 'agent-1', 'col-x')).resolves.toBe(
+        false,
+      );
+    });
+  });
+
+  describe('updateColumnMedia', () => {
+    it('patches media, status and cost', async () => {
+      const { service, columnRepo } = buildService();
+      await service.updateColumnMedia('col-1', {
+        media: { kind: 'video', taskId: 't', status: 'completed' },
+        status: 'success',
+        costUsd: 0.5,
+      });
+      expect(columnRepo.update).toHaveBeenCalledWith(
+        { id: 'col-1' },
+        expect.objectContaining({ status: 'success', cost_usd: 0.5 }),
+      );
+    });
+
+    it('is a no-op with an empty patch', async () => {
+      const { service, columnRepo } = buildService();
+      await service.updateColumnMedia('col-1', {});
+      expect(columnRepo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  it('persists kind/media/route on a new column', async () => {
+    const { service, columnRepo } = buildService();
+    await service.saveColumn(
+      baseInput({
+        kind: 'image',
+        media: { kind: 'image', images: [{ url: 'https://cdn/x.png' }] },
+        route: { provider: 'agnes', model: 'agnes-image-2.1-flash', synthetic: false },
+      }) as never,
+    );
+    const inserted = columnRepo.insert.mock.calls[0][0];
+    expect(inserted).toMatchObject({
+      output_kind: 'image',
+      media: { kind: 'image', images: [{ url: 'https://cdn/x.png' }] },
     });
   });
 });

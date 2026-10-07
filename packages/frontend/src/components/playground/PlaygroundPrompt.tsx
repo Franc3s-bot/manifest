@@ -16,6 +16,10 @@ interface Props {
   disabled: boolean;
   running: boolean;
   headersSlot?: JSX.Element;
+  /** Run-level input controls (attachments, media options) above the textarea. */
+  optionsSlot?: JSX.Element;
+  /** Image files pasted into the textarea, forwarded to the attachments handler. */
+  onPasteImages?: (files: File[]) => void;
   historyOpen?: boolean;
   onHeightChange?: (height: number) => void;
   ref?: (el: HTMLTextAreaElement) => void;
@@ -94,6 +98,7 @@ const PlaygroundPrompt: Component<Props> = (props) => {
           submit();
         }}
       >
+        <Show when={props.optionsSlot}>{props.optionsSlot}</Show>
         <textarea
           ref={(el) => {
             setRef(el);
@@ -109,6 +114,16 @@ const PlaygroundPrompt: Component<Props> = (props) => {
             autoGrow();
           }}
           onKeyDown={handleKeyDown}
+          onPaste={(event) => {
+            if (!props.onPasteImages) return;
+            const files = Array.from(event.clipboardData?.files ?? []).filter((f) =>
+              f.type.startsWith('image/'),
+            );
+            if (files.length > 0) {
+              event.preventDefault();
+              props.onPasteImages(files);
+            }
+          }}
           aria-label="Run prompt"
         />
         <div class="playground-prompt__toolbar">

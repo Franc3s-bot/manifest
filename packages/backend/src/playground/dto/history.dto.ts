@@ -1,8 +1,23 @@
-import { IsUUID, ValidateIf } from 'class-validator';
+import { IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 
 export class RunIdParamDto {
   @IsUUID()
   runId!: string;
+}
+
+export class ColumnIdParamDto {
+  @IsUUID()
+  runId!: string;
+
+  @IsUUID()
+  columnId!: string;
+}
+
+export class RenameRunDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(10_000)
+  prompt!: string;
 }
 
 export class SetBestColumnDto {
