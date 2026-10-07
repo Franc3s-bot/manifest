@@ -219,10 +219,61 @@ describe("HeaderTierModal", () => {
           header_key: "x-manifest-tier",
           header_value: "premium",
           badge_color: "indigo",
+          output_modality: "text",
         });
       });
       expect(onSaved).toHaveBeenCalled();
       expect(onClose).toHaveBeenCalled();
+    });
+
+    it("creates an image tier in one step, without a follow-up modality PATCH", async () => {
+      mockCreateHeaderTier.mockResolvedValue({
+        ...existingTier,
+        id: "ht-img",
+        name: "Images",
+        output_modality: "image",
+      });
+      const onSaved = vi.fn();
+      const { container } = render(() => (
+        <HeaderTierModal
+          agentName="demo"
+          existingTiers={[]}
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />
+      ));
+      fireEvent.input(container.querySelector("#header-tier-name") as HTMLInputElement, {
+        target: { value: "Images" },
+      });
+      fireEvent.input(container.querySelector("#header-tier-key") as HTMLInputElement, {
+        target: { value: "x-manifest-tier" },
+      });
+      fireEvent.input(container.querySelector("#header-tier-value") as HTMLInputElement, {
+        target: { value: "image" },
+      });
+      const imageBtn = Array.from(container.querySelectorAll("button")).find(
+        (b) => b.textContent === "Image",
+      ) as HTMLButtonElement;
+      fireEvent.click(imageBtn);
+
+      fireEvent.click(
+        Array.from(container.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Create tier"),
+        ) as HTMLButtonElement,
+      );
+
+      await waitFor(() => {
+        expect(mockCreateHeaderTier).toHaveBeenCalledWith("demo", {
+          name: "Images",
+          header_key: "x-manifest-tier",
+          header_value: "image",
+          badge_color: "indigo",
+          output_modality: "image",
+        });
+      });
+      // The modality travels with the create call, so no second round-trip.
+      expect(mockSetHeaderTierOutputModality).not.toHaveBeenCalled();
+      expect(onSaved).toHaveBeenCalled();
     });
 
     it("shows a name error when the name is empty after a submission attempt", async () => {

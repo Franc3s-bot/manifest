@@ -181,7 +181,10 @@ const HeaderTierModal: Component<Props> = (props) => {
       };
       let saved = editingTier
         ? await updateHeaderTier(props.agentName, editingTier.id, payload)
-        : await createHeaderTier(props.agentName, payload);
+        : await createHeaderTier(props.agentName, {
+            ...payload,
+            output_modality: outputModality(),
+          });
       // Persist response mode change if toggled
       const newMode: ResponseMode = streamMode() ? 'stream' : 'buffered';
       if (saved.response_mode !== newMode) {

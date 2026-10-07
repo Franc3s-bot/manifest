@@ -31,6 +31,8 @@ export interface CreateHeaderTierInput {
   header_key: string;
   header_value: string;
   badge_color: TierColor;
+  /** Set at creation so a media tier can be created in one step. */
+  output_modality?: OutputModality;
 }
 
 export function listHeaderTiers(agentName: string) {

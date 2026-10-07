@@ -32,13 +32,15 @@ import {
   responseModeFromDto,
 } from '../dto/routing.dto';
 import { HeaderTierService } from './header-tier.service';
-import { AUTH_TYPES, type TierColor } from 'manifest-shared';
+import { AUTH_TYPES, type OutputModality, type TierColor } from 'manifest-shared';
 
 interface CreateHeaderTierBody {
   name: string;
   header_key: string;
   header_value: string;
   badge_color: TierColor;
+  /** Optional: create the tier directly as an image/video tier. */
+  output_modality?: OutputModality;
 }
 
 interface UpdateHeaderTierBody {
