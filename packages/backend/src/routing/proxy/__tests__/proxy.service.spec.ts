@@ -1,6 +1,7 @@
 import { ManifestError } from '../../../common/errors/manifest-error';
 import { ConfigService } from '@nestjs/config';
 import {
+  deriveAutofixStatus,
   getProviderParamSpecs,
   type AuthType,
   type KeyRotationRule,
@@ -25,7 +26,8 @@ import type { ThinkingBlockCache } from '../thinking-block-cache';
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import type { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
 import type { KeyRotationRuleService } from '../../routing-core/key-rotation-rule.service';
-import type { AutofixService } from '../../autofix/autofix.service';
+import { AutofixService } from '../../autofix/autofix.service';
+import type { HealingClient } from '../../autofix/healing-client';
 import { ReasoningContentCache } from '../reasoning-content-cache';
 import type { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import type { DiscoveredModel } from '../../../model-discovery/model-fetcher';
@@ -983,6 +985,143 @@ describe('ProxyService — orchestration', () => {
         agentId: 'agent-1',
         scopeKey: 'tier:standard',
       });
+    });
+  });
+
+  describe('autofix healed streaming retry', () => {
+    // The real AutofixService, so the request verdict and the Phoenix outcome
+    // report are the ones production derives from the retry.
+    let healingClient: { heal: jest.Mock; reportOutcome: jest.Mock };
+
+    beforeEach(() => {
+      // clearAllMocks keeps implementations; start each test from a clean peek.
+      mockedPeek.mockReset();
+      healingClient = {
+        heal: jest.fn().mockResolvedValue({
+          status: 'patched',
+          issueId: 'issue-1',
+          patchId: 'patch-1',
+          healAttemptId: 'heal-1',
+          healedBody: { model: 'gpt-4o', max_tokens: 5 },
+        }),
+        reportOutcome: jest.fn().mockResolvedValue({ healAttemptId: 'heal-1' }),
+      };
+      const realAutofix = new AutofixService(
+        healingClient as unknown as HealingClient,
+        { findOne: jest.fn().mockResolvedValue({ id: 'agent-1', autofix_enabled: true }) } as never,
+        { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService,
+        {
+          getRule: jest.fn().mockResolvedValue(null),
+          list: jest.fn().mockResolvedValue([]),
+        } as unknown as KeyRotationRuleService,
+      );
+      (svc as unknown as { autofixService: AutofixService }).autofixService = realAutofix;
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('openai', 'api_key', 'gpt-4o'),
+        fallback_routes: [route('anthropic', 'api_key', 'claude')],
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockImplementation(
+        async () =>
+          ({
+            response: new Response('{"error":{"message":"bad param"}}', { status: 400 }),
+            wireRequestBody: { model: 'gpt-4o', max_tokens: 7 },
+            wireApiMode: 'chat_completions',
+            retryWireBody: jest.fn(),
+            isGoogle: false,
+            isAnthropic: false,
+            isChatGpt: false,
+          }) as never,
+      );
+      fallbackService.retryWireBody.mockResolvedValue({
+        response: new Response(new ReadableStream(), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      } as never);
+      fallbackService.tryFallbacks.mockResolvedValue({
+        success: {
+          forward: { response: okResponse(), isGoogle: false, isAnthropic: true, isChatGpt: false },
+          model: 'claude',
+          provider: 'anthropic',
+          fallbackIndex: 0,
+        },
+        failures: [],
+      } as never);
+    });
+
+    const streamOpts = () =>
+      baseOpts({ body: { messages: [{ role: 'user', content: 'hi' }], stream: true } });
+
+    it('does not credit Autofix when the healed stream fails warm-up and a fallback serves', async () => {
+      mockedPeek.mockResolvedValue({
+        ok: false,
+        reason: 'timeout',
+        message: 'No data within 15000ms',
+      } as never);
+
+      const result = await svc.proxyRequest(streamOpts());
+
+      expect(result.meta.fallbackFromModel).toBe('gpt-4o');
+      expect(deriveAutofixStatus(result.autofix)).toBe('retry_failed');
+      const retry = result.autofix?.chain.find((entry) => entry.origin === 'autofix');
+      expect(retry?.http_status).toBe(502);
+      expect(healingClient.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        expect.objectContaining({
+          retryStatusCode: 502,
+          error: expect.objectContaining({
+            message: expect.stringContaining('No data within 15000ms'),
+          }),
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('still credits Autofix when the healed stream delivers data', async () => {
+      mockedPeek.mockImplementation(async () => ({ ok: true, stream: new ReadableStream() }));
+
+      const result = await svc.proxyRequest(streamOpts());
+
+      expect(result.meta.fallbackFromModel).toBeUndefined();
+      expect(result.forward.response.status).toBe(200);
+      expect(deriveAutofixStatus(result.autofix)).toBe('retry_succeeded');
+      expect(healingClient.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        { retryStatusCode: 200 },
+        expect.anything(),
+      );
+      expect(fallbackService.tryFallbacks).not.toHaveBeenCalled();
+    });
+
+    it('only warms up a healed retry that returned a streaming body', async () => {
+      fallbackService.retryWireBody
+        .mockResolvedValueOnce({
+          response: new Response('{"error":{"message":"still bad"}}', { status: 400 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        } as never)
+        .mockResolvedValueOnce({
+          response: new Response(null, { status: 200 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        } as never);
+
+      const failed = await svc.proxyRequest(streamOpts());
+      expect(deriveAutofixStatus(failed.autofix)).toBe('retry_failed');
+      expect(failed.meta.fallbackFromModel).toBe('gpt-4o');
+
+      const bodiless = await svc.proxyRequest(streamOpts());
+      expect(deriveAutofixStatus(bodiless.autofix)).toBe('retry_succeeded');
+      expect(mockedPeek).not.toHaveBeenCalled();
     });
   });
 

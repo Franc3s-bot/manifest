@@ -138,6 +138,24 @@ describe('ProxyRateLimiter', () => {
       expect(rates.has('old-user-0')).toBe(false);
       expect(rates.has('new-user')).toBe(true);
     });
+
+    it('evicts the oldest IP entry when the IP map exceeds 50K entries', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ipRates = (limiter as any).ipRates as Map<
+        string,
+        { count: number; windowStart: number }
+      >;
+
+      for (let i = 0; i < 50_000; i++) {
+        ipRates.set(`old-ip-${i}`, { count: 1, windowStart: Date.now() });
+      }
+
+      limiter.checkIpLimit('10.0.0.1');
+
+      expect(ipRates.size).toBe(50_000);
+      expect(ipRates.has('old-ip-0')).toBe(false);
+      expect(ipRates.has('10.0.0.1')).toBe(true);
+    });
   });
 
   describe('evictExpired', () => {
@@ -420,6 +438,54 @@ describe('ProxyRateLimiter', () => {
 
       expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
       clearIntervalSpy.mockRestore();
+    });
+  });
+
+  describe('env-configurable caps', () => {
+    const withEnv = (env: Record<string, string>, fn: (l: ProxyRateLimiter) => void) => {
+      const saved: Record<string, string | undefined> = {};
+      for (const [k, v] of Object.entries(env)) {
+        saved[k] = process.env[k];
+        process.env[k] = v;
+      }
+      const l = new ProxyRateLimiter();
+      try {
+        fn(l);
+      } finally {
+        l.onModuleDestroy();
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+    };
+
+    it('honors MANIFEST_RATE_MAX_REQUESTS', () => {
+      withEnv({ MANIFEST_RATE_MAX_REQUESTS: '3' }, (l) => {
+        l.checkLimit('user-env');
+        l.checkLimit('user-env');
+        l.checkLimit('user-env');
+        expect(() => l.checkLimit('user-env')).toThrow(HttpException);
+      });
+    });
+
+    it('honors MANIFEST_IP_RATE_MAX_REQUESTS', () => {
+      withEnv({ MANIFEST_IP_RATE_MAX_REQUESTS: '2' }, (l) => {
+        l.checkIpLimit('10.0.0.9');
+        l.checkIpLimit('10.0.0.9');
+        expect(() => l.checkIpLimit('10.0.0.9')).toThrow(HttpException);
+      });
+    });
+
+    it('keeps the default when the override is not a plain positive integer', () => {
+      for (const bad of ['0', '-5', 'abc', '2.5', '', '1e3', '0x10']) {
+        withEnv({ MANIFEST_RATE_MAX_REQUESTS: bad, MANIFEST_IP_RATE_MAX_REQUESTS: bad }, (l) => {
+          for (let i = 0; i < 200; i++) l.checkLimit('tenant-bad');
+          expect(() => l.checkLimit('tenant-bad')).toThrow(HttpException);
+          for (let i = 0; i < 500; i++) l.checkIpLimit('10.0.0.10');
+          expect(() => l.checkIpLimit('10.0.0.10')).toThrow(HttpException);
+        });
+      }
     });
   });
 });

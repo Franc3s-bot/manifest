@@ -94,6 +94,12 @@ afterAll(async () => {
 });
 
 describe('request limit gate (/v1 proxy)', () => {
+  // Every case sets its own plan. A subscription row left by a killed run would
+  // otherwise turn the Free cases into Pro or fail a fixed-id INSERT.
+  beforeEach(async () => {
+    await ds.query(`DELETE FROM "subscription" WHERE "referenceId" = $1`, [TEST_USER_ID]);
+  });
+
   it('blocks a free tenant over the monthly request cap with a real 402 for tool callers', async () => {
     const tenantRows = await ds.query(`SELECT id FROM tenants WHERE owner_user_id = $1 LIMIT 1`, [
       TEST_USER_ID,
@@ -194,6 +200,35 @@ describe('request limit gate (/v1 proxy)', () => {
       }),
     );
     expect(billableAfter).toBe(billableBefore);
+  });
+
+  // A failed renewal leaves the subscription past_due while Stripe retries it.
+  // Showing that tenant as Free offered "Upgrade", and checkout then started a
+  // second subscription next to the one still being retried.
+  it.each([
+    ['active', 'pro'],
+    ['trialing', 'pro'],
+    ['past_due', 'pro'],
+    ['unpaid', 'free'],
+    ['canceled', 'free'],
+    ['incomplete', 'free'],
+    ['incomplete_expired', 'free'],
+  ])('resolves a %s pro subscription to the %s plan', async (status, expected) => {
+    const tenantRows = await ds.query(`SELECT id FROM tenants WHERE owner_user_id = $1 LIMIT 1`, [
+      TEST_USER_ID,
+    ]);
+    try {
+      await ds.query(
+        `INSERT INTO "subscription" ("id", "plan", "referenceId", "status") VALUES ('sub-status-e2e', 'pro', $1, $2)`,
+        [TEST_USER_ID, status],
+      );
+      const plan = await app
+        .get(PlanService)
+        .getPlan({ tenantId: tenantRows[0].id, userId: TEST_USER_ID });
+      expect(plan).toBe(expected);
+    } finally {
+      await ds.query(`DELETE FROM "subscription" WHERE "id" = 'sub-status-e2e'`);
+    }
   });
 
   it('allows requests once the tenant is on an active pro subscription (unlimited)', async () => {

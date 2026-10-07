@@ -178,11 +178,11 @@ jobs:
           test -s /tmp/index.html
           grep -q '<title>Manifest</title>' /tmp/index.html
 
-      - name: Verify public stats are gated off by default
+      - name: Verify public error pages are gated off by default
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2099/api/v1/public/usage)
+          status=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2099/api/v1/public/error-pages)
           if [[ "$status" != "404" ]]; then
-            echo "expected 404 for /public/usage when MANIFEST_PUBLIC_STATS is unset, got $status" >&2
+            echo "expected 404 for /public/error-pages when MANIFEST_PUBLIC_STATS is unset, got $status" >&2
             exit 1
           fi
 

@@ -49,6 +49,7 @@ The CLI uses that gateway for later commands. You can select another gateway wit
 | List available agent platforms | `mnfst agent platforms`                        |
 | List connectable providers     | `mnfst provider catalog`                       |
 | Review an agent's routing      | `mnfst routing status my-app`                  |
+| Read or set model params       | `mnfst routing params get my-app`              |
 | Read recent requests           | `mnfst requests get --agent my-app --range 7d` |
 | See all commands and options   | `mnfst --help`                                 |
 
@@ -76,4 +77,4 @@ Set `MANIFEST_TELEMETRY_DISABLED=1` to opt out. Telemetry files are stored besid
 
 ## Documentation
 
-See the [CLI documentation](https://manifest.build/docs/cli/) for more examples and the [GitHub repository](https://github.com/mnfst/llm-gateway) for source and issues.
+See the [CLI documentation](https://manifest.build/llm-gateway/docs/cli/) for more examples and the [GitHub repository](https://github.com/mnfst/llm-gateway) for source and issues.

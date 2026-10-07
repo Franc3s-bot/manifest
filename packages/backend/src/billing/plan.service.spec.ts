@@ -105,6 +105,9 @@ describe('PlanService', () => {
       expect(mockQuery.mock.calls[0][1]).toEqual(['t1', 'u1']);
       expect(String(mockQuery.mock.calls[0][0])).toContain('LEFT JOIN LATERAL');
       expect(String(mockQuery.mock.calls[0][0])).toContain('t."limit_overrides"');
+      expect(String(mockQuery.mock.calls[0][0])).toContain(
+        `"status" IN ('active', 'trialing', 'past_due')`,
+      );
     });
 
     it('falls back to ctx.userId when there is no tenant yet', async () => {

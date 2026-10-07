@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { mountMcpDiscovery } from './mcp-discovery';
+import { mountMcpDiscovery, mountMcpUnavailable } from './mcp-discovery';
 
 jest.mock('../auth/auth.instance', () => ({
   authInstance: {},
@@ -133,5 +133,33 @@ describe('mountMcpDiscovery', () => {
       throw new Error('down');
     });
     await request(makeApp()).get('/.well-known/oauth-authorization-server/api/auth').expect(404);
+  });
+});
+
+describe('mountMcpUnavailable', () => {
+  function makeDisabledApp(): express.Express {
+    const app = express();
+    mountMcpUnavailable({
+      getHttpAdapter: () => ({ getInstance: () => app }),
+    } as never);
+    return app;
+  }
+
+  it.each([
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/oauth-authorization-server/api/auth',
+    '/.well-known/oauth-protected-resource',
+    '/.well-known/oauth-protected-resource/api/v1/mcp',
+  ])('answers a JSON 404 at %s instead of falling through to the SPA', async (path) => {
+    const res = await request(makeDisabledApp()).get(path).expect(404);
+    expect(res.headers['content-type']).toContain('application/json');
+    expect(res.body).toEqual({ statusCode: 404, message: 'MCP is not enabled on this install' });
+    expect(res.headers['access-control-allow-origin']).toBe('*');
+  });
+
+  it('never builds the Better Auth metadata handler', () => {
+    oauthProviderAuthServerMetadata.mockClear();
+    makeDisabledApp();
+    expect(oauthProviderAuthServerMetadata).not.toHaveBeenCalled();
   });
 });

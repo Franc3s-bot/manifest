@@ -4,13 +4,19 @@ import HeaderComboBox, { type HeaderSuggestion } from './HeaderComboBox.js';
 import {
   createHeaderTier,
   getSeenHeaders,
+  setHeaderTierOutputModality,
   setHeaderTierResponseMode,
   updateHeaderTier,
   type HeaderTier,
   type SeenHeader,
 } from '../services/api/header-tiers.js';
 import { toast } from '../services/toast-store.js';
-import type { AvailableModel, ModelCapability, ResponseMode } from '../services/api.js';
+import type {
+  AvailableModel,
+  ModelCapability,
+  OutputModality,
+  ResponseMode,
+} from '../services/api.js';
 
 const RESERVED_KEYS = new Set([
   'authorization',
@@ -49,6 +55,9 @@ const HeaderTierModal: Component<Props> = (props) => {
   );
   const [streamMode, setStreamMode] = createSignal<boolean>(
     editingTier?.response_mode === 'stream',
+  );
+  const [outputModality, setOutputModality] = createSignal<OutputModality>(
+    editingTier?.output_modality ?? 'text',
   );
   const [submitting, setSubmitting] = createSignal(false);
   const [triedSubmit, setTriedSubmit] = createSignal(false);
@@ -177,6 +186,11 @@ const HeaderTierModal: Component<Props> = (props) => {
       const newMode: ResponseMode = streamMode() ? 'stream' : 'buffered';
       if (saved.response_mode !== newMode) {
         saved = await setHeaderTierResponseMode(props.agentName, saved.id, newMode);
+      }
+      // Persist the output modality (text | image | video). The backend
+      // validates a media modality against the tier's configured chain.
+      if ((saved.output_modality ?? 'text') !== outputModality()) {
+        saved = await setHeaderTierOutputModality(props.agentName, saved.id, outputModality());
       }
       props.onSaved(saved);
       props.onClose();
@@ -371,6 +385,36 @@ const HeaderTierModal: Component<Props> = (props) => {
             </div>
           </div>
         </Show>
+
+        <div class="response-mode-modal__field-header" style="margin-top: 16px;">
+          <span class="response-mode-modal__field-title">Output</span>
+          <div class="output-controls__segments" role="group" aria-label="Output modality">
+            <For each={['text', 'image', 'video'] as OutputModality[]}>
+              {(modality) => (
+                <button
+                  type="button"
+                  class="output-controls__segment"
+                  classList={{ 'output-controls__segment--active': outputModality() === modality }}
+                  aria-pressed={outputModality() === modality}
+                  onClick={() => setOutputModality(modality)}
+                >
+                  {modality === 'text' ? 'Text' : modality === 'image' ? 'Image' : 'Video'}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+        <p class="response-mode-modal__desc">
+          <Show
+            when={outputModality() !== 'text'}
+            fallback="Text responses route through /v1/chat/completions, /v1/responses, and /v1/messages."
+          >
+            {outputModality() === 'image'
+              ? 'Image tiers route through POST /v1/images/generations.'
+              : 'Video tiers route through POST /v1/videos (asynchronous).'}{' '}
+            The tier must point at an {outputModality()} model.
+          </Show>
+        </p>
 
         <div class="header-tier-modal__footer">
           <Show when={editingTier && props.onDelete}>

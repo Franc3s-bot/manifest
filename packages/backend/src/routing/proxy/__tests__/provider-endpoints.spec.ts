@@ -234,22 +234,106 @@ describe('resolveEndpointKey', () => {
 });
 
 describe('resolveBedrockEndpointKey', () => {
-  it.each(['openai.gpt-5.6-luna', 'us.openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
+  it.each(['openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
     'routes %s through Responses',
     (model) => {
       expect(resolveBedrockEndpointKey(model)).toBe('bedrock-responses');
     },
   );
 
-  it.each(['anthropic.claude-sonnet-5', 'us.anthropic.claude-sonnet-5'])(
-    'routes %s through Messages',
-    (model) => {
-      expect(resolveBedrockEndpointKey(model)).toBe('bedrock-anthropic');
-    },
-  );
+  it.each([
+    'anthropic.claude-sonnet-5',
+    'anthropic.claude-opus-5-5',
+    'bedrock/anthropic.claude-sonnet-5',
+  ])('routes %s through Messages', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-anthropic');
+  });
+
+  it.each([
+    'us.anthropic.claude-sonnet-5-5',
+    'eu.anthropic.claude-sonnet-5-5',
+    'global.anthropic.claude-sonnet-5-5',
+    'apac.anthropic.claude-sonnet-5-5',
+    'us.anthropic.claude-opus-5-5',
+    'us.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-opus-5',
+    'bedrock/us.anthropic.claude-sonnet-5-5',
+    'bedrock/global.anthropic.claude-sonnet-5-5',
+  ])('routes the Claude CRIS profile %s to Runtime Messages on every API mode', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-anthropic');
+  });
 
   it('keeps other Bedrock model families on Chat Completions', () => {
     expect(resolveBedrockEndpointKey('mistral.ministral-3-8b-instruct')).toBe('bedrock');
+  });
+
+  it.each([
+    'us.openai.gpt-5.6-luna',
+    'global.openai.gpt-6-astra',
+    'us.openai.gpt-6-sol',
+    'global.openai.gpt-6-luna',
+    'global.moonshotai.kimi-k3',
+    'bedrock/us.moonshotai.kimi-k3',
+  ])('routes the catalogued CRIS profile %s to Runtime on the API the agent called', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-responses');
+  });
+
+  it('keeps uncatalogued CRIS profiles on their Mantle route', () => {
+    expect(resolveBedrockEndpointKey('global.openai.gpt-7', 'responses')).toBe('bedrock-responses');
+    expect(resolveBedrockEndpointKey('eu.mistral.pixtral-large-2502-v1:0')).toBe('bedrock');
+  });
+});
+
+describe('Bedrock Runtime endpoints', () => {
+  it('serves Claude CRIS profiles through the Anthropic Messages API on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime-anthropic'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('anthropic');
+    expect(ep.buildPath('us.anthropic.claude-sonnet-5-5')).toBe('/anthropic/v1/messages');
+    expect(ep.skipSubscriptionIdentity).toBe(true);
+  });
+
+  it('builds Runtime Claude headers like the Mantle Anthropic endpoint, with a single credential', () => {
+    const runtime = PROVIDER_ENDPOINTS['bedrock-runtime-anthropic'];
+    const mantle = PROVIDER_ENDPOINTS['bedrock-anthropic'];
+    const headers = runtime.buildHeaders('ABSK-test');
+    expect(headers).toEqual(mantle.buildHeaders('ABSK-test'));
+    expect(headers).toEqual({
+      'x-api-key': 'ABSK-test',
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    });
+    expect(headers).not.toHaveProperty('Authorization');
+  });
+
+  it('serves Chat Completions under /openai/v1 on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('openai');
+    expect(ep.buildPath('us.openai.gpt-6-sol')).toBe('/openai/v1/chat/completions');
+    expect(ep.buildHeaders('ABSK-test')).toEqual({
+      Authorization: 'Bearer ABSK-test',
+      'Content-Type': 'application/json',
+    });
+    expect(ep.streamUsageReporting).toBe('openai_stream_options');
+    expect(ep.acceptsPromptCacheKey).toBe(true);
+  });
+
+  it('serves Responses under /openai/v1 on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime-responses'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('us.openai.gpt-6-sol')).toBe('/openai/v1/responses');
+    expect(ep.forwardResponsesStream).toBe(true);
+    expect(ep.acceptsMaxOutputTokens).toBe(true);
+    expect(ep.acceptsPromptCacheKey).toBe(true);
+    expect(ep.streamUsageReporting).toBeUndefined();
   });
 });
 
@@ -266,12 +350,16 @@ describe('PROVIDER_ENDPOINTS', () => {
     'openai.gpt-5.99-future',
     'us.openai.gpt-5.6-luna',
     'bedrock/openai.gpt-5.6-luna',
+    'openai.gpt-6-sol',
+    'openai.gpt-6-luna',
+    'global.openai.gpt-6-luna',
+    'openai.gpt-7',
   ])('uses the namespaced Bedrock Responses path for %s', (model) => {
     expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/openai/v1/responses');
   });
 
-  it.each(['openai.gpt-oss-120b', 'openai.gpt-50'])(
-    'keeps non-GPT-5 Bedrock model %s on the generic Responses path',
+  it.each(['openai.gpt-oss-120b', 'openai.gpt-oss-20b', 'openai.gpt-4.1', 'openai.gpt-50'])(
+    'keeps Bedrock model %s on the generic Responses path',
     (model) => {
       expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/v1/responses');
     },

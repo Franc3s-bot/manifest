@@ -250,6 +250,21 @@ interface PrimaryRotationResult {
   keyLabel?: string;
 }
 
+/**
+ * Stand-in for a streaming 200 whose body never produced a byte. Keeps the
+ * attempt and wire fields so fallback, Autofix and recording treat it as a
+ * failed provider response.
+ */
+function warmupFailureForward(forward: ForwardResult, message: string): ForwardResult {
+  return {
+    ...forward,
+    response: new Response(
+      JSON.stringify({ error: { message: `Stream warmup failed: ${message}` } }),
+      { status: 502, headers: { 'content-type': 'application/json' } },
+    ),
+  };
+}
+
 @Injectable()
 export class ProxyService {
   private readonly logger = new Logger(ProxyService.name);
@@ -794,7 +809,6 @@ export class ProxyService {
           isChatGpt: forward.isChatGpt,
           isResponses: forward.isResponses,
           isCodeAssist: forward.isCodeAssist,
-          structuredOutputToolName: forward.structuredOutputToolName,
           responsesTextFormat: forward.responsesTextFormat,
           responsesToolNames: forward.responsesToolNames,
           wireRequestBody: forward.wireRequestBody,
@@ -827,27 +841,7 @@ export class ProxyService {
         `Stream warmup failed: provider=${route.provider} model=${primaryModel} reason=${warmup.reason} message=${warmup.message}`,
       );
 
-      const syntheticForward: ForwardResult = {
-        response: new Response(
-          JSON.stringify({ error: { message: `Stream warmup failed: ${warmup.message}` } }),
-          { status: 502, headers: { 'content-type': 'application/json' } },
-        ),
-        attempt: forward.attempt,
-        isGoogle: forward.isGoogle,
-        isAnthropic: forward.isAnthropic,
-        isChatGpt: forward.isChatGpt,
-        isResponses: forward.isResponses,
-        isCodeAssist: forward.isCodeAssist,
-        structuredOutputToolName: forward.structuredOutputToolName,
-        responsesTextFormat: forward.responsesTextFormat,
-        responsesToolNames: forward.responsesToolNames,
-        wireRequestBody: forward.wireRequestBody,
-        wireRequestUrl: forward.wireRequestUrl,
-        wireFormat: forward.wireFormat,
-        wireApiMode: forward.wireApiMode,
-        retryWireBody: forward.retryWireBody,
-        providerCallStarted: forward.providerCallStarted,
-      };
+      const syntheticForward = warmupFailureForward(forward, warmup.message);
       if (!explicitModelOverride && paramMergeContext) {
         const fallbackResult = await this.tryFallbackChain({
           agentId,
@@ -964,7 +958,37 @@ export class ProxyService {
    * transport without re-merging or translating. Model changed (e.g. an
    * unknown-model fix) → re-resolve so it reaches the right provider/key (M5).
    */
-  private reforwardHealed(
+  private async reforwardHealed(
+    healedBody: Record<string, unknown>,
+    originalForward: ForwardResult,
+    ctx: HealedReforwardContext,
+    reforwardOpts?: ReforwardOptions,
+  ): Promise<ForwardResult> {
+    const retry = await this.sendHealedRetry(healedBody, originalForward, ctx, reforwardOpts);
+    // Autofix judges the patch by this response. A streaming 200 that never
+    // produces a byte is not a working patch: warm it up here, so the Autofix
+    // verdict and the outcome reported to Phoenix see the stall, and the
+    // fallback chain runs from a failed retry instead of a "healed" one.
+    if (!ctx.stream || !retry.response.ok || !retry.response.body) return retry;
+    const warmup = await peekStream(retry.response.body, STREAM_WARMUP_MS);
+    if (!warmup.ok) {
+      this.logger.warn(
+        `Autofix retry stream warmup failed: provider=${ctx.provider} model=${ctx.model} ` +
+          `reason=${warmup.reason} message=${warmup.message}`,
+      );
+      return warmupFailureForward(retry, warmup.message);
+    }
+    return {
+      ...retry,
+      response: new Response(warmup.stream, {
+        status: retry.response.status,
+        statusText: retry.response.statusText,
+        headers: retry.response.headers,
+      }),
+    };
+  }
+
+  private sendHealedRetry(
     healedBody: Record<string, unknown>,
     originalForward: ForwardResult,
     ctx: HealedReforwardContext,
@@ -995,6 +1019,7 @@ export class ProxyService {
       provider: ctx.provider,
       model: ctx.model,
       signal: ctx.signal,
+      stream: ctx.stream,
       authType: ctx.authType,
       agentId: ctx.agentId,
       tenantProviderId: ctx.tenantProviderId,
@@ -1168,6 +1193,7 @@ export class ProxyService {
       provider: ctx.provider,
       model: healedModel,
       signal: ctx.signal,
+      stream: ctx.stream,
       authType: ctx.authType,
       tenantProviderId: ctx.tenantProviderId,
       providerKeyLabel: ctx.keyLabel,

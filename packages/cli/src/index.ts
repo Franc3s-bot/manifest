@@ -67,6 +67,8 @@ export const COMMANDS: Record<string, Handler> = {
   'routing autofix set': routing.routingAutofix.set,
   'routing recording get': routing.routingRecording.get,
   'routing recording set': routing.routingRecording.set,
+  'routing params get': routing.routingParams.get,
+  'routing params set': routing.routingParams.set,
 
   'requests get': requests.requestsGet,
 
@@ -128,7 +130,7 @@ Models
   mnfst models <agent> [--provider <p>] [--cost] [--capabilities]   (like /v1/models: bare ids; flags opt into metadata)
   mnfst model prices [--provider <p>]                  (install-wide price list — no agent needed)
 
-Routing readouts + custom-tier lifecycle (writes go through mnfst agent configure)
+Routing readouts + custom-tier lifecycle (route writes go through mnfst agent configure; params set writes model params)
   mnfst routing status <agent>
   mnfst routing test <agent> [prompt...] [--tier <t>] [--model <m>] [--as <platform>]
     (one real request through the surface the agent's platform uses — anthropic-family via /v1/messages)
@@ -138,6 +140,8 @@ Routing readouts + custom-tier lifecycle (writes go through mnfst agent configur
   mnfst routing custom delete <agent> <name> --yes
   mnfst routing autofix get <agent> | mnfst routing autofix set <agent> --enabled true|false
   mnfst routing recording get <agent> | mnfst routing recording set <agent> --enabled true|false
+  mnfst routing params get <agent> [--tier <t>] [--model <m>]
+  mnfst routing params set <agent> [--tier <t>] [--model <m>] [--set <path>=<value> ...] [--unset <path> ...]
 
 Requests (paginated, mirrors the API: opaque cursor, one page per call)
   mnfst requests get [--agent <name>] [--range <r>] [--status <s>] [--provider <p>] [--origin <o>] [--limit <1-200>] [--cursor <c>] [--full]

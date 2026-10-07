@@ -27,6 +27,7 @@ import {
   normalizeBillingEmailPreferences,
 } from './billing-email-preferences';
 import { REQUEST_USAGE_CUTOVER_STATE, requestQuotaWindowStartMs } from './request-quota-window';
+import { PAID_SUBSCRIPTION_STATUS_SQL_LIST } from './subscription-status';
 
 const PRICE_CACHE_TTL_MS = 60 * 60 * 1000;
 const BILLING_PRICE_UNAVAILABLE: BillingPrice = Object.freeze({
@@ -138,7 +139,7 @@ export class PlanService implements OnModuleInit {
           SELECT "plan", "cancelAtPeriodEnd", "periodEnd"
             FROM "subscription"
            WHERE "referenceId" = COALESCE(t."owner_user_id", $2)
-             AND "status" IN ('active', 'trialing')
+             AND "status" IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
         ORDER BY "periodEnd" DESC NULLS LAST
            LIMIT 1
          ) s

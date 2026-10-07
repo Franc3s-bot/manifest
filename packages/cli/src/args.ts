@@ -5,6 +5,8 @@ export interface FlagSpec {
   strings?: readonly string[];
   /** Flags that are on/off: `--flag`. */
   booleans?: readonly string[];
+  /** Valued flags that may repeat: `--set a=1 --set b=2`, collected in order. */
+  repeatables?: readonly string[];
   /**
    * Maximum number of positionals this command accepts. Omit where the command
    * consumes the remainder on purpose (e.g. `routing test`'s prompt). A typo
@@ -17,6 +19,7 @@ export interface ParsedArgs {
   positionals: string[];
   strings: Record<string, string>;
   booleans: Record<string, boolean>;
+  lists: Record<string, string[]>;
 }
 
 /**
@@ -27,7 +30,8 @@ export interface ParsedArgs {
 export function parseArgs(argv: readonly string[], spec: FlagSpec): ParsedArgs {
   const strings = new Set(spec.strings ?? []);
   const booleans = new Set(spec.booleans ?? []);
-  const out: ParsedArgs = { positionals: [], strings: {}, booleans: {} };
+  const repeatables = new Set(spec.repeatables ?? []);
+  const out: ParsedArgs = { positionals: [], strings: {}, booleans: {}, lists: {} };
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
@@ -44,19 +48,22 @@ export function parseArgs(argv: readonly string[], spec: FlagSpec): ParsedArgs {
       out.booleans[name] = true;
       continue;
     }
-    if (!strings.has(name)) {
+    if (!strings.has(name) && !repeatables.has(name)) {
       throw new CliError('unknown_flag', `Unknown flag --${name}`, usageHint(spec));
     }
+    let value: string;
     if (eq !== -1) {
-      out.strings[name] = token.slice(eq + 1);
-      continue;
+      value = token.slice(eq + 1);
+    } else {
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith('--')) {
+        throw new CliError('missing_value', `--${name} requires a value`);
+      }
+      value = next;
+      i++;
     }
-    const value = argv[i + 1];
-    if (value === undefined || value.startsWith('--')) {
-      throw new CliError('missing_value', `--${name} requires a value`);
-    }
-    out.strings[name] = value;
-    i++;
+    if (repeatables.has(name)) (out.lists[name] ??= []).push(value);
+    else out.strings[name] = value;
   }
   if (spec.maxPositionals !== undefined && out.positionals.length > spec.maxPositionals) {
     throw new CliError(
@@ -69,7 +76,9 @@ export function parseArgs(argv: readonly string[], spec: FlagSpec): ParsedArgs {
 }
 
 function usageHint(spec: FlagSpec): string {
-  const all = [...(spec.strings ?? []), ...(spec.booleans ?? [])].map((f) => `--${f}`);
+  const all = [...(spec.strings ?? []), ...(spec.repeatables ?? []), ...(spec.booleans ?? [])].map(
+    (f) => `--${f}`,
+  );
   return all.length ? `Supported flags: ${all.join(', ')}` : 'This command takes no flags';
 }
 

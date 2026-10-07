@@ -2918,6 +2918,83 @@ describe('routing commands', () => {
     expect(io3.lastJson()).toMatchObject({ error: 'not_found' });
   });
 
+  it('params get reads a tier route, defaulting to the default tier primary', async () => {
+    const view = { tier: 'default', route: { model: 'gpt-5' }, models: ['gpt-5'], params: [] };
+    const { io, calls } = authedIo([{ status: 200, body: view }]);
+    expect(await run(io, ['routing', 'params', 'get', 'john'])).toBe(0);
+    expect(calls[0].method).toBe('GET');
+    expect(calls[0].url).toBe(`${HOST}/api/v1/routing/john/tiers/default/model-params`);
+    expect(io.lastJson()).toEqual(view);
+
+    const { io: io2, calls: calls2 } = authedIo([{ status: 200, body: view }]);
+    expect(
+      await run(io2, ['routing', 'params', 'get', 'john', '--tier', 'Deep Work', '--model', 'a/b']),
+    ).toBe(0);
+    expect(calls2[0].url).toBe(
+      `${HOST}/api/v1/routing/john/tiers/Deep%20Work/model-params?model=a%2Fb`,
+    );
+  });
+
+  it('params set sends typed values and unset paths in one PATCH', async () => {
+    const { io, calls } = authedIo([{ status: 200, body: { tier: 'deep', params: [] } }]);
+    expect(
+      await run(io, [
+        'routing',
+        'params',
+        'set',
+        'john',
+        '--tier',
+        'deep',
+        '--set',
+        'reasoning.effort=high',
+        '--set',
+        'temperature=0.2',
+        '--set',
+        'stream_options={"include_usage":true}',
+        '--set',
+        'stop=a=b',
+        '--unset',
+        'max_tokens',
+      ]),
+    ).toBe(0);
+    expect(calls[0].method).toBe('PATCH');
+    expect(calls[0].url).toBe(`${HOST}/api/v1/routing/john/tiers/deep/model-params`);
+    expect(JSON.parse(calls[0].body!)).toEqual({
+      set: {
+        'reasoning.effort': 'high',
+        temperature: 0.2,
+        stream_options: { include_usage: true },
+        stop: 'a=b',
+      },
+      unset: ['max_tokens'],
+    });
+  });
+
+  it('params set sends only unset when nothing is set', async () => {
+    const { io, calls } = authedIo([{ status: 200, body: {} }]);
+    expect(
+      await run(io, ['routing', 'params', 'set', 'john', '--model', 'gpt-5', '--unset', 'a']),
+    ).toBe(0);
+    expect(calls[0].url).toBe(`${HOST}/api/v1/routing/john/tiers/default/model-params?model=gpt-5`);
+    expect(JSON.parse(calls[0].body!)).toEqual({ unset: ['a'] });
+  });
+
+  it('params set rejects an empty change and a malformed --set before any request', async () => {
+    const { io, calls } = authedIo([]);
+    expect(await run(io, ['routing', 'params', 'set', 'john'])).toBe(1);
+    expect(io.lastJson()).toMatchObject({ error: 'missing_flag' });
+    expect(calls).toHaveLength(0);
+
+    const { io: io2, calls: calls2 } = authedIo([]);
+    expect(await run(io2, ['routing', 'params', 'set', 'john', '--set', 'effort'])).toBe(1);
+    expect(io2.lastJson()).toMatchObject({ error: 'invalid_flag' });
+    expect(calls2).toHaveLength(0);
+
+    const { io: io3 } = authedIo([]);
+    expect(await run(io3, ['routing', 'params', 'set', 'john', '--set', '=high'])).toBe(1);
+    expect(io3.lastJson()).toMatchObject({ error: 'invalid_flag' });
+  });
+
   it('autofix and recording get/set wrap GET/PATCH with a strict boolean', async () => {
     const { io, calls } = authedIo([{ status: 200, body: { enabled: true } }]);
     expect(await run(io, ['routing', 'autofix', 'get', 'a'])).toBe(0);

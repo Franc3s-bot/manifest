@@ -194,7 +194,14 @@ export function buildSyntheticTierProfile(
     modeConservative(models.map((m) => m.contextWindow)) ?? DEFAULT_CONTEXT_WINDOW;
   const maxOutputTokens = modeGenerous(models.map((m) => m.maxOutputTokens));
   const inputModalities = majorityCapabilities(models.map((m) => m.inputModalities));
-  const outputModalities = majorityCapabilities(models.map((m) => m.outputModalities));
+  // A tier configured for image/video output advertises exactly that modality:
+  // it is the operator's explicit intent, and the media endpoints gate on it.
+  // Otherwise fall back to the majority modality of the chain's models.
+  const tierModality = tier.output_modality;
+  const outputModalities =
+    tierModality === 'image' || tierModality === 'video'
+      ? ([tierModality] as readonly ModelModality[])
+      : majorityCapabilities(models.map((m) => m.outputModalities));
   const features = majorityCapabilities(
     models.map(
       (m) => m.capabilities?.filter(isFeature) as readonly FeatureCapability[] | undefined,

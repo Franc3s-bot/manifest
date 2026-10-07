@@ -114,6 +114,15 @@ describe('Upgrade', () => {
     );
   });
 
+  it('hides the request-limit entry message on the Pro plan', async () => {
+    mockSearchParams = { reason: 'requests' };
+    mockGetBillingStatus.mockResolvedValue(proStatus);
+    render(() => <Upgrade />);
+
+    await screen.findByText(/You're currently on the/);
+    expect(screen.queryByText(/You've used all/)).toBeNull();
+  });
+
   it('goes back when the referrer is from the same origin', async () => {
     const back = vi.spyOn(window.history, 'back').mockImplementation(() => undefined);
     Object.defineProperty(document, 'referrer', {

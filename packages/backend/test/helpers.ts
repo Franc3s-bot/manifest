@@ -53,7 +53,6 @@ import { ModelPricingCacheService } from '../src/model-prices/model-pricing-cach
 import { RoutingModule } from '../src/routing/routing.module';
 import { PlaygroundModule } from '../src/playground/playground.module';
 import { CommonModule } from '../src/common/common.module';
-import { PublicStatsModule } from '../src/public-stats/public-stats.module';
 import { SetupModule } from '../src/setup/setup.module';
 import { WaitlistModule } from '../src/waitlist/waitlist.module';
 import { CrmMetricsModule } from '../src/crm-metrics/crm-metrics.module';
@@ -250,7 +249,6 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
         ModelPricesModule,
         RoutingModule,
         PlaygroundModule,
-        PublicStatsModule,
         SetupModule,
         WaitlistModule,
         CrmMetricsModule,

@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { DiscoveredModel, FetcherConfig, DEFAULT_CONTEXT_WINDOW } from './model-fetcher';
+import { parseModalities } from './model-capabilities';
 import {
   getManagedFreeLiteLlmModelsUrl,
   MANAGED_FREE_PROVIDER_CONFIGS,
@@ -14,14 +15,23 @@ import {
   COPILOT_PLUGIN_VERSION,
   buildClaudeCodeSubscriptionHeaders,
 } from '../common/constants/subscription-clients';
-import { normalizeMinimaxSubscriptionBaseUrl } from '../routing/provider-base-url';
+import {
+  normalizeMinimaxSubscriptionBaseUrl,
+  normalizeProviderBaseUrl,
+} from '../routing/provider-base-url';
 import { getQwenCompatibleBaseUrl, normalizeQwenCompatibleBaseUrl } from '../routing/qwen-region';
-import { getBedrockMantleBaseUrl, normalizeBedrockMantleBaseUrl } from '../routing/bedrock-region';
+import {
+  getBedrockControlPlaneBaseUrl,
+  getBedrockMantleBaseUrl,
+  normalizeBedrockMantleBaseUrl,
+} from '../routing/bedrock-region';
+import { getBedrockRuntimeSupportedEndpoints } from '../routing/bedrock-runtime-capabilities';
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
 } from '../routing/xiaomi-region';
 import { getZaiCodingPlanBaseUrl, normalizeZaiCodingPlanBaseUrl } from '../routing/zai-region';
+import { MINIMAX_BASE_URLS } from '../routing/oauth/minimax/minimax-oauth-helpers';
 import { OpencodeGoCatalogService } from './opencode-go-catalog.service';
 import {
   buildKiroHeaders,
@@ -30,11 +40,14 @@ import {
   parseKiroModels,
 } from '../routing/proxy/kiro-adapter';
 import {
+  AGNES_BASE_URL,
+  AGNES_MODELS,
+  AGNES_MODEL_BY_ID,
   getSubscriptionCapabilities,
   getSubscriptionKnownModels,
   META_MODEL_API_CONTEXT_WINDOW,
   META_MODEL_API_MODEL_BY_ID,
-  MODEL_MODALITIES,
+  SHARED_PROVIDER_BY_ID_OR_ALIAS,
   type ModelCapability,
   type ModelModality,
 } from 'manifest-shared';
@@ -76,10 +89,16 @@ interface ModelParserConfig<T> {
   outputPricePerToken?: number | null;
   capabilityReasoning?: boolean;
   capabilityCode?: boolean | ((entry: T) => boolean);
-  inputModalities?: readonly ModelModality[];
-  outputModalities?: readonly ModelModality[];
+  inputModalities?: PerEntry<T, readonly ModelModality[] | undefined>;
+  outputModalities?: PerEntry<T, readonly ModelModality[] | undefined>;
   supportedEndpoints?: (entry: T) => readonly string[] | undefined;
   qualityScore?: number;
+}
+
+type PerEntry<T, V> = V | ((entry: T) => V);
+
+function resolvePerEntry<T, V>(value: PerEntry<T, V>, entry: T): V {
+  return typeof value === 'function' ? (value as (entry: T) => V)(entry) : value;
 }
 
 function createModelParser<T>(
@@ -96,6 +115,8 @@ function createModelParser<T>(
         const ctxVal = config.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
         const contextWindowSource = config.contextWindowSource?.(entry);
         const supportedEndpoints = config.supportedEndpoints?.(entry);
+        const inputModalities = resolvePerEntry(config.inputModalities, entry);
+        const outputModalities = resolvePerEntry(config.outputModalities, entry);
         return {
           id,
           displayName: config.getDisplayName(entry, id),
@@ -109,8 +130,8 @@ function createModelParser<T>(
             typeof config.capabilityCode === 'function'
               ? config.capabilityCode(entry)
               : (config.capabilityCode ?? false),
-          ...(config.inputModalities ? { inputModalities: config.inputModalities } : {}),
-          ...(config.outputModalities ? { outputModalities: config.outputModalities } : {}),
+          ...(inputModalities ? { inputModalities } : {}),
+          ...(outputModalities ? { outputModalities } : {}),
           ...(supportedEndpoints && supportedEndpoints.length > 0 ? { supportedEndpoints } : {}),
           qualityScore: config.qualityScore ?? 3,
         };
@@ -131,6 +152,9 @@ interface OpenAIModelEntry {
   object?: string;
   owned_by?: string;
   supported_endpoints?: unknown;
+  /** Non-standard, but sent by some OpenAI-compatible providers (e.g. Groq). */
+  input_modalities?: unknown;
+  output_modalities?: unknown;
 }
 
 interface PioneerModelEntry extends OpenAIModelEntry {
@@ -178,6 +202,100 @@ const parseOpenAI = createModelParser<OpenAIModelEntry>({
   filter: (entry) => typeof entry.id === 'string' && entry.id.length > 0,
   getId: (entry) => entry.id,
   getDisplayName: (_entry, id) => id,
+  inputModalities: (entry) => parseModalities(entry.input_modalities),
+  outputModalities: (entry) => parseModalities(entry.output_modalities),
+});
+
+/**
+ * Agnes AI serves text, image, and video models from one OpenAI-compatible
+ * base URL. Its `/v1/models` listing is not guaranteed to carry the media
+ * models or their output modality, so every entry is annotated from the
+ * curated AGNES_MODELS catalog and any catalog model missing from the live
+ * listing is appended. Image/video synthetic tiers always have a target.
+ */
+function parseAgnes(body: unknown, provider: string): DiscoveredModel[] {
+  const arr = (body as { data?: unknown } | null)?.data;
+  const seen = new Set<string>();
+  const models: DiscoveredModel[] = [];
+  if (Array.isArray(arr)) {
+    for (const raw of arr) {
+      const id = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : undefined;
+      if (typeof id !== 'string' || id.length === 0 || seen.has(id)) continue;
+      seen.add(id);
+      models.push(buildAgnesModel(id, provider));
+    }
+  }
+  for (const entry of AGNES_MODELS) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    models.push(buildAgnesModel(entry.id, provider));
+  }
+  return models;
+}
+
+/** One Agnes model with the catalog's modality and context facts applied. */
+function buildAgnesModel(id: string, provider: string): DiscoveredModel {
+  const catalog = AGNES_MODEL_BY_ID.get(id);
+  // The curated catalog lags new releases (e.g. agnes-image-2.5-flash shipped
+  // after this list was written). Fall back to the model id's shape so a new
+  // image/video model is still classified as media instead of text — a text
+  // classification would fail the media endpoint's modality gate.
+  const output = catalog?.output ?? inferAgnesOutput(id);
+  const isText = output === 'text';
+  const capabilities: ModelCapability[] = isText
+    ? ['text', 'stream', 'tools']
+    : output === 'image'
+      ? ['text', 'image']
+      : ['text', 'video'];
+  return {
+    id,
+    displayName: catalog?.displayName ?? id,
+    provider,
+    contextWindow: catalog?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    contextWindowSource: catalog?.contextWindow ? 'provider' : 'provider_default',
+    ...(catalog?.maxOutputTokens !== undefined ? { maxOutputTokens: catalog.maxOutputTokens } : {}),
+    inputPricePerToken: null,
+    outputPricePerToken: null,
+    capabilityReasoning: isText,
+    capabilityCode: isText,
+    capabilities,
+    inputModalities: output === 'image' ? (['text', 'image'] as const) : (['text'] as const),
+    outputModalities: [output],
+    qualityScore: isText ? 3 : 2,
+  };
+}
+
+/**
+ * Infer an Agnes model's output modality from its id when the curated catalog
+ * does not know it. Agnes names media models `agnes-image-*` / `agnes-video-*`;
+ * anything else is treated as text.
+ */
+function inferAgnesOutput(id: string): 'text' | 'image' | 'video' {
+  const lower = id.toLowerCase();
+  if (lower.startsWith('agnes-image') || /(^|[-_/])image([-_/]|$)/.test(lower)) return 'image';
+  if (lower.startsWith('agnes-video') || /(^|[-_/])video([-_/]|$)/.test(lower)) return 'video';
+  return 'text';
+}
+
+interface BedrockInferenceProfileEntry {
+  inferenceProfileId: string;
+  status: string;
+}
+
+/**
+ * CRIS profiles Bedrock Runtime serves (catalogued or verified Claude): exactly
+ * those with at least one supported Manifest endpoint.
+ */
+const isBedrockRuntimeProfile = (id: string): boolean =>
+  getBedrockRuntimeSupportedEndpoints(id).length > 0;
+
+/** Active CRIS profiles from `ListInferenceProfiles` that Bedrock Runtime serves. */
+const parseBedrockCrisProfiles = createModelParser<BedrockInferenceProfileEntry>({
+  arrayKey: 'inferenceProfileSummaries',
+  filter: (entry) => entry.status === 'ACTIVE' && isBedrockRuntimeProfile(entry.inferenceProfileId),
+  getId: (entry) => entry.inferenceProfileId,
+  getDisplayName: (_entry, id) => id,
+  supportedEndpoints: (entry) => getBedrockRuntimeSupportedEndpoints(entry.inferenceProfileId),
 });
 
 /** Keep only the configured model family and prefer LiteLLM's vendor-prefixed ID. */
@@ -217,18 +335,6 @@ function perMillionToPerToken(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? value / 1_000_000
     : null;
-}
-
-function parseModalities(value: unknown): readonly ModelModality[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const allowed = new Set<ModelModality>(['text', 'image', 'audio', 'video']);
-  const modalities: ModelModality[] = [];
-  for (const raw of value) {
-    if (typeof raw !== 'string') continue;
-    const modality = raw.toLowerCase() as ModelModality;
-    if (allowed.has(modality) && !modalities.includes(modality)) modalities.push(modality);
-  }
-  return modalities.length > 0 ? modalities : undefined;
 }
 
 function fastestLiveHuggingFaceProvider(value: unknown): HuggingFaceProviderEntry | undefined {
@@ -492,6 +598,15 @@ export const PROVIDER_BLOCKLIST: Record<string, ReadonlySet<string>> = {
   ]),
 };
 
+/**
+ * Providers that also serve image/video generation. Their discovered models
+ * must bypass {@link filterNonChatModels}, which exists to keep media-only
+ * models out of the chat routing UI.
+ */
+export function isMediaCapableProvider(providerId: string): boolean {
+  return SHARED_PROVIDER_BY_ID_OR_ALIAS.get(providerId.toLowerCase())?.media !== undefined;
+}
+
 /** Filter models that are not compatible with chat completions. */
 export function filterNonChatModels(
   models: DiscoveredModel[],
@@ -612,15 +727,6 @@ interface OpenRouterModelEntry {
   pricing?: { prompt?: string; completion?: string };
 }
 
-function normalizeOpenRouterModalities(
-  values: readonly string[] | undefined,
-): readonly ModelModality[] | undefined {
-  if (!values?.length) return undefined;
-  const upstreamModalities = new Set(values.map((value) => value.toLowerCase()));
-  const modalities = MODEL_MODALITIES.filter((modality) => upstreamModalities.has(modality));
-  return modalities.length > 0 ? modalities : undefined;
-}
-
 interface FireworksModelEntry {
   name: string;
   displayName?: string;
@@ -660,8 +766,8 @@ function parseOpenRouter(body: unknown, provider: string): DiscoveredModel[] {
       const entry = m as OpenRouterModelEntry;
       const prompt = entry.pricing?.prompt ? Number(entry.pricing.prompt) : null;
       const completion = entry.pricing?.completion ? Number(entry.pricing.completion) : null;
-      const inputModalities = normalizeOpenRouterModalities(entry.architecture?.input_modalities);
-      const outputModalities = normalizeOpenRouterModalities(entry.architecture?.output_modalities);
+      const inputModalities = parseModalities(entry.architecture?.input_modalities);
+      const outputModalities = parseModalities(entry.architecture?.output_modalities);
       return {
         id: entry.id,
         displayName: entry.name || entry.id,
@@ -990,7 +1096,7 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     parse: parseOpenAI,
   },
   minimax: {
-    endpoint: 'https://api.minimaxi.chat/v1/models',
+    endpoint: `${MINIMAX_BASE_URLS.global}/v1/models`,
     buildHeaders: bearerHeaders,
     parse: parseOpenAI,
   },
@@ -998,6 +1104,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     endpoint: META_MODELS_URL,
     buildHeaders: bearerHeaders,
     parse: parseMeta,
+  },
+  agnes: {
+    endpoint: `${AGNES_BASE_URL}/models`,
+    buildHeaders: bearerHeaders,
+    parse: parseAgnes,
   },
   'minimax-subscription': {
     endpoint: MINIMAX_SUBSCRIPTION_MODELS_URL,
@@ -1105,6 +1216,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
 
 export interface ProviderModelFetchOptions {
   forceRefresh?: boolean;
+  /**
+   * Bedrock only: the connection's last discovered models. Their CRIS profiles
+   * are kept when the control plane can't be reached.
+   */
+  previousModels?: readonly DiscoveredModel[];
 }
 
 @Injectable()
@@ -1168,7 +1284,12 @@ export class ProviderModelFetcherService {
     }
 
     let url = typeof config.endpoint === 'function' ? config.endpoint(apiKey) : config.endpoint;
-    if (endpointOverride && configKey === 'minimax-subscription') {
+    if (endpointOverride && configKey === 'minimax') {
+      const minimaxBaseUrl = normalizeProviderBaseUrl(endpointOverride);
+      if (minimaxBaseUrl === MINIMAX_BASE_URLS.global || minimaxBaseUrl === MINIMAX_BASE_URLS.cn) {
+        url = `${minimaxBaseUrl}/v1/models`;
+      }
+    } else if (endpointOverride && configKey === 'minimax-subscription') {
       const minimaxBaseUrl = normalizeMinimaxSubscriptionBaseUrl(endpointOverride);
       if (minimaxBaseUrl) {
         url = `${minimaxBaseUrl}/models?limit=100`;
@@ -1207,6 +1328,48 @@ export class ProviderModelFetcherService {
 
     const headers = config.buildHeaders(apiKey, authType);
 
+    if (configKey === 'agnes') {
+      // Agnes' OpenAI-compatible listing is not guaranteed to exist or to
+      // carry the media models. Fall back to the curated catalog whenever the
+      // live fetch yields nothing, so image/video tiers always have a target.
+      const fetched = await this.fetchModelList(
+        url,
+        headers,
+        config,
+        apiKey,
+        providerId,
+        configKey,
+      );
+      return fetched.length > 0 ? fetched : config.parse({ data: [] }, providerId);
+    }
+
+    if (configKey === 'bedrock') {
+      // Mantle lists no CRIS profiles, so they come from the control plane of
+      // the same region (the Mantle host is `bedrock-mantle.<region>.api.aws`).
+      const region = new URL(url).hostname.split('.')[1];
+      const [mantleModels, crisProfiles] = await Promise.all([
+        this.fetchModelList(url, headers, config, apiKey, providerId, configKey),
+        this.fetchBedrockCrisProfiles(apiKey, region, providerId, options?.previousModels ?? []),
+      ]);
+      // Mantle stays the primary source: when it returns nothing, discovery
+      // falls back to models.dev or the cache as before, instead of keeping
+      // only CRIS profiles.
+      if (mantleModels.length === 0) return [];
+      const mantleIds = new Set(mantleModels.map((model) => model.id));
+      return [...mantleModels, ...crisProfiles.filter((profile) => !mantleIds.has(profile.id))];
+    }
+
+    return this.fetchModelList(url, headers, config, apiKey, providerId, configKey);
+  }
+
+  private async fetchModelList(
+    url: string,
+    headers: Record<string, string>,
+    config: FetcherConfig,
+    apiKey: string,
+    providerId: string,
+    configKey: string,
+  ): Promise<DiscoveredModel[]> {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -1225,11 +1388,51 @@ export class ProviderModelFetcherService {
       }
 
       const body = await res.json();
-      return filterNonChatModels(config.parse(body, providerId), configKey);
+      const parsed = config.parse(body, providerId);
+      // Media-capable providers serve image/video models that the non-chat
+      // filter exists to exclude; keep them so synthetic media tiers can route.
+      return isMediaCapableProvider(configKey) ? parsed : filterNonChatModels(parsed, configKey);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch models from ${providerId}: ${message}`);
       return [];
+    }
+  }
+
+  /**
+   * Catalogued and Claude CRIS profiles offered in the connection's region. If
+   * the control plane can't be reached, the profiles from the last discovery
+   * are kept.
+   */
+  private async fetchBedrockCrisProfiles(
+    apiKey: string,
+    region: string,
+    providerId: string,
+    previousModels: readonly DiscoveredModel[],
+  ): Promise<DiscoveredModel[]> {
+    const url =
+      `${getBedrockControlPlaneBaseUrl(region)}/inference-profiles` +
+      '?type=SYSTEM_DEFINED&maxResults=1000';
+    try {
+      const res = await fetch(url, {
+        headers: bearerHeaders(apiKey),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { nextToken?: string };
+      if (body.nextToken) {
+        this.logger.warn(
+          'Bedrock listed more than 1000 inference profiles; only the first 1000 were checked',
+        );
+      }
+      return parseBedrockCrisProfiles(body, providerId);
+    } catch (err) {
+      const kept = previousModels.filter((model) => isBedrockRuntimeProfile(model.id));
+      this.logger.warn(
+        `Could not list Bedrock inference profiles (${String(err)}); ` +
+          `kept ${kept.length} from the last discovery`,
+      );
+      return kept;
     }
   }
 

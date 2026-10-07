@@ -94,6 +94,64 @@ describe('chatgpt-adapter', () => {
       ]);
     });
 
+    describe('tool_choice and parallel_tool_calls', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+      const tools = [{ type: 'function', function: { name: 'add' } }];
+
+      it.each(['auto', 'none', 'required'])('forwards tool_choice %s as is', (choice) => {
+        const req = toResponsesRequest({ messages, tools, tool_choice: choice }, 'gpt-5');
+
+        expect(req.tool_choice).toBe(choice);
+      });
+
+      it('flattens a named function tool_choice to the Responses shape', () => {
+        const req = toResponsesRequest(
+          { messages, tools, tool_choice: { type: 'function', function: { name: 'add' } } },
+          'gpt-5',
+        );
+
+        expect(req.tool_choice).toEqual({ type: 'function', name: 'add' });
+      });
+
+      it('leaves tool_choice unset when it is missing or not understood', () => {
+        for (const choice of [
+          undefined,
+          'sometimes',
+          { type: 'function' },
+          { type: 'function', function: {} },
+          { type: 'allowed_tools', allowed_tools: { mode: 'auto', tools: [] } },
+        ]) {
+          expect(
+            toResponsesRequest({ messages, tools, tool_choice: choice }, 'gpt-5'),
+          ).not.toHaveProperty('tool_choice');
+        }
+      });
+
+      it.each([true, false])('forwards parallel_tool_calls %s', (parallel) => {
+        const req = toResponsesRequest({ messages, tools, parallel_tool_calls: parallel }, 'gpt-5');
+
+        expect(req.parallel_tool_calls).toBe(parallel);
+      });
+
+      it('leaves parallel_tool_calls unset when it is not a boolean', () => {
+        expect(
+          toResponsesRequest({ messages, tools, parallel_tool_calls: 'false' }, 'gpt-5'),
+        ).not.toHaveProperty('parallel_tool_calls');
+      });
+
+      it('sends neither field without tools', () => {
+        for (const body of [
+          { messages, tool_choice: 'none', parallel_tool_calls: false },
+          { messages, tools: [], tool_choice: 'none', parallel_tool_calls: false },
+        ]) {
+          const req = toResponsesRequest(body, 'gpt-5');
+
+          expect(req).not.toHaveProperty('tool_choice');
+          expect(req).not.toHaveProperty('parallel_tool_calls');
+        }
+      });
+    });
+
     it('forwards an explicit Responses-style reasoning object verbatim', () => {
       const body = {
         messages: [{ role: 'user', content: 'hi' }],
@@ -260,6 +318,90 @@ describe('chatgpt-adapter', () => {
 
       expect(req).not.toHaveProperty('max_output_tokens');
     });
+
+    it('maps a json_schema response_format to text.format', () => {
+      const schema = { type: 'object', properties: { city: { type: 'string' } } };
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: 'place', description: 'A place', schema, strict: true },
+        },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toEqual({
+        format: {
+          type: 'json_schema',
+          name: 'place',
+          description: 'A place',
+          schema,
+          strict: true,
+        },
+      });
+    });
+
+    it('maps a json_object response_format to text.format', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: { type: 'json_object' },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toEqual({ format: { type: 'json_object' } });
+    });
+
+    it('leaves text unset for a plain text or malformed response_format', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+
+      expect(
+        toResponsesRequest({ messages, response_format: { type: 'text' } }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+      expect(
+        toResponsesRequest({ messages, response_format: { type: 'json_schema' } }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+      expect(
+        toResponsesRequest({ messages, response_format: 'json_object' }, 'gpt-5-codex'),
+      ).not.toHaveProperty('text');
+    });
+
+    it('copies only the json_schema fields the caller set', () => {
+      const messages = [{ role: 'user', content: 'hi' }];
+
+      expect(
+        toResponsesRequest(
+          { messages, response_format: { type: 'json_schema', json_schema: {} } },
+          'gpt-5-codex',
+        ).text,
+      ).toEqual({ format: { type: 'json_schema' } });
+      expect(
+        toResponsesRequest(
+          {
+            messages,
+            response_format: {
+              type: 'json_schema',
+              json_schema: { name: 'place', schema: {}, description: '' },
+            },
+          },
+          'gpt-5-codex',
+        ).text,
+      ).toEqual({ format: { type: 'json_schema', name: 'place', schema: {} } });
+    });
+
+    it('prefers an explicit Responses-style text object over response_format', () => {
+      const text = { format: { type: 'json_object' }, verbosity: 'low' };
+      const body = {
+        messages: [{ role: 'user', content: 'hi' }],
+        text,
+        response_format: { type: 'json_schema', json_schema: { name: 'x', schema: {} } },
+      };
+
+      const req = toResponsesRequest(body, 'gpt-5-codex');
+
+      expect(req.text).toBe(text);
+    });
   });
 
   describe('fromResponsesResponse', () => {
@@ -396,6 +538,30 @@ describe('chatgpt-adapter', () => {
       const out = fromResponsesResponse({ output: [{ type: 'message' }] }, 'gpt-5');
       const choices = out.choices as Array<Record<string, unknown>>;
       expect((choices[0].message as Record<string, unknown>).content).toBeNull();
+    });
+
+    it('maps an incomplete response to the same finish_reason as the SSE path', () => {
+      const truncated = fromResponsesResponse(
+        {
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          output: [{ type: 'message', content: [{ type: 'output_text', text: 'partial' }] }],
+        },
+        'gpt-5',
+      );
+      const filtered = fromResponsesResponse(
+        {
+          status: 'incomplete',
+          incomplete_details: { reason: 'content_filter' },
+          output: [],
+        },
+        'gpt-5',
+      );
+
+      expect((truncated.choices as Array<Record<string, unknown>>)[0].finish_reason).toBe('length');
+      expect((filtered.choices as Array<Record<string, unknown>>)[0].finish_reason).toBe(
+        'content_filter',
+      );
     });
   });
 

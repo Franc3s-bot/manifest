@@ -339,6 +339,46 @@ describe('AggregationService', () => {
   });
 
   describe('getPreviousWindowMetrics', () => {
+    it('uses daily rows for long dashboard trends', async () => {
+      const daily = {
+        supportsRange: jest.fn().mockReturnValue(true),
+        getRangeRows: jest.fn().mockResolvedValue([
+          { input_tokens: '100', output_tokens: '50', cost_usd: '1.5', request_count: '4' },
+          { input_tokens: '20', output_tokens: '10', cost_usd: '0.5', request_count: '2' },
+        ]),
+      };
+      const rollupAware = new AggregationService({} as never, undefined, daily as never);
+
+      await expect(
+        rollupAware.getPreviousWindowMetrics('365d', 'tenant-1', 'bot-1', true, true),
+      ).resolves.toEqual({ tokens: 180, cost: 2, messages: 6 });
+      expect(daily.getRangeRows).toHaveBeenCalledWith('tenant-1', '365d', {
+        agentName: 'bot-1',
+        previous: true,
+        excludeDirect: true,
+      });
+    });
+
+    it('keeps the raw fallback when rollup reads do not support the range', async () => {
+      const daily = {
+        supportsRange: jest.fn().mockReturnValue(false),
+        getRangeRows: jest.fn(),
+      };
+      const rollupAware = new AggregationService(
+        { createQueryBuilder: jest.fn().mockReturnValue(mockQb) } as never,
+        undefined,
+        daily as never,
+      );
+      mockGetRawOne.mockResolvedValueOnce({ msg_count: 4, tokens: 100, cost: 1 });
+
+      await expect(
+        rollupAware.getPreviousWindowMetrics('365d', 'tenant-1', undefined, true),
+      ).resolves.toEqual({ tokens: 100, cost: 1, messages: 4 });
+      expect(daily.supportsRange).toHaveBeenCalledWith('tenant-1', '365d');
+      expect(daily.getRangeRows).not.toHaveBeenCalled();
+      expect(mockGetRawOne).toHaveBeenCalledTimes(1);
+    });
+
     it('returns previous-window token, cost, and message totals', async () => {
       mockGetRawOne.mockResolvedValueOnce({ msg_count: 40, tokens: 4000, cost: 4.0 });
 

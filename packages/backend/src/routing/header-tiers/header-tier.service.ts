@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import type { AuthType, ModelRoute, ResponseMode } from 'manifest-shared';
+import type { AuthType, ModelRoute, OutputModality, ResponseMode } from 'manifest-shared';
 import {
   DEFAULT_RESPONSE_MODE,
   DEFAULT_OUTPUT_MODALITY,
@@ -12,12 +12,12 @@ import {
 import { HeaderTier } from '../../entities/header-tier.entity';
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
+import { explicitRoute, readFallbackRoutes } from '../routing-core/route-helpers';
 import {
-  explicitRoute,
-  readFallbackRoutes,
-  unambiguousRoute,
-  routeMatches,
-} from '../routing-core/route-helpers';
+  describeUnresolvedFallback,
+  resolveFallbackRoutes,
+  resolveModelRoute,
+} from '../routing-core/resolve-model-route';
 import { assertStreamableResponseMode } from '../routing-core/response-mode-guard';
 
 export const RESERVED_HEADER_KEYS = new Set<string>([
@@ -160,6 +160,55 @@ export class HeaderTierService {
     return row;
   }
 
+  /**
+   * Set the modality this tier produces. A media modality is validated against
+   * the configured chain so an image tier cannot point at a text-only model.
+   */
+  async setOutputModality(
+    agentId: string,
+    tenantId: string,
+    id: string,
+    outputModality: OutputModality,
+  ): Promise<HeaderTier> {
+    const row = await this.findOrThrow(agentId, id);
+    await this.assertChainSupportsModality(row, tenantId, outputModality);
+    row.output_modality = outputModality;
+    row.updated_at = new Date().toISOString();
+    await this.repo.save(row);
+    this.routingCache.invalidateAgent(agentId);
+    return row;
+  }
+
+  private async assertChainSupportsModality(
+    row: HeaderTier,
+    tenantId: string,
+    modality: OutputModality,
+  ): Promise<void> {
+    if (modality === 'text') return;
+    const routes = [row.override_route, ...(readFallbackRoutes(row) ?? [])].filter(
+      (route): route is ModelRoute => route !== null,
+    );
+    if (routes.length === 0) {
+      throw new BadRequestException(
+        `Cannot set ${modality} output for custom tier "${row.name}": configure a model first.`,
+      );
+    }
+    const available = await this.discoveryService.getModelsForAgent(tenantId, row.agent_id);
+    const supports = routes.some((route) => {
+      const model =
+        available.find(
+          (m) => m.id === route.model && m.provider.toLowerCase() === route.provider.toLowerCase(),
+        ) ?? available.find((m) => m.id === route.model);
+      return model?.outputModalities?.includes(modality) ?? false;
+    });
+    if (!supports) {
+      throw new BadRequestException(
+        `Cannot set ${modality} output for custom tier "${row.name}": ` +
+          `none of its models generate ${modality}. Point the tier at an ${modality} model first.`,
+      );
+    }
+  }
+
   async delete(agentId: string, id: string): Promise<void> {
     const row = await this.findOrThrow(agentId, id);
     await this.repo.delete({ id: row.id });
@@ -207,16 +256,17 @@ export class HeaderTierService {
     providerKeyLabel?: string | null,
   ): Promise<HeaderTier> {
     const row = await this.findOrThrow(agentId, id);
-    // When the caller passes an explicit (provider, authType) the route is
-    // already unambiguous — skip the discovery fetch.
-    const explicit = explicitRoute(model, provider, authType, providerKeyLabel);
-    const route =
-      explicit ??
-      unambiguousRoute(
-        model,
-        await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
-        providerKeyLabel,
-      );
+    // Store the canonical route whichever published name the caller used. An
+    // explicit (provider, authType) the discovery list does not know is kept
+    // as given, as before.
+    const resolution = resolveModelRoute(
+      model,
+      await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
+      { provider, authType, keyLabel: providerKeyLabel },
+    );
+    const route = resolution.ok
+      ? resolution.route
+      : explicitRoute(model, provider, authType, providerKeyLabel);
     assertStreamableResponseMode(
       row.response_mode,
       `custom tier "${row.name}"`,
@@ -295,45 +345,11 @@ export class HeaderTierService {
   ): Promise<ModelRoute[] | null> {
     if (models.length === 0) return null;
     const available = await this.discoveryService.getModelsForAgent(tenantId, agentId);
-    if (routes && routes.length === models.length) {
-      const aligned = routes.every((r, i) => r.model === models[i]);
-      const pool = [...(storedRoutes ?? [])];
-      const validated =
-        aligned &&
-        routes.every((r) => {
-          const kept = pool.findIndex((s) => routeMatches(s, r));
-          if (kept >= 0) {
-            pool.splice(kept, 1);
-            return true;
-          }
-          return available.some(
-            (m) =>
-              m.id === r.model &&
-              m.provider.toLowerCase() === r.provider.toLowerCase() &&
-              m.authType === r.authType,
-          );
-        });
-      if (validated) return routes;
+    const resolution = resolveFallbackRoutes(models, available, routes, storedRoutes);
+    if (!resolution.ok) {
+      throw new BadRequestException(describeUnresolvedFallback(resolution.model));
     }
-    const pool = [...(storedRoutes ?? [])];
-    const resolved: ModelRoute[] = [];
-    for (const m of models) {
-      const kept = pool.findIndex((s) => s.model === m);
-      if (kept >= 0) {
-        resolved.push(pool[kept]);
-        pool.splice(kept, 1);
-        continue;
-      }
-      const route = unambiguousRoute(m, available);
-      if (!route) {
-        throw new BadRequestException(
-          `Cannot resolve fallback model "${m}" to a single connected provider. ` +
-            `Pass an explicit (provider, authType, model) route, or connect exactly one provider that offers this model.`,
-        );
-      }
-      resolved.push(route);
-    }
-    return resolved;
+    return resolution.routes;
   }
 
   private async findOrThrow(agentId: string, id: string): Promise<HeaderTier> {

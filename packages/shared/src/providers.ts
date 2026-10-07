@@ -43,6 +43,16 @@ export interface SharedProviderEntry {
    * skips entries with `tileOnly: true`.
    */
   tileOnly?: boolean;
+  /**
+   * Media generation capabilities for this provider. Setting either flag
+   * marks the provider media-capable: its image/video models bypass the
+   * non-chat discovery filter and publish their output modality in
+   * `GET /v1/models`, so a synthetic tier can route to them.
+   */
+  media?: {
+    readonly image?: boolean;
+    readonly video?: boolean;
+  };
 }
 
 export interface MetaModelApiModel {
@@ -64,6 +74,64 @@ export const META_MODEL_API_MODELS: readonly MetaModelApiModel[] = [
 export const META_MODEL_API_MODEL_BY_ID: ReadonlyMap<string, MetaModelApiModel> = new Map(
   META_MODEL_API_MODELS.map((model) => [model.id, model]),
 );
+
+/**
+ * Agnes AI's published model catalog.
+ *
+ * Agnes exposes an OpenAI-compatible API (`https://apihub.agnes-ai.com/v1`)
+ * whose `/v1/models` listing is not guaranteed to carry the media models or
+ * their modalities. This catalog is the authoritative fallback: it supplies
+ * the model ids, display names, context windows, and — critically — the
+ * output modality that routing needs to build image/video synthetic tiers.
+ *
+ * Source: Agnes AI Model Catalog (github.com/AgnesAI-Labs/AgnesAI-Models).
+ */
+export interface AgnesModelEntry {
+  id: string;
+  displayName: string;
+  /** What the model produces. `image` / `video` models route to media endpoints. */
+  output: 'text' | 'image' | 'video';
+  /** Context window for text models; omitted for media models. */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+export const AGNES_MODELS: readonly AgnesModelEntry[] = [
+  {
+    id: 'agnes-2.5-flash',
+    displayName: 'Agnes 2.5 Flash',
+    output: 'text',
+    contextWindow: 524_288,
+    maxOutputTokens: 65_536,
+  },
+  {
+    id: 'agnes-2.0-flash',
+    displayName: 'Agnes 2.0 Flash',
+    output: 'text',
+    contextWindow: 262_144,
+    maxOutputTokens: 65_536,
+  },
+  {
+    id: 'agnes-1.5-flash',
+    displayName: 'Agnes 1.5 Flash',
+    output: 'text',
+    contextWindow: 262_144,
+    maxOutputTokens: 65_536,
+  },
+  { id: 'agnes-image-2.5-flash', displayName: 'Agnes Image 2.5 Flash', output: 'image' },
+  { id: 'agnes-image-2.1-flash', displayName: 'Agnes Image 2.1 Flash', output: 'image' },
+  { id: 'agnes-image-2.0-flash', displayName: 'Agnes Image 2.0 Flash', output: 'image' },
+  { id: 'agnes-video-v2.0', displayName: 'Agnes Video 2.0', output: 'video' },
+];
+
+export const AGNES_MODEL_BY_ID: ReadonlyMap<string, AgnesModelEntry> = new Map(
+  AGNES_MODELS.map((model) => [model.id, model]),
+);
+
+export const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+
+/** Video task status lives at the host root, not under the API version prefix. */
+export const AGNES_TASK_ORIGIN = 'https://apihub.agnes-ai.com';
 
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
@@ -508,6 +576,22 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: '',
     minKeyLength: 0,
     keyPlaceholder: 'Unsloth API key (optional)',
+  },
+  {
+    id: 'agnes',
+    displayName: 'Agnes AI',
+    aliases: ['agnes-ai', 'agnes ai', 'agnesai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#7C3AED',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'Agnes API key',
+    // Agnes serves text, image, and video models from one OpenAI-compatible
+    // base URL. The media flags keep its image/video models out of the
+    // non-chat discovery filter so synthetic media tiers can route to them.
+    media: { image: true, video: true },
   },
 ] as const;
 

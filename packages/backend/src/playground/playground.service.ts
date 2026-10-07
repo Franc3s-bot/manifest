@@ -530,6 +530,7 @@ export class PlaygroundService {
           // The Playground calls a provider directly; it never enters through
           // one of the proxy's public API surfaces.
           api_mode: null,
+          media_task_id: null,
           caller_attribution: null,
           request_headers: null,
           request_params: null,
@@ -609,6 +610,7 @@ export class PlaygroundService {
           // The Playground calls a provider directly; it never enters through
           // one of the proxy's public API surfaces.
           api_mode: null,
+          media_task_id: null,
           caller_attribution: null,
           request_headers: null,
           request_params: null,

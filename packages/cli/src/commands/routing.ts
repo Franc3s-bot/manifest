@@ -492,3 +492,76 @@ function toggleCommand(feature: 'autofix' | 'recording') {
 
 export const routingAutofix = toggleCommand('autofix');
 export const routingRecording = toggleCommand('recording');
+
+function tierParamsPath(agent: string, tier: string | undefined): string {
+  return agentPath(agent, `/tiers/${encodeURIComponent(tier ?? 'default')}/model-params`);
+}
+
+/** `path=value`: the value is JSON when it parses (numbers, booleans, objects), else a string. */
+function parseParamAssignment(raw: string): [string, unknown] {
+  const eq = raw.indexOf('=');
+  if (eq <= 0) {
+    throw new CliError(
+      'invalid_flag',
+      `--set expects <path>=<value>, got "${raw}"`,
+      'Example: --set reasoning.effort=high',
+    );
+  }
+  const text = raw.slice(eq + 1);
+  let value: unknown = text;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    // Not JSON: keep the literal string (e.g. `high`).
+  }
+  return [raw.slice(0, eq), value];
+}
+
+/**
+ * Model params of one routed model, addressed as tier + model: `--tier` is
+ * `default` (the default) or a custom tier's name, `--model` defaults to the
+ * tier's primary and may name one of its fallbacks. Saved params override the
+ * values the calling app sends, on requests Manifest routes (`model: "auto"`
+ * or a matching custom-tier header); a request naming a model skips them.
+ */
+export const routingParams = {
+  get: async (io: CliIo, argv: string[]): Promise<void> => {
+    const args = parseArgs(argv, { strings: ['url', 'tier', 'model'], maxPositionals: 1 });
+    const agent = slugifyAgentName(requirePositional(args, 0, '<agent-name>'));
+    const { client } = clientFromFlags(io, args);
+    printJson(
+      io,
+      await client.request('GET', tierParamsPath(agent, args.strings['tier']), {
+        query: { model: args.strings['model'] },
+      }),
+    );
+  },
+  set: async (io: CliIo, argv: string[]): Promise<void> => {
+    const args = parseArgs(argv, {
+      strings: ['url', 'tier', 'model'],
+      repeatables: ['set', 'unset'],
+      maxPositionals: 1,
+    });
+    const agent = slugifyAgentName(requirePositional(args, 0, '<agent-name>'));
+    const assignments = (args.lists['set'] ?? []).map(parseParamAssignment);
+    const unset = args.lists['unset'] ?? [];
+    if (assignments.length === 0 && unset.length === 0) {
+      throw new CliError(
+        'missing_flag',
+        'Pass at least one --set <path>=<value> or --unset <path>',
+        `Run mnfst routing params get ${agent} to list the available params`,
+      );
+    }
+    const { client } = clientFromFlags(io, args);
+    printJson(
+      io,
+      await client.request('PATCH', tierParamsPath(agent, args.strings['tier']), {
+        query: { model: args.strings['model'] },
+        body: {
+          ...(assignments.length > 0 ? { set: Object.fromEntries(assignments) } : {}),
+          ...(unset.length > 0 ? { unset } : {}),
+        },
+      }),
+    );
+  },
+};

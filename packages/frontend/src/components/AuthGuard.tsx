@@ -13,6 +13,12 @@ const AuthGuard: ParentComponent = (props) => {
   const location = useLocation();
   const [planChecked, setPlanChecked] = createSignal(false);
 
+  // Start the plan lookup now, in parallel with the session probe: it only
+  // needs the cookie jar. The effect below awaits the same in-flight promise,
+  // so the two serial round trips before first paint become one. Signed-out
+  // visitors get a 401 that loadPlan neither caches nor surfaces.
+  void loadPlan();
+
   createEffect(() => {
     const s = session();
     if (s.isPending) return;
@@ -73,7 +79,7 @@ const AuthGuard: ParentComponent = (props) => {
             <div class="auth-logo">
               <img
                 src="/logotype-white.svg"
-                alt="Manifest"
+                alt="Manifest LLM Gateway"
                 class="auth-logo__img auth-logo__img--light"
               />
               <img src="/logotype-dark.svg" alt="" class="auth-logo__img auth-logo__img--dark" />

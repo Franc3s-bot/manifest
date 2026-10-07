@@ -18,7 +18,7 @@ links:
   - label: Website
     url: https://manifest.build
   - label: Documentation
-    url: https://manifest.build/docs
+    url: https://manifest.build/llm-gateway/docs/introduction/
   - label: GitHub
     url: https://github.com/mnfst/llm-gateway
   - label: Docker Hub

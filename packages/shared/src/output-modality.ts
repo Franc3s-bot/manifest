@@ -1,4 +1,4 @@
-export const OUTPUT_MODALITIES = ['text'] as const;
+export const OUTPUT_MODALITIES = ['text', 'image', 'video'] as const;
 
 export type OutputModality = (typeof OUTPUT_MODALITIES)[number];
 

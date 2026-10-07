@@ -14,6 +14,7 @@ import { Repository } from 'typeorm';
 import { AgentEnabledProvider } from '../../entities/agent-enabled-provider.entity';
 import { computeTrend } from '../services/query-helpers';
 import { MessagesQueryService } from '../services/messages-query.service';
+import { OverviewQueryDto } from '../dto/overview-query.dto';
 
 /** Sum the timeseries buckets into current-window totals for the summary cards. */
 function sumTimeseries(tsData: {
@@ -48,9 +49,10 @@ export class OverviewController {
   ) {}
 
   @Get('overview')
-  async getOverview(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
+  async getOverview(@Query() query: OverviewQueryDto, @TenantCtx() ctx: TenantContext) {
     const range = query.range ?? '24h';
     const agentName = query.agent_name;
+    const fast = query.fast === 'true';
     const hourly = isHourlyRange(range);
     const tenantId = ctx.tenantId;
     // Scoped to one harness => show only what that harness's routing did. A
@@ -86,7 +88,9 @@ export class OverviewController {
       // the previous window here for the trend arrows instead of repeating the
       // full current+previous double-scan.
       this.aggregation.getPreviousWindowMetrics(range, tenantId, agentName, true, excludeDirect),
-      this.aggregation.getRequestReliability(range, tenantId, agentName, true, excludeDirect),
+      fast
+        ? Promise.resolve(null)
+        : this.aggregation.getRequestReliability(range, tenantId, agentName, true, excludeDirect),
       this.timeseries.getTimeseries(
         range,
         tenantId,
@@ -99,32 +103,26 @@ export class OverviewController {
         undefined,
         excludeDirect,
       ),
-      this.timeseries.getCostByModel(range, tenantId, agentName, true, excludeDirect),
-      this.messagesQuery
-        ? this.messagesQuery
-            .getMessages({
-              range,
-              tenantId,
-              agent_name: agentName,
-              limit: 5,
-              include_total: false,
-              include_filter_options: false,
-              exclude_playground: true,
-              exclude_direct: excludeDirect,
-            })
-            .then((result) => result.items)
-        : this.timeseries.getRecentActivity(range, tenantId, 5, agentName, true, excludeDirect),
-      this.timeseries.getActiveSkills(range, tenantId, agentName, true, excludeDirect),
+      fast
+        ? Promise.resolve([])
+        : this.timeseries.getCostByModel(range, tenantId, agentName, true, excludeDirect),
+      fast
+        ? Promise.resolve([])
+        : this.getRecentActivity(range, tenantId, agentName, excludeDirect),
+      fast
+        ? Promise.resolve([])
+        : this.timeseries.getActiveSkills(range, tenantId, agentName, true, excludeDirect),
       this.aggregation.hasAnyData(tenantId, agentName, true, excludeDirect),
       this.hasActiveProviders(tenantId, agentName),
     ]);
 
     const summary = AggregationService.buildSummary(sumTimeseries(tsData), prevMetrics);
-    summary.messages = {
-      value: requestReliability.total,
-      trend_pct: computeTrend(requestReliability.total, requestReliability.previous_total),
-    };
-
+    if (requestReliability) {
+      summary.messages = {
+        value: requestReliability.total,
+        trend_pct: computeTrend(requestReliability.total, requestReliability.previous_total),
+      };
+    }
     return {
       summary: {
         tokens_today: summary.tokens.tokens_today,
@@ -141,6 +139,25 @@ export class OverviewController {
       request_reliability: requestReliability,
       has_data: hasData,
       has_providers: hasProviders,
+    };
+  }
+
+  @Get('overview/details')
+  async getOverviewDetails(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
+    const range = query.range ?? '24h';
+    const agentName = query.agent_name;
+    const excludeDirect = !!agentName;
+    const [costByModel, recentActivity, requestReliability, activeSkills] = await Promise.all([
+      this.timeseries.getCostByModel(range, ctx.tenantId, agentName, true, excludeDirect),
+      this.getRecentActivity(range, ctx.tenantId, agentName, excludeDirect),
+      this.aggregation.getRequestReliability(range, ctx.tenantId, agentName, true, excludeDirect),
+      this.timeseries.getActiveSkills(range, ctx.tenantId, agentName, true, excludeDirect),
+    ]);
+    return {
+      cost_by_model: costByModel,
+      recent_activity: recentActivity,
+      request_reliability: requestReliability,
+      active_skills: activeSkills,
     };
   }
 
@@ -252,5 +269,27 @@ export class OverviewController {
     } catch {
       return false;
     }
+  }
+
+  private getRecentActivity(
+    range: string,
+    tenantId: string | null,
+    agentName: string | undefined,
+    excludeDirect: boolean,
+  ) {
+    return this.messagesQuery
+      ? this.messagesQuery
+          .getMessages({
+            range,
+            tenantId,
+            agent_name: agentName,
+            limit: 5,
+            include_total: false,
+            include_filter_options: false,
+            exclude_playground: true,
+            exclude_direct: excludeDirect,
+          })
+          .then((result) => result.items)
+      : this.timeseries.getRecentActivity(range, tenantId, 5, agentName, true, excludeDirect);
   }
 }

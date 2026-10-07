@@ -88,7 +88,7 @@ describe("HeaderTierSnippetModal", () => {
     expect(headers).toEqual({ "x-manifest-tier": "premium" });
   });
 
-  it("uses window.location.origin + /v1 as the base URL on non-gateway.manifest.build hosts", () => {
+  it("uses window.location.origin + /v1 as the base URL on a self-hosted origin", () => {
     const { getByTestId } = render(() => (
       <HeaderTierSnippetModal agentName="demo" tier={baseTier} onClose={vi.fn()} />
     ));
@@ -98,7 +98,7 @@ describe("HeaderTierSnippetModal", () => {
   it("uses the app URL on gateway.manifest.build", () => {
     Object.defineProperty(window, "location", {
       configurable: true,
-      value: { hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
+      value: { hostname: "app.manifest.build", origin: "https://app.manifest.build" },
     });
     const { getByTestId } = render(() => (
       <HeaderTierSnippetModal agentName="demo" tier={baseTier} onClose={vi.fn()} />

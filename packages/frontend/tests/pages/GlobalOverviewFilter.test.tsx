@@ -14,6 +14,7 @@ const apiMocks = vi.hoisted(() => ({
   getGlobalProviders: vi.fn(),
   getGlobalProviderUsage: vi.fn(),
   getOverview: vi.fn(),
+  getOverviewDetails: vi.fn(),
   getOverviewAgentUsage: vi.fn(),
   getOverviewProviderUsage: vi.fn(),
   getBillingStatus: vi.fn(),
@@ -98,6 +99,7 @@ vi.mock('../../src/services/api/analytics.js', () => ({
       },
     ]),
   getOverview: (...args: unknown[]) => apiMocks.getOverview(...args),
+  getOverviewDetails: (...args: unknown[]) => apiMocks.getOverviewDetails(...args),
   getOverviewAgentUsage: (...args: unknown[]) => apiMocks.getOverviewAgentUsage(...args),
   getOverviewProviderUsage: (...args: unknown[]) => apiMocks.getOverviewProviderUsage(...args),
   getAttemptStats: () =>
@@ -106,7 +108,8 @@ vi.mock('../../src/services/api/analytics.js', () => ({
       fallbacked_attempts: { value: 2, previous: 1 },
     }),
   getAttemptTimeseries: () => Promise.resolve({ range: '7d', by: 'metric', keys: [], buckets: [] }),
-  getWorkspaceAutofixStatus: () => Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
+  getWorkspaceAutofixStatus: () =>
+    Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
   getAutofixStats: () => Promise.resolve(null),
   getAutofixTimeseries: () =>
     Promise.resolve({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
@@ -345,6 +348,7 @@ beforeEach(() => {
   apiMocks.getGlobalProviders.mockResolvedValue(providersResponse);
   apiMocks.getGlobalProviderUsage.mockResolvedValue({ providers: [] });
   apiMocks.getOverview.mockResolvedValue(overviewResponse);
+  apiMocks.getOverviewDetails.mockResolvedValue({});
   apiMocks.getOverviewAgentUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getOverviewProviderUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getBillingStatus.mockResolvedValue({
@@ -370,6 +374,7 @@ describe('GlobalOverview filter onUnselectAll', () => {
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(1);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(apiMocks.getOverviewDetails).toHaveBeenCalledTimes(1));
 
     sseMocks.bumpAnalytics?.();
 
@@ -378,6 +383,7 @@ describe('GlobalOverview filter onUnselectAll', () => {
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(2);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(2);
+    expect(apiMocks.getOverviewDetails).toHaveBeenCalledTimes(1);
   });
 
   it('shows the skeleton on a range change but not on a background ping refetch', async () => {

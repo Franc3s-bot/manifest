@@ -42,6 +42,7 @@ import { AutofixStatsService } from './services/autofix-stats.service';
 import { RequestVolumeService } from './services/request-volume.service';
 import { BillingModule } from '../billing/billing.module';
 import { AutofixModule } from '../routing/autofix/autofix.module';
+import { AgentUsageDailyService } from './services/agent-usage-daily.service';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { AutofixModule } from '../routing/autofix/autofix.module';
     AttemptStatsService,
     AutofixStatsService,
     RequestVolumeService,
+    AgentUsageDailyService,
   ],
   exports: [
     SpecificityFeedbackService,

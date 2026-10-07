@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-white.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" />
-    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-light-new.png" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark-new.png" />
+    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark-new.png" alt="Manifest Gateway" height="53" title="Manifest Gateway"/>
   </picture>
 </p>
 <p align="center">
@@ -15,24 +15,23 @@
   <a href="https://discord.gg/FepAked3W7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
-> ### 🚀 Manifest is becoming the self-healing layer for APIs
->
-> We're building a new product that fixes failed API requests on the fly, independently of the gateway.
->
-> **This open-source gateway stays available and maintained.**
->
-> **[Read more](https://manifest.build/blog/manifest-is-taking-a-new-direction/)**
+## What is Manifest Gateway?
 
-## What is Manifest?
+Manifest Gateway is an open-source LLM gateway for agents and apps. It sits between your agents and your LLM providers (OpenAI, Anthropic, Gemini, local models, and 300+ more) and gives you complete control over routing decisions. Define custom routing rules, set fallbacks when models fail, enable self-healing with Autofix, and track everything from one dashboard.
 
-Manifest is a smart model router for **AI agents** like OpenClaw, Hermes, or anything speaking the OpenAI-compatible HTTP API. It sits between your agents and your providers (API keys, subscriptions, or local models) and sends each request to the right one. Simple questions go to fast, cheap models. Hard problems go to the powerful ones. One endpoint for every provider, and a smaller bill as a bonus.
-
-- One endpoint, every provider: send each request to the right model
-- Automatic fallbacks: if a model fails, the next one picks up
-- Set limits: don't exceed your budget
-- Self-hosted: your requests, your providers, your data
+- **Custom routing rules**: route by model, header, complexity, or task type
+- **Automatic fallbacks**: if a model fails, the next one picks up instantly
+- **Self-healing with Autofix**: failed requests are repaired in real time before they break your app
+- **Cost control**: set limits and track spending across all providers
+- **Self-hosted**: your requests, your providers, your data — complete privacy
 
 ![manifest-gh](https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/manifest-screenshot.png)
+
+<p align="center">
+  <a href="https://manifest.build/api-bot/"><img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/api-bot-readme-banner.png" alt="Meet API Bot: API changes won't take your app down anymore. Discover" width="100%" /></a>
+</p>
+
+---
 
 ## Table of contents
 
@@ -239,7 +238,7 @@ explicit choice and falls back to your routing config if it matches nothing.
 
 Errors from Manifest itself carry an `M###` code, a plain-English cause, and a
 link to the matching page under
-[manifest.build/docs/errors](https://manifest.build/docs/errors) — including
+[manifest.build/llm-gateway/docs/errors](https://manifest.build/llm-gateway/docs/errors/) — including
 `M100` (no provider connected yet) and `M003`/`M005` (bad or unknown key), the
 three you are most likely to hit on a fresh install.
 
@@ -436,7 +435,7 @@ refuses to run under `NODE_ENV=production` regardless of `SEED_DATA`. Use the
 first-run setup wizard to create your admin account.
 
 Full env var reference:
-[manifest.build/docs/reference/environment-variables](https://manifest.build/docs/reference/environment-variables)
+[manifest.build/llm-gateway/docs/reference/environment-variables](https://manifest.build/llm-gateway/docs/reference/environment-variables/)
 
 ## Healing service (Auto-fix)
 
@@ -504,7 +503,7 @@ platform, OS, and arch.
 
 To disable, set `MANIFEST_TELEMETRY_DISABLED=1` in your `.env` file and
 restart the container. The full field list is published at
-[manifest.build/docs/self-hosted#telemetry](https://manifest.build/docs/self-hosted#telemetry).
+[manifest.build/llm-gateway/docs/self-hosted#telemetry](https://manifest.build/llm-gateway/docs/self-hosted/#telemetry).
 
 ## Autofix privacy and instance identity
 
@@ -557,7 +556,7 @@ both announce a new one. Your install will look like a new install to both.
 
 - [GitHub](https://github.com/mnfst/llm-gateway)
 - [Website](https://manifest.build)
-- [Docs](https://manifest.build/docs)
+- [Docs](https://manifest.build/llm-gateway/docs/introduction/)
 - [Discord](https://discord.gg/FepAked3W7)
 
 ## License
