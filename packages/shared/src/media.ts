@@ -106,31 +106,44 @@ export interface VideoObject {
 /* ── Pricing ──────────────────────────────────────────────────────── */
 
 /**
- * USD per generated image, keyed by `<provider>/<model>`. Unknown models fall
- * through to the provider default, then to `null` (cost not tracked).
+ * A flat USD rate, or a per-size-tier map (`1K`, `2K`, `720P`, `1080P`, …).
+ * Maps must carry a `default` entry used when the request names no size.
+ */
+export type MediaRate = number | Readonly<Record<string, number>>;
+
+/**
+ * USD pricing for media generation, keyed by `<provider>/<model>`.
+ * Unknown models fall through to the provider default, then to `null`
+ * (cost not tracked).
  */
 export interface MediaPriceTable {
-  /** USD per image for a given model. */
-  imagePerImage?: Readonly<Record<string, number>>;
+  /** USD per generated image for a given model. */
+  imagePerImage?: Readonly<Record<string, MediaRate>>;
   /** Default USD per image for the provider when the model is not listed. */
-  imageDefaultPerImage?: number;
+  imageDefaultPerImage?: MediaRate;
   /** USD per second of output for a given model. */
-  videoPerSecond?: Readonly<Record<string, number>>;
+  videoPerSecond?: Readonly<Record<string, MediaRate>>;
   /** Default USD per second for the provider when the model is not listed. */
-  videoDefaultPerSecond?: number;
+  videoDefaultPerSecond?: MediaRate;
 }
 
 /**
- * Agnes public reference pricing. Video is billed per second of output
- * duration (billable = output duration + input video duration).
+ * Agnes public pricing (https://www.agnes-ai.com/en/docs/pricing).
+ *
+ * Image output is billed per image by resolution tier; all tiers are
+ * currently free during the promotional window, so the list price is used
+ * here to keep cost tracking meaningful once the promotion ends.
+ * Video is billed per second of output duration, by resolution tier.
  */
 export const AGNES_MEDIA_PRICES: MediaPriceTable = {
   imagePerImage: {
-    // Agnes image pricing is not published per image in the public catalog;
-    // the subscription quota is images-per-day. Leave unknown so cost is not
-    // fabricated until a real rate is configured.
+    'agnes-image-2.5-flash': { default: 0.01, '1K': 0.01, '2K': 0.018, '3K': 0.021, '4K': 0.024 },
+    'agnes-image-2.1-flash': { default: 0.01, '1K': 0.01, '2K': 0.018, '3K': 0.021, '4K': 0.024 },
+    'agnes-image-2.0-flash': { default: 0.01, '1K': 0.01, '2K': 0.018, '3K': 0.021, '4K': 0.024 },
   },
   videoPerSecond: {
-    'agnes-video-v2.0': 0.04,
+    'agnes-video-2.5': { default: 0.04, '720P': 0.025, '1080P': 0.04, '1K': 0.04, '2K': 0.055 },
+    // Promotional: free for a limited time (list 720P $0.025/s).
+    'agnes-video-2.5-flash': { default: 0, '720P': 0 },
   },
 };

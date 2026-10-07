@@ -481,6 +481,22 @@ describe('ModelController', () => {
       expect(result[0].output_modalities).toEqual(['text']);
     });
 
+    it('exposes the discovered output modality so media models reach the picker', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'agnes-image-2.5-flash',
+          provider: 'agnes',
+          outputModalities: ['image'],
+        }),
+        makeDiscovered({ id: 'agnes-video-2.5', provider: 'agnes', outputModalities: ['video'] }),
+      ]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result[0].output_modalities).toEqual(['image']);
+      expect(result[1].output_modalities).toEqual(['video']);
+    });
+
     it('resolves gateway models to the underlying provider for capability metadata', async () => {
       mockDiscoveryService.getModelsForAgent.mockResolvedValue([
         makeDiscovered({

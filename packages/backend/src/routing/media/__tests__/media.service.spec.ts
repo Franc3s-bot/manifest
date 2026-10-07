@@ -153,8 +153,8 @@ describe('MediaService image generation', () => {
     expect(result.body).toEqual({ created: 1, data: [{ url: 'https://cdn/a.png' }] });
     const successOpts = recorder.recordSuccessMessage.mock.calls[0][5];
     expect(successOpts.apiMode).toBe('images');
-    // Image pricing is not published, so cost is explicitly "not tracked".
-    expect(successOpts.costUsdOverride).toBeNull();
+    // 1 image at the Agnes default (1K) list rate.
+    expect(successOpts.costUsdOverride).toBeCloseTo(0.01, 6);
   });
 
   it('rejects an image request routed to a video model with M301', async () => {
@@ -382,7 +382,7 @@ describe('MediaService video generation', () => {
           id: 'req_1',
           agent_id: 'a1',
           media_task_id: 'vid_1',
-          request_params: { seconds: 5 },
+          request_params: { seconds: 5, size: '720P' },
         }),
         update: jest.fn().mockResolvedValue(undefined),
       },
@@ -392,7 +392,7 @@ describe('MediaService video generation', () => {
           request_id: 'req_1',
           attempt_number: 1,
           provider: 'agnes',
-          model: 'agnes-video-v2.0',
+          model: 'agnes-video-2.5',
           auth_type: 'api_key',
         }),
         update: jest.fn().mockResolvedValue(undefined),
@@ -413,16 +413,16 @@ describe('MediaService video generation', () => {
     const result = await service.videoStatus(ctx, 'vid_1');
 
     expect(mediaClient.videoStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ provider: 'agnes', model: 'agnes-video-v2.0', taskId: 'vid_1' }),
+      expect.objectContaining({ provider: 'agnes', model: 'agnes-video-2.5', taskId: 'vid_1' }),
     );
     expect(result.status).toBe(200);
-    // 10s at the Agnes video rate.
     expect(messageRepo.update).toHaveBeenCalledWith(
       { id: 'msg_1' },
       expect.objectContaining({ cost_usd: expect.any(Number), status: 'success' }),
     );
+    // 10s at the 720P Agnes video rate ($0.025/s).
     const cost = messageRepo.update.mock.calls[0][1].cost_usd as number;
-    expect(cost).toBeGreaterThan(0);
+    expect(cost).toBeCloseTo(0.25, 6);
   });
 
   it('marks a failed video task as failed with the canonical status', async () => {

@@ -176,7 +176,11 @@ export class ModelController {
           capability_code: m.capabilityCode,
           ...(modelCapabilities ? { capabilities: modelCapabilities } : {}),
           input_modalities: inputModalities,
-          output_modalities: ['text'],
+          // The discovered output modality is authoritative. It used to be
+          // hardcoded to ['text'], which hid image/video models from the
+          // picker even when discovery kept them.
+          output_modalities:
+            m.outputModalities && m.outputModalities.length > 0 ? m.outputModalities : ['text'],
           quality_score: m.qualityScore,
           display_name: isCustom
             ? CustomProviderService.rawModelName(m.id)

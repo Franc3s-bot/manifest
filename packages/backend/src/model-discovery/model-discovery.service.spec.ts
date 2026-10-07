@@ -350,6 +350,42 @@ describe('ModelDiscoveryService', () => {
       ]);
     });
 
+    it('keeps image/video-output models for a media-capable provider', async () => {
+      fetcher.fetch.mockResolvedValue([
+        makeModel({ id: 'agnes-2.5-flash', inputPricePerToken: 0, outputPricePerToken: 0 }),
+        makeModel({
+          id: 'agnes-image-2.5-flash',
+          inputModalities: ['text', 'image'],
+          outputModalities: ['image'],
+        }),
+        makeModel({
+          id: 'agnes-video-2.5',
+          inputModalities: ['text'],
+          outputModalities: ['video'],
+        }),
+      ]);
+
+      const result = await service.discoverModels(makeProvider({ provider: 'agnes' }));
+
+      expect(result.map((m) => m.id)).toEqual([
+        'agnes-2.5-flash',
+        'agnes-image-2.5-flash',
+        'agnes-video-2.5',
+      ]);
+    });
+
+    it('still drops image/video-output models for a chat-only provider', async () => {
+      fetcher.fetch.mockResolvedValue([
+        makeModel({ id: 'chat-model', inputPricePerToken: 0, outputPricePerToken: 0 }),
+        makeModel({ id: 'image-model', outputModalities: ['image'] }),
+        makeModel({ id: 'video-model', outputModalities: ['video'] }),
+      ]);
+
+      const result = await service.discoverModels(makeProvider({ provider: 'openai' }));
+
+      expect(result.map((m) => m.id)).toEqual(['chat-model']);
+    });
+
     it('should prefer models.dev modalities over the curated known-modalities list', async () => {
       mockModelsDevSync.lookupModelCapabilities.mockReturnValue({
         id: 'gpt-5.3-codex-spark',

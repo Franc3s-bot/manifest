@@ -10,6 +10,7 @@ import {
   PROVIDER_BLOCKLIST,
   PROVIDER_NON_CHAT,
   filterNonChatModels,
+  isMediaCapableProvider,
   type ProviderModelFetchOptions,
 } from './provider-model-fetcher.service';
 import { ProviderModelRegistryService } from './provider-model-registry.service';
@@ -380,8 +381,16 @@ export class ModelDiscoveryService {
     // model no source describes is kept. Tool support is deliberately NOT a
     // criterion: routes are user-chosen, and a tool-less chat model (Groq's
     // allam-2-7b, #2963) still serves requests that send no tools.
+    //
+    // A media-capable provider (Agnes) keeps its image/video-output models:
+    // the text-only rule would hide exactly the models its media endpoints
+    // route to.
+    const mediaCapable = isMediaCapableProvider(provider.provider);
     const filtered = reconciled.filter(
-      (model) => carriesText(model.inputModalities) && carriesText(model.outputModalities),
+      (model) =>
+        carriesText(model.inputModalities) &&
+        (carriesText(model.outputModalities) ||
+          (mediaCapable && carriesMediaOutput(model.outputModalities))),
     );
 
     const previousCachedCount = Array.isArray(provider.cached_models)
@@ -957,6 +966,14 @@ export class ModelDiscoveryService {
 /** Unknown modalities (no list) count as text so the model is kept. */
 function carriesText(modalities: readonly ModelModality[] | undefined): boolean {
   return !modalities || modalities.includes('text');
+}
+
+/**
+ * True when the model produces an image or a video. Only consulted for
+ * media-capable providers, so a chat-only provider still drops them.
+ */
+function carriesMediaOutput(modalities: readonly ModelModality[] | undefined): boolean {
+  return !!modalities && (modalities.includes('image') || modalities.includes('video'));
 }
 
 /** Modalities the provider stated win; models.dev only fills the gaps. */

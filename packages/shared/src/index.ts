@@ -92,6 +92,7 @@ export type {
   VideoGenerationRequest,
   VideoObject,
   MediaPriceTable,
+  MediaRate,
 } from './media';
 export {
   routeEquals,

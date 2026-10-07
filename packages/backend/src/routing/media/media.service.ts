@@ -38,7 +38,7 @@ import { resolveRouteCredentials } from '../proxy/route-credentials';
 import type { ProviderAttemptRef, ProviderAttemptStart } from '../proxy/proxy-types';
 import { MediaProviderClient, type MediaApiMode } from './media-provider-client';
 import { validateMediaRequest } from './media-validation';
-import { imageCostUsd, parseDurationSeconds, videoCostUsd } from './media-pricing';
+import { imageCostUsd, videoCostUsd } from './media-pricing';
 import type { ResolveResponse } from '../dto/resolve-response';
 
 const MODEL_UNAVAILABLE: ManifestErrorCode = 'M302';
@@ -262,9 +262,10 @@ export class MediaService {
 
       const isVideo = apiMode === 'videos';
       const imageCount = isVideo ? 0 : countImages(forward.body);
+      const size = typeof body.size === 'string' ? body.size : undefined;
       const costUsd = isVideo
-        ? videoCostUsd(route.provider, route.model, forward.seconds ?? 0)
-        : imageCostUsd(route.provider, route.model, imageCount);
+        ? videoCostUsd(route.provider, route.model, forward.seconds ?? 0, size)
+        : imageCostUsd(route.provider, route.model, imageCount, size);
 
       await this.recorder
         .recordSuccessMessage(
@@ -298,9 +299,10 @@ export class MediaService {
         .catch((e) => this.logger.warn(`Failed to record media success: ${e}`));
 
       if (isVideo && forward.taskId) {
-        await this.attachVideoTask(requestId, forward.taskId, requestedSeconds(body)).catch((e) =>
-          this.logger.warn(`Failed to attach media task id: ${e}`),
-        );
+        await this.attachVideoTask(requestId, forward.taskId, {
+          seconds: requestedSeconds(body),
+          size,
+        }).catch((e) => this.logger.warn(`Failed to attach media task id: ${e}`));
       }
 
       return { status: forward.status, body: forward.body };
@@ -378,8 +380,13 @@ export class MediaService {
     });
 
     if (status.ok) {
-      const seconds = status.seconds ?? parseDurationSeconds(requestSeconds(request));
-      const costUsd = videoCostUsd(attempt.provider, attempt.model, seconds ?? 0);
+      const seconds = status.seconds ?? requestSeconds(request);
+      const costUsd = videoCostUsd(
+        attempt.provider,
+        attempt.model,
+        seconds ?? 0,
+        requestSize(request),
+      );
       await this.finalizeVideoTask(
         request.id,
         attempt.id,
@@ -543,13 +550,20 @@ export class MediaService {
   private async attachVideoTask(
     requestId: string,
     taskId: string,
-    seconds: number | undefined,
+    params: { seconds?: number; size?: string },
   ): Promise<void> {
     await this.requestRepo.update(
       { id: requestId },
       {
         media_task_id: taskId,
-        ...(seconds !== undefined ? { request_params: { seconds } } : {}),
+        ...(params.seconds !== undefined || params.size !== undefined
+          ? {
+              request_params: {
+                ...(params.seconds !== undefined ? { seconds: params.seconds } : {}),
+                ...(params.size !== undefined ? { size: params.size } : {}),
+              },
+            }
+          : {}),
       },
     );
   }
@@ -664,6 +678,12 @@ function requestSeconds(request: ManifestRequest): number | undefined {
   const raw = params?.['seconds'];
   if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
   return undefined;
+}
+
+function requestSize(request: ManifestRequest): string | undefined {
+  const params = request.request_params as Record<string, unknown> | null | undefined;
+  const raw = params?.['size'];
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
 }
 
 function errorTypeForStatus(status: number): string {
