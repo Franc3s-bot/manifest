@@ -11,6 +11,9 @@ import {
   HttpException,
   HttpStatus,
   Optional,
+  Param,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { Request, Response as ExpressResponse } from 'express';
 import { SkipThrottle } from '@nestjs/throttler';
@@ -64,6 +67,15 @@ import { redactInlineImageDataUrls } from './inline-image-redaction';
 import { scrubSecrets } from '../../common/utils/secret-scrub';
 import { openAiModelId, subscriptionOpenAiModelId } from './openai-model-id';
 import { openAiModelCapabilities, type OpenAiModelCapabilities } from './openai-model-capabilities';
+import {
+  MODEL_CREATED_UNKNOWN,
+  autoRouterCapabilities,
+  openAiModelCost,
+  syntheticTierCapabilities,
+  type OpenAiModelList,
+  type OpenAiModelObject,
+} from './openai-model-list';
+import { mediaCostProjection } from '../media/media-pricing';
 import { buildSyntheticTierProfile } from './synthetic-model-profile';
 import { PlanService } from '../../billing/plan.service';
 import { StreamFailure } from './stream-writer';
@@ -77,48 +89,34 @@ import {
 
 const MAX_SEEN_TENANTS = 10_000;
 const SEEN_TENANT_TTL_MS = 24 * 60 * 60 * 1000;
-const MODEL_CREATED_UNKNOWN = 0;
 
-interface OpenAiModelObject {
-  id: string;
-  object: 'model';
-  created: number;
-  owned_by: string;
-  provider_model_id?: string;
-  auth_type?: string;
-  capabilities?: OpenAiModelCapabilities;
-  cost?: OpenAiModelCost;
+/** Output-modality filter values accepted by `GET /v1/models?output=`. */
+type OutputFilter = 'text' | 'image' | 'video';
+const OUTPUT_FILTERS = new Set<string>(['text', 'image', 'video']);
+
+function parseOutputFilter(output: string | undefined): OutputFilter | undefined {
+  if (output === undefined || output === '') return undefined;
+  const normalized = output.toLowerCase();
+  if (!OUTPUT_FILTERS.has(normalized)) {
+    throw new BadRequestException('"output" must be one of: text, image, video.');
+  }
+  return normalized as OutputFilter;
 }
 
-interface OpenAiModelCost {
-  /** USD per million input tokens. */
-  input?: number;
-  /** USD per million output tokens. */
-  output?: number;
-}
-
-interface OpenAiModelList {
-  object: 'list';
-  data: OpenAiModelObject[];
-}
-
-function openAiModelCost(
-  inputPricePerToken: number | null,
-  outputPricePerToken: number | null,
-): OpenAiModelCost | undefined {
-  const input =
-    inputPricePerToken != null && Number.isFinite(inputPricePerToken) && inputPricePerToken >= 0
-      ? inputPricePerToken * 1_000_000
-      : undefined;
-  const output =
-    outputPricePerToken != null && Number.isFinite(outputPricePerToken) && outputPricePerToken >= 0
-      ? outputPricePerToken * 1_000_000
-      : undefined;
-  if (input === undefined && output === undefined) return undefined;
-  return {
-    ...(input !== undefined ? { input } : {}),
-    ...(output !== undefined ? { output } : {}),
-  };
+/**
+ * Whether an entry can serve the filtered output modality. A model whose output
+ * is unknown (no discovered modalities, e.g. the `auto` router or an
+ * uncatalogued model) is kept only by the `text` filter: every routable model
+ * is reachable through `/v1/chat/completions`, and nothing says it produces
+ * media.
+ */
+function servesOutput(
+  capabilities: OpenAiModelCapabilities | undefined,
+  filter: OutputFilter,
+): boolean {
+  const modalities = capabilities?.output_modalities;
+  if (!modalities || modalities.length === 0) return filter === 'text';
+  return modalities.includes(filter);
 }
 
 @Controller('v1')
@@ -157,25 +155,77 @@ export class ProxyController {
     @Query('capabilities') capabilities?: string,
     @Query('cost') cost?: string,
     @Query('route_metadata') routeMetadata?: string,
+    @Query('output') output?: string,
   ): Promise<OpenAiModelList> {
-    const includeCapabilities = capabilities === 'true';
-    const includeCost = cost === 'true';
-    const includeRouteMetadata = routeMetadata === 'true';
-    const models = await this.modelDiscovery.getModelsForAgent(
-      req.ingestionContext.tenantId,
-      req.ingestionContext.agentId,
-    );
-    // The synthetic `auto` route never carries metadata — it resolves to a
-    // different concrete model per request, so any claim would be wrong.
-    const data: OpenAiModelObject[] = [
-      {
-        id: 'auto',
-        object: 'model',
-        created: MODEL_CREATED_UNKNOWN,
-        owned_by: 'manifest',
-      },
-    ];
-    const seen = new Set(data.map((model) => model.id));
+    const data = await this.listModelEntries(req.ingestionContext, {
+      includeCapabilities: capabilities === 'true',
+      includeCost: cost === 'true',
+      includeRouteMetadata: routeMetadata === 'true',
+      filter: parseOutputFilter(output),
+    });
+    return { object: 'list', data };
+  }
+
+  /**
+   * Single-model lookup (`GET /v1/models/{id}`) — the probe OpenAI SDKs make
+   * before a request. The id is the provider-qualified name the list endpoint
+   * publishes, so the wildcard has to accept ids that carry slashes
+   * (`openrouter/anthropic/claude`).
+   */
+  @Get('models/*splat')
+  async model(
+    @Req() req: Request & { ingestionContext: IngestionContext },
+    @Param('splat') splat: string | string[] | undefined,
+    @Query('capabilities') capabilities?: string,
+    @Query('cost') cost?: string,
+    @Query('route_metadata') routeMetadata?: string,
+  ): Promise<OpenAiModelObject> {
+    const id = Array.isArray(splat) ? splat.join('/') : (splat ?? '');
+    const data = await this.listModelEntries(req.ingestionContext, {
+      includeCapabilities: capabilities === 'true',
+      includeCost: cost === 'true',
+      includeRouteMetadata: routeMetadata === 'true',
+    });
+    const entry = data.find((model) => model.id === id);
+    if (!entry) {
+      throw new NotFoundException(`Model "${id}" is not available for this agent.`);
+    }
+    return entry;
+  }
+
+  /**
+   * Build the `/v1/models` projection for one agent. Both the list and the
+   * single-model endpoint share it, so the two can never disagree about what a
+   * model supports.
+   */
+  private async listModelEntries(
+    ctx: IngestionContext,
+    options: {
+      includeCapabilities: boolean;
+      includeCost: boolean;
+      includeRouteMetadata: boolean;
+      filter?: 'text' | 'image' | 'video';
+    },
+  ): Promise<OpenAiModelObject[]> {
+    const { includeCapabilities, includeCost, includeRouteMetadata, filter } = options;
+    // Resolving capability metadata is the expensive part of this endpoint, so
+    // the default payload (no flags) must not pay for it. The output filter
+    // needs the facts even when the caller did not ask to see them.
+    const needMetadata = includeCapabilities || includeCost || filter !== undefined;
+    const models = await this.modelDiscovery.getModelsForAgent(ctx.tenantId, ctx.agentId);
+
+    const data: OpenAiModelObject[] = [];
+    const seen = new Set<string>(['auto']);
+
+    // The synthetic `auto` router: a marker, never a per-request claim.
+    const autoEntry: OpenAiModelObject = {
+      id: 'auto',
+      object: 'model',
+      created: MODEL_CREATED_UNKNOWN,
+      owned_by: 'manifest',
+    };
+    if (includeCapabilities) autoEntry.capabilities = autoRouterCapabilities();
+    if (!filter || servesOutput(autoEntry.capabilities, filter)) data.push(autoEntry);
 
     for (const model of models) {
       const id = openAiModelId(model);
@@ -193,21 +243,35 @@ export class ProxyController {
         entry.provider_model_id = model.id;
         entry.auth_type = model.authType;
       }
-      if (includeCapabilities) {
-        // Same resolution as the dashboard's model picker, so agents and the
-        // routing UI report identical capability facts.
-        const resolved = await resolveModelCapabilityMetadata(
-          model,
-          this.providerParamSpecs,
-          this.modelsDevSync,
-        );
-        const modelCapabilities = openAiModelCapabilities({ ...model, ...resolved });
-        if (modelCapabilities) entry.capabilities = modelCapabilities;
-      }
+      // Same resolution as the dashboard's model picker, so agents and the
+      // routing UI report identical capability facts.
+      const modelCapabilities = needMetadata
+        ? openAiModelCapabilities({
+            ...model,
+            ...(await resolveModelCapabilityMetadata(
+              model,
+              this.providerParamSpecs,
+              this.modelsDevSync,
+            )),
+          })
+        : undefined;
+      if (includeCapabilities && modelCapabilities) entry.capabilities = modelCapabilities;
       if (includeCost) {
-        const modelCost = openAiModelCost(model.inputPricePerToken, model.outputPricePerToken);
-        if (modelCost) entry.cost = modelCost;
+        // Token pricing does not apply to media generation, so an image/video
+        // model advertises its media rate instead of a per-token cost.
+        const mediaCost = mediaCostProjection(
+          model.provider,
+          model.id,
+          modelCapabilities?.output_modalities,
+        );
+        if (mediaCost) {
+          entry.media_cost = mediaCost;
+        } else {
+          const modelCost = openAiModelCost(model.inputPricePerToken, model.outputPricePerToken);
+          if (modelCost) entry.cost = modelCost;
+        }
       }
+      if (filter && !servesOutput(modelCapabilities, filter)) continue;
       data.push(entry);
     }
 
@@ -217,7 +281,7 @@ export class ProxyController {
     // from the tier's route chain (primary + fallbacks) at request time, so
     // a chain change is reflected on the next fetch.
     if (this.headerTierService) {
-      const tiers = await this.headerTierService.list(req.ingestionContext.agentId);
+      const tiers = await this.headerTierService.list(ctx.agentId);
       for (const tier of tiers) {
         if (!tier.enabled || !tier.override_route) continue;
         const id = `auto-${tier.name.toLowerCase()}`;
@@ -229,30 +293,17 @@ export class ProxyController {
           created: MODEL_CREATED_UNKNOWN,
           owned_by: 'manifest',
         };
-        if (includeCapabilities) {
-          const profile = buildSyntheticTierProfile(tier, models);
-          const syntheticCapabilities: OpenAiModelCapabilities = {
-            context_window: profile.contextWindow,
-            ...(profile.maxOutputTokens !== undefined
-              ? { max_output_tokens: profile.maxOutputTokens }
-              : {}),
-            input_modalities: profile.inputModalities,
-            output_modalities: profile.outputModalities,
-            ...(profile.features.length > 0 ? { features: profile.features } : {}),
-            ...(profile.supportedEndpoints && profile.supportedEndpoints.length > 0
-              ? { supported_endpoints: profile.supportedEndpoints }
-              : {}),
-          };
-          entry.capabilities = syntheticCapabilities;
-        }
+        // The profile is cheap to build; only the projection is gated on the
+        // capability flag so the default payload stays unchanged. The output
+        // filter still needs the facts even when they are not published.
+        const tierCapabilities = syntheticTierCapabilities(buildSyntheticTierProfile(tier, models));
+        if (includeCapabilities) entry.capabilities = tierCapabilities;
+        if (filter && !servesOutput(tierCapabilities, filter)) continue;
         data.push(entry);
       }
     }
 
-    return {
-      object: 'list',
-      data,
-    };
+    return data;
   }
 
   @Post('chat/completions')

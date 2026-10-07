@@ -944,6 +944,9 @@ export class ModelDiscoveryService {
     return {
       ...model,
       contextWindow,
+      // The value is now a catalog fact, not the nominal fallback, so label it:
+      // the capability projection only publishes windows whose source is known.
+      contextWindowSource: 'catalog',
       ...(model.maxOutputTokens === undefined && catalogEntry?.maxOutputTokens !== undefined
         ? { maxOutputTokens: catalogEntry.maxOutputTokens }
         : {}),

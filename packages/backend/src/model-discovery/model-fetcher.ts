@@ -41,7 +41,13 @@ export interface DiscoveredModel {
    * authoritative for those and replaces them during enrichment, so a gateway
    * transport never caps a model below the window it actually serves.
    */
-  contextWindowSource?: 'provider' | 'provider_default' | 'subscription_config';
+  /**
+   * Where `contextWindow` came from. `provider` is the provider's own answer,
+   * `subscription_config` a configured subscription limit, `catalog` a real
+   * value applied from models.dev. `provider_default` (and an absent source)
+   * mean the number may just be the discovery fallback.
+   */
+  contextWindowSource?: 'provider' | 'provider_default' | 'subscription_config' | 'catalog';
   inputPricePerToken: number | null;
   outputPricePerToken: number | null;
   cacheReadPricePerToken?: number;

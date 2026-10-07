@@ -1,4 +1,9 @@
-import { AGNES_MEDIA_PRICES, type MediaPriceTable, type MediaRate } from 'manifest-shared';
+import {
+  AGNES_MEDIA_PRICES,
+  type MediaPriceTable,
+  type MediaRate,
+  type ModelModality,
+} from 'manifest-shared';
 
 /**
  * Per-provider media price tables. Token pricing does not apply to image or
@@ -26,6 +31,39 @@ function resolveRate(rate: MediaRate | undefined, size: string | undefined): num
  * USD for `count` generated images, or null when no rate is known.
  * A null result records "cost not tracked" instead of a fabricated zero.
  */
+/**
+ * The advertised price of one unit of media output, for the `?cost=true`
+ * projection on `/v1/models`. `rates` is either a flat USD number or a
+ * per-size-tier map, mirroring what the cost tracker bills.
+ */
+export interface MediaCostProjection {
+  unit: 'image' | 'second';
+  rates: MediaRate;
+}
+
+/**
+ * Price a media model advertises, derived from the provider's table and the
+ * model's output modality. `undefined` means "price not tracked" — never a
+ * fabricated zero.
+ */
+export function mediaCostProjection(
+  provider: string,
+  model: string,
+  outputModalities: readonly ModelModality[] | undefined,
+): MediaCostProjection | undefined {
+  const table = PROVIDER_MEDIA_PRICES[provider.toLowerCase()];
+  if (!table || !outputModalities || outputModalities.length === 0) return undefined;
+  if (outputModalities.includes('image')) {
+    const rates = table.imagePerImage?.[model] ?? table.imageDefaultPerImage;
+    if (rates !== undefined) return { unit: 'image', rates };
+  }
+  if (outputModalities.includes('video')) {
+    const rates = table.videoPerSecond?.[model] ?? table.videoDefaultPerSecond;
+    if (rates !== undefined) return { unit: 'second', rates };
+  }
+  return undefined;
+}
+
 export function imageCostUsd(
   provider: string,
   model: string,

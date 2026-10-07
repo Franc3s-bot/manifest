@@ -35,8 +35,10 @@ import { ProxyMessageRecorder } from '../proxy/proxy-message-recorder';
 import { ProxyRateLimiter } from '../proxy/proxy-rate-limiter';
 import { sanitizeRequestHeaders } from '../proxy/request-headers';
 import { resolveRouteCredentials } from '../proxy/route-credentials';
+import { routeForOpenAiModelId } from '../proxy/openai-model-id';
 import type { ProviderAttemptRef, ProviderAttemptStart } from '../proxy/proxy-types';
 import { MediaProviderClient, type MediaApiMode } from './media-provider-client';
+import { normalizeMediaBody } from './media-request-body';
 import { validateMediaRequest } from './media-validation';
 import { imageCostUsd, videoCostUsd } from './media-pricing';
 import type { ResolveResponse } from '../dto/resolve-response';
@@ -126,7 +128,11 @@ export class MediaService {
   ) {}
 
   async handle(input: MediaCallInput): Promise<MediaCallResult> {
-    const { ctx, body, headers, apiMode, signal, ip } = input;
+    const { ctx, headers, apiMode, signal, ip } = input;
+    // Accept the provider-native `extra_body` wrapper as well as the
+    // OpenAI-shaped top level, once, before validation or forwarding. Every
+    // downstream reader (validation, translation, cost) then sees one shape.
+    const body = normalizeMediaBody(input.body);
     const requestId = uuid();
     const traceId = extractTraceId(headers);
     const callerAttribution = classifyCaller(headers);
@@ -504,27 +510,22 @@ export class MediaService {
     ctx: IngestionContext,
     model: string,
   ): Promise<ResolveResponse | null> {
-    const provider = await this.providerKeyService.findProviderForModel(
-      ctx.tenantId,
-      model,
-      ctx.agentId,
-    );
-    if (!provider) return null;
-    const authType = await this.providerKeyService.getAuthType(
-      ctx.tenantId,
-      provider,
-      undefined,
-      ctx.agentId,
-    );
     const discovered = await this.modelDiscovery.getModelsForAgent(ctx.tenantId, ctx.agentId);
+    // Resolve the published id exactly like the chat proxy does. Matching the
+    // raw string against `cached_models` missed the provider-qualified id that
+    // `/v1/models` publishes (`agnes/agnes-image-2.1-flash`), so a client that
+    // copied the listed id got M302 while the same id worked on
+    // /v1/chat/completions.
+    const route = routeForOpenAiModelId(model, discovered);
+    if (!route) return null;
     const match =
       discovered.find(
-        (m) => m.id === model && m.provider.toLowerCase() === provider.toLowerCase(),
-      ) ?? discovered.find((m) => m.id === model);
+        (m) => m.id === route.model && m.provider.toLowerCase() === route.provider.toLowerCase(),
+      ) ?? discovered.find((m) => m.id === route.model);
     const outputModality = modalityOfModel(match?.outputModalities) ?? DEFAULT_OUTPUT_MODALITY;
     return {
       tier: 'default',
-      route: { provider, authType, model },
+      route,
       fallback_routes: null,
       output_modality: outputModality,
       response_mode: 'buffered',

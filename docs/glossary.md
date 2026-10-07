@@ -198,13 +198,29 @@ request time (`packages/backend/src/routing/proxy/synthetic-model-profile.ts`):
 - **Modalities / features / supported endpoints**: kept only when supported
   by the majority (more than half) of models in the chain, so any majority
   model can honor every advertised capability.
+- **Coverage** (`capabilities.capabilities_coverage` +
+  `capabilities.unresolved_chain_members`): a chain member whose capabilities
+  are unknown *abstains* instead of voting "no", because counting it would let
+  one uncatalogued fallback suppress a capability every known model supports.
+  Abstention is not the same as support, so the profile also reports how many
+  members abstained: `complete` means every member supports the advertised
+  capabilities, `partial` means only the majority of the *known* ones do and a
+  fallback may not. `unresolved_chain_members` counts members absent from the
+  catalog or catalogued with no modality metadata.
+- **Reasoning** (`capabilities.features` containing `reasoning`): presence
+  only. `capabilityReasoning` defaults to `false` when nothing is known, so
+  `false` is not an assertion that a model cannot reason and is never
+  projected as one.
 
 The chain is read fresh on each `GET /v1/models` request (subject to the
 ~2 minute routing-cache TTL), so a chain change is reflected on the next
 fetch. Manifest does not push metadata updates to in-flight sessions; clients
 re-fetch when they want current facts. When the chain cannot be resolved to
 any known model metadata, the fallback is the discovery default window
-(128k) with text-only modalities — a stable, conservative claim.
+(128k) with text-only modalities — a stable, conservative claim. A tier whose
+`output_modality` is `image` or `video` carries no context window or max
+output tokens at all: media generation has no chat context window, and the
+discovery default would be noise a client could misread as a real limit.
 
 Custom providers (`custom:<uuid>`) are the exception to "stored facts": their
 model list is hand-edited, so the facts that change on every server launch — a
@@ -215,9 +231,43 @@ hard timeout. A probe that fails, times out, or reports nothing leaves the
 stored values untouched; `packages/backend/src/model-discovery/custom-provider-metadata.service.ts`
 owns that overlay.
 
-The bare `auto` model never carries metadata: it resolves to a different
-concrete model per request based on scoring, so no single claim would be
-honest.
+The bare `auto` model carries a marker, never a claim: it resolves to a
+different concrete model per request based on scoring, so any per-request fact
+would be dishonest. It advertises `capabilities.synthetic: true` and
+`capabilities.features: ["router"]` so a client can detect a router tier from
+the response alone and treat its remaining fields as best-effort. It
+deliberately publishes no `input_modalities`: `["text"]` would be a negative
+assertion about image input that the router cannot make, and a client reading
+it would stop trying images on a tier that may route to a vision model.
+
+## Concrete model metadata on `/v1/models`
+
+`GET /v1/models?capabilities=true` is the only projection a client needs — no
+third-party catalog lookup:
+
+- **`context_window` / `max_output_tokens`** are published for every concrete
+  model whose window is a real fact (`contextWindowSource` is `provider`,
+  `subscription_config`, or `catalog`). The nominal 128k discovery fallback
+  (`provider_default`, or an absent source) is *omitted* rather than published
+  as a measurement: a fabricated number is worse than an explicit gap. A
+  missing field always means "unknown", never "unsupported".
+- **`supported_endpoints`** lists the Manifest endpoints the model serves.
+  Media models list `/v1/images/generations` or `/v1/videos` (derived from
+  their output modality when discovery does not state it); a pure media model
+  never lists `/v1/chat/completions` and never carries chat-only fields.
+- **`media_cost`** (`?cost=true`) is `{ unit: "image" | "second", rates }`,
+  where `rates` is a flat USD amount or a per-size-tier map. Token pricing does
+  not apply to media generation, so a media model publishes `media_cost`
+  instead of `cost`.
+- **`?output=image|video|text`** filters the list by output modality in one
+  call. Entries whose output is unknown (the `auto` router, uncatalogued
+  models) match only `text`.
+- **`GET /v1/models/{id}`** returns one entry with the same projection. The id
+  is the provider-qualified name the list published; ids carrying slashes are
+  accepted.
+
+The dashboard's `available-models` projection publishes the same facts (plus
+`context_window_source`, so the picker can label a nominal window as such).
 
 ## Legacy naming and statuses
 

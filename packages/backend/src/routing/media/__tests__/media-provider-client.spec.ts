@@ -43,6 +43,63 @@ describe('media request translation', () => {
     expect(translated.extra_body).toEqual({ response_format: 'url' });
   });
 
+  it('accepts the provider-native extra_body shape for images', () => {
+    // An existing Agnes client sends response_format / image inside
+    // extra_body. Pointing it at the gateway must not silently drop them.
+    const native = translateAgnesImageBody({
+      model: 'agnes-image-2.1-flash',
+      prompt: 'a cat',
+      size: '2K',
+      extra_body: {
+        response_format: 'b64_json',
+        image: 'https://example.com/ref.png',
+      },
+    });
+    const topLevel = translateAgnesImageBody({
+      model: 'agnes-image-2.1-flash',
+      prompt: 'a cat',
+      size: '2K',
+      response_format: 'b64_json',
+      image: 'https://example.com/ref.png',
+    });
+
+    expect(native).toEqual(topLevel);
+    expect(native.extra_body).toEqual({
+      response_format: 'b64_json',
+      image: ['https://example.com/ref.png'],
+    });
+  });
+
+  it('lets the top level win over extra_body', () => {
+    const translated = translateAgnesImageBody({
+      prompt: 'a cat',
+      response_format: 'url',
+      extra_body: { response_format: 'b64_json', image: 'https://example.com/ref.png' },
+    });
+
+    expect(translated.extra_body).toEqual({
+      response_format: 'url',
+      image: ['https://example.com/ref.png'],
+    });
+  });
+
+  it('accepts the provider-native extra_body shape for video', () => {
+    const native = translateAgnesVideoBody({
+      model: 'agnes-video-v2.0',
+      prompt: 'waves',
+      extra_body: { ratio: '9:16', seconds: 8 },
+    });
+    const topLevel = translateAgnesVideoBody({
+      model: 'agnes-video-v2.0',
+      prompt: 'waves',
+      ratio: '9:16',
+      seconds: 8,
+    });
+
+    expect(native).toEqual(topLevel);
+    expect(native).not.toHaveProperty('extra_body');
+  });
+
   it('maps video ratio to aspect_ratio and seconds to a string', () => {
     const translated = translateAgnesVideoBody({
       model: 'agnes-video-v2.0',

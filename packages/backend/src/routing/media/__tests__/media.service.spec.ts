@@ -48,11 +48,13 @@ function build(
       {
         id: 'agnes-image-2.1-flash',
         provider: 'agnes',
+        authType: 'api_key',
         outputModalities: ['image'],
       },
       {
         id: 'agnes-video-v2.0',
         provider: 'agnes',
+        authType: 'api_key',
         outputModalities: ['video'],
       },
     ]),
@@ -306,6 +308,37 @@ describe('MediaService image generation', () => {
     });
 
     expect(resolveService.resolveAutoTierModel).not.toHaveBeenCalled();
+    expect(mediaClient.forward).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'agnes-image-2.1-flash' }),
+    );
+    expect(result.status).toBe(200);
+  });
+
+  it('routes the provider-qualified id that /v1/models publishes', async () => {
+    const { service, mediaClient } = build({
+      resolveService: {
+        resolveAutoTierModel: jest.fn(),
+        resolveHeaderTier: jest.fn().mockResolvedValue(null),
+      },
+      mediaClient: {
+        forward: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          body: { created: 1, data: [] },
+          requestUrl: 'u',
+          requestBody: {},
+        }),
+      },
+    });
+
+    const result = await service.handle({
+      ctx,
+      body: { model: 'agnes/agnes-image-2.1-flash', prompt: 'x' },
+      headers: {},
+      apiMode: 'images',
+    });
+
+    // The published id resolves to the provider-native model, not M302.
     expect(mediaClient.forward).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'agnes-image-2.1-flash' }),
     );

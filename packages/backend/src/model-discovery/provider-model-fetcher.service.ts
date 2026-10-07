@@ -48,6 +48,7 @@ import {
   META_MODEL_API_CONTEXT_WINDOW,
   META_MODEL_API_MODEL_BY_ID,
   SHARED_PROVIDER_BY_ID_OR_ALIAS,
+  mediaEndpointsForOutputModalities,
   type ModelCapability,
   type ModelModality,
 } from 'manifest-shared';
@@ -247,12 +248,17 @@ function buildAgnesModel(id: string, provider: string): DiscoveredModel {
     : output === 'image'
       ? ['text', 'image']
       : ['text', 'video'];
+  // A media model's gateway endpoint follows from its output modality, so
+  // `/v1/models` can tell an image model from a chat model without a client
+  // fetching the catalog and filtering `output_modalities` itself.
+  const supportedEndpoints = mediaEndpointsForOutputModalities([output]);
   return {
     id,
     displayName: catalog?.displayName ?? id,
     provider,
     contextWindow: catalog?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     contextWindowSource: catalog?.contextWindow ? 'provider' : 'provider_default',
+    ...(supportedEndpoints ? { supportedEndpoints } : {}),
     ...(catalog?.maxOutputTokens !== undefined ? { maxOutputTokens: catalog.maxOutputTokens } : {}),
     inputPricePerToken: null,
     outputPricePerToken: null,
