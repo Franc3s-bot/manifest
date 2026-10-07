@@ -1,4 +1,8 @@
 node_modules/
+# A worktree can expose per-package node_modules as a symlink; the trailing
+# slash above only matches directories, so exclude the symlink form too —
+# otherwise COPY clobbers the installed deps with a broken host symlink.
+packages/*/node_modules
 .git/
 .github/
 .changeset/
