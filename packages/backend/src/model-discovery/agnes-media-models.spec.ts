@@ -39,4 +39,23 @@ describe('Agnes media model discovery', () => {
     expect(unknown?.outputModalities).toEqual(['text']);
     expect(unknown?.contextWindowSource).toBe('provider_default');
   });
+
+  it('infers image/video modality for a media model missing from the catalog', () => {
+    const models = parse(
+      { data: [{ id: 'agnes-image-3.0-flash' }, { id: 'agnes-video-3.0' }] },
+      'agnes',
+    );
+    const byId = new Map(models.map((m) => [m.id, m]));
+    expect(byId.get('agnes-image-3.0-flash')?.outputModalities).toEqual(['image']);
+    expect(byId.get('agnes-image-3.0-flash')?.capabilities).toEqual(['text', 'image']);
+    expect(byId.get('agnes-video-3.0')?.outputModalities).toEqual(['video']);
+    expect(byId.get('agnes-video-3.0')?.capabilities).toEqual(['text', 'video']);
+  });
+
+  it('classifies the current agnes-image-2.5-flash as an image model', () => {
+    const models = parse({ data: [{ id: 'agnes-image-2.5-flash' }] }, 'agnes');
+    expect(models.find((m) => m.id === 'agnes-image-2.5-flash')?.outputModalities).toEqual([
+      'image',
+    ]);
+  });
 });

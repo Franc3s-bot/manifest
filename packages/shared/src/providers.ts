@@ -118,6 +118,7 @@ export const AGNES_MODELS: readonly AgnesModelEntry[] = [
     contextWindow: 262_144,
     maxOutputTokens: 65_536,
   },
+  { id: 'agnes-image-2.5-flash', displayName: 'Agnes Image 2.5 Flash', output: 'image' },
   { id: 'agnes-image-2.1-flash', displayName: 'Agnes Image 2.1 Flash', output: 'image' },
   { id: 'agnes-image-2.0-flash', displayName: 'Agnes Image 2.0 Flash', output: 'image' },
   { id: 'agnes-video-v2.0', displayName: 'Agnes Video 2.0', output: 'video' },

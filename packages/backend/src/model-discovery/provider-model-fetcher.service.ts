@@ -236,7 +236,11 @@ function parseAgnes(body: unknown, provider: string): DiscoveredModel[] {
 /** One Agnes model with the catalog's modality and context facts applied. */
 function buildAgnesModel(id: string, provider: string): DiscoveredModel {
   const catalog = AGNES_MODEL_BY_ID.get(id);
-  const output = catalog?.output ?? 'text';
+  // The curated catalog lags new releases (e.g. agnes-image-2.5-flash shipped
+  // after this list was written). Fall back to the model id's shape so a new
+  // image/video model is still classified as media instead of text — a text
+  // classification would fail the media endpoint's modality gate.
+  const output = catalog?.output ?? inferAgnesOutput(id);
   const isText = output === 'text';
   const capabilities: ModelCapability[] = isText
     ? ['text', 'stream', 'tools']
@@ -259,6 +263,18 @@ function buildAgnesModel(id: string, provider: string): DiscoveredModel {
     outputModalities: [output],
     qualityScore: isText ? 3 : 2,
   };
+}
+
+/**
+ * Infer an Agnes model's output modality from its id when the curated catalog
+ * does not know it. Agnes names media models `agnes-image-*` / `agnes-video-*`;
+ * anything else is treated as text.
+ */
+function inferAgnesOutput(id: string): 'text' | 'image' | 'video' {
+  const lower = id.toLowerCase();
+  if (lower.startsWith('agnes-image') || /(^|[-_/])image([-_/]|$)/.test(lower)) return 'image';
+  if (lower.startsWith('agnes-video') || /(^|[-_/])video([-_/]|$)/.test(lower)) return 'video';
+  return 'text';
 }
 
 interface BedrockInferenceProfileEntry {
