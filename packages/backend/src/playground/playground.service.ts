@@ -65,7 +65,11 @@ export interface PlaygroundCatalogModel {
   auth_type: AuthType;
   input_price_per_token: number | null;
   output_price_per_token: number | null;
-  context_window: number;
+  /**
+   * Absent for a pure media tier: image/video generation has no chat context
+   * window, and the discovery default would be a fabricated number.
+   */
+  context_window?: number;
   capability_reasoning: boolean;
   capability_code: boolean;
   capabilities?: readonly string[];
@@ -165,7 +169,7 @@ export class PlaygroundService {
         auth_type: 'api_key',
         input_price_per_token: null,
         output_price_per_token: null,
-        context_window: profile.contextWindow,
+        ...(profile.contextWindow !== undefined ? { context_window: profile.contextWindow } : {}),
         capability_reasoning: false,
         capability_code: false,
         ...(profile.features.length > 0

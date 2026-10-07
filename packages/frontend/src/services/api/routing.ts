@@ -365,7 +365,8 @@ export interface AvailableModel {
   output_price_per_token: number | null;
   /** Per-request USD cost for per-request subscriptions (e.g. OpenCode Go). */
   cost_per_request?: number | null;
-  context_window: number;
+  /** Absent for a pure media model or media tier (no chat context window). */
+  context_window?: number;
   /**
    * Where `context_window` came from. `provider_default` (or absent) means it
    * may be the discovery fallback rather than a measured value; the API's
