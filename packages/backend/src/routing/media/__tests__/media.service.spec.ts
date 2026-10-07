@@ -243,6 +243,44 @@ describe('MediaService image generation', () => {
     expect(recorder.recordSuccessMessage).not.toHaveBeenCalled();
   });
 
+  it('rejects a malformed media request with M304 before any provider work', async () => {
+    const { service, mediaClient, recorder } = build({
+      resolveService: {
+        resolveAutoTierModel: jest
+          .fn()
+          .mockResolvedValue(makeResolveResponse({ output_modality: 'video' })),
+        resolveHeaderTier: jest.fn().mockResolvedValue(null),
+      },
+    });
+
+    const result = await service.handle({
+      ctx,
+      body: { model: 'auto-video', prompt: 'x', mode: 'reference' },
+      headers: {},
+      apiMode: 'videos',
+    });
+
+    expect(result.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(JSON.stringify(result.body)).toContain('M304');
+    expect(JSON.stringify(result.body)).toContain('requires at least one');
+    expect(mediaClient.forward).not.toHaveBeenCalled();
+    const blocked = recorder.recordManifestBlockedRequest.mock.calls[0][1];
+    expect(blocked.errorCode).toBe('M304');
+  });
+
+  it('rejects a missing prompt with M304', async () => {
+    const { service, mediaClient } = build();
+    const result = await service.handle({
+      ctx,
+      body: { model: 'auto-image' },
+      headers: {},
+      apiMode: 'images',
+    });
+    expect(result.status).toBe(HttpStatus.BAD_REQUEST);
+    expect(JSON.stringify(result.body)).toContain('M304');
+    expect(mediaClient.forward).not.toHaveBeenCalled();
+  });
+
   it('resolves a direct model through discovery', async () => {
     const { service, mediaClient, resolveService } = build({
       resolveService: {

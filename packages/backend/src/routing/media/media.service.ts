@@ -37,6 +37,7 @@ import { sanitizeRequestHeaders } from '../proxy/request-headers';
 import { resolveRouteCredentials } from '../proxy/route-credentials';
 import type { ProviderAttemptRef, ProviderAttemptStart } from '../proxy/proxy-types';
 import { MediaProviderClient, type MediaApiMode } from './media-provider-client';
+import { validateMediaRequest } from './media-validation';
 import { imageCostUsd, parseDurationSeconds, videoCostUsd } from './media-pricing';
 import type { ResolveResponse } from '../dto/resolve-response';
 
@@ -171,6 +172,24 @@ export class MediaService {
           { ctx, requestId, traceId, callerAttribution, requestHeaders, apiMode, startedAt },
         );
       }
+      // Request-shape validation before any credential or provider work: a
+      // malformed media body becomes a documented M304 instead of a provider
+      // 400 that would count against the provider's reliability.
+      const invalidReason = validateMediaRequest({
+        provider: route.provider,
+        apiMode,
+        body,
+      });
+      if (invalidReason) {
+        return this.recordManifestFailure(
+          new ManifestError('M304', HttpStatus.BAD_REQUEST, {
+            modality: expected,
+            reason: invalidReason,
+          }),
+          { ctx, requestId, traceId, callerAttribution, requestHeaders, apiMode, startedAt },
+        );
+      }
+
       const credentials = await resolveRouteCredentials(this.credentialDeps(), {
         agentId: ctx.agentId,
         tenantId: ctx.tenantId,

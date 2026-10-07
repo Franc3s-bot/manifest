@@ -74,6 +74,10 @@ export const MANIFEST_ERRORS = {
       'This endpoint generates {expected} output, but the resolved model "{model}" produces {actual}. ' +
       'Point an {expected} tier at an {expected} model, or call the matching endpoint.',
   },
+  M304: {
+    title: 'Invalid media request',
+    template: 'Invalid {modality} request: {reason}',
+  },
   M302: {
     title: 'Model not available',
     template:

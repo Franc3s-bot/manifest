@@ -93,7 +93,12 @@ Key points:
 
 - **Modality gate.** `POST /v1/images/generations` requires the resolved chain's
   `output_modality === 'image'`; `/v1/videos` requires `'video'`. A mismatch is
-  an M-code request error, not a provider call.
+  M301 — a request error, not a provider call.
+- **Request validation.** The media body is validated before any credential or
+  provider work: a missing `prompt`, an out-of-range `n` / `seconds`, malformed
+  references, or an Agnes video `mode` that contradicts the supplied media is
+  rejected locally with M304 instead of becoming a provider 400 that would
+  count against provider reliability.
 - **Same chain semantics as text.** Primary route + fallbacks, key rotation,
   cooldown, `superseded` rows, `fallback_from_model` attribution.
 - **Video is async.** `POST /v1/videos` forwards to the provider, persists the
