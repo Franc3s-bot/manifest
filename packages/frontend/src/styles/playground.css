@@ -1616,39 +1616,89 @@
   display: none;
 }
 
-.playground-options__thumb {
-  position: relative;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  overflow: hidden;
+.playground-options__url {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 5px 10px;
   border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 12px;
 }
 
-.playground-options__thumb img {
-  width: 100%;
-  height: 100%;
+.playground-options__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.playground-options__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 3px 4px 3px 6px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--muted) / 0.5);
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+.playground-options__thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
   object-fit: cover;
   display: block;
+  flex: 0 0 auto;
 }
 
-.playground-options__thumb-remove {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 14px;
-  height: 14px;
+.playground-options__kind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground, var(--foreground)));
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.playground-options__name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playground-options__remove {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: none;
-  border-radius: 0 0 0 6px;
-  background: hsl(var(--foreground) / 0.7);
-  color: hsl(var(--background));
-  font-size: 11px;
+  border-radius: 50%;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
+}
+
+.playground-options__remove:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
 }
 
 .playground-options__caret {

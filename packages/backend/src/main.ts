@@ -61,7 +61,11 @@ export async function bootstrap() {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:'],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          // Generated videos (Agnes CDN) and audio/video attachments are
+          // loaded from external origins or as inlined blobs; the default
+          // `mediaSrc` falls back to `'self'` and would block them.
+          mediaSrc: ["'self'", 'data:', 'blob:', 'https:'],
           connectSrc: ["'self'"],
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],

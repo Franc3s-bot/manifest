@@ -182,9 +182,11 @@ const PlaygroundColumn: Component<Props> = (props) => {
         <Show when={props.column.route?.synthetic}>
           <span
             class="playground-column__route"
-            title={`Served by ${props.column.route?.provider}/${props.column.route?.model}`}
+            title={`${props.column.route?.harness ? `${props.column.route.harness} · ` : ''}${props.column.route?.tier ?? ''} → ${props.column.route?.provider}/${props.column.route?.model}`}
           >
-            {props.column.route?.tier ? `${props.column.route.tier} · ` : ''}
+            {props.column.route?.harness ?? props.column.route?.tier
+              ? `${props.column.route?.harness ?? props.column.route?.tier} · `
+              : ''}
             {props.column.route?.model}
           </span>
         </Show>

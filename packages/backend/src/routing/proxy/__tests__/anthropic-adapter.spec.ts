@@ -3295,3 +3295,66 @@ describe('hasMessageCacheControl', () => {
     expect(hasMessageCacheControl(body as Record<string, unknown>)).toBe(false);
   });
 });
+
+describe('Anthropic Adapter — multimodal attachments', () => {
+  it('converts an inline image data URI to an image block', () => {
+    const result = toAnthropicRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } },
+            ],
+          },
+        ],
+      },
+      'claude-sonnet-4-20250514',
+    );
+    const messages = result.messages as Array<{ content: unknown }>;
+    expect(messages[0].content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA' } },
+    ]);
+  });
+
+  it('converts a PDF file part to a document block', () => {
+    const result = toAnthropicRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'file', file: { file_data: 'data:application/pdf;base64,QUJD' } }],
+          },
+        ],
+      },
+      'claude-sonnet-4-20250514',
+    );
+    const messages = result.messages as Array<{ content: unknown }>;
+    expect(messages[0].content).toEqual([
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: 'QUJD' },
+      },
+    ]);
+  });
+
+  it('converts a remote PDF URL to a document block', () => {
+    const result = toAnthropicRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'file', file: { url: 'https://cdn.example/doc.pdf' } }],
+          },
+        ],
+      },
+      'claude-sonnet-4-20250514',
+    );
+    const messages = result.messages as Array<{ content: unknown }>;
+    expect(messages[0].content).toEqual([
+      { type: 'document', source: { type: 'url', url: 'https://cdn.example/doc.pdf' } },
+    ]);
+  });
+});

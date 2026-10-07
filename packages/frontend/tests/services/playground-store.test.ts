@@ -1235,3 +1235,43 @@ describe('createPlaygroundStore — resume video polling', () => {
     }
   });
 });
+
+describe('createPlaygroundStore — synthetic harness', () => {
+  beforeEach(() => {
+    streamPlaygroundMock.mockReset();
+  });
+
+  it('sends the harness so the backend resolves the synthetic tier against it', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn(
+      'auto-standard',
+      'manifest',
+      'api_key',
+      'Auto · Standard',
+      undefined,
+      'text',
+      'hermes',
+    );
+    store.setPrompt('hi');
+    streamPlaygroundMock.mockResolvedValue(okResult());
+
+    await store.runAll();
+
+    expect(streamPlaygroundMock.mock.calls[0][0]).toMatchObject({
+      model: 'auto-standard',
+      provider: 'manifest',
+      harness: 'hermes',
+    });
+  });
+
+  it('omits the harness for a real model', async () => {
+    const store = createPlaygroundStore('demo');
+    store.addColumn('openai/gpt-4o', 'openai', 'api_key', 'GPT-4o');
+    store.setPrompt('hi');
+    streamPlaygroundMock.mockResolvedValue(okResult());
+
+    await store.runAll();
+
+    expect(streamPlaygroundMock.mock.calls[0][0].harness).toBeUndefined();
+  });
+});

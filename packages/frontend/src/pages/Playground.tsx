@@ -41,6 +41,7 @@ import PlaygroundModelPicker from '../components/playground/PlaygroundModelPicke
 import PlaygroundEmptyState from '../components/playground/PlaygroundEmptyState.jsx';
 import PlaygroundRunOptions, {
   addAttachmentFiles,
+  attachmentToContentPart,
   type PlaygroundAttachment,
 } from '../components/playground/PlaygroundRunOptions.jsx';
 import PlaygroundRecentSidebar from '../components/playground/PlaygroundHistoryDrawer.jsx';
@@ -155,6 +156,7 @@ interface PendingKeyPick {
   authType: AuthType;
   displayName: string;
   kind: import('manifest-shared').PlaygroundOutputKind;
+  harness?: string;
   keys: RoutingProvider[];
 }
 
@@ -320,8 +322,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
     setHeadersOpen(true);
   };
 
-  const attachmentParts = (): PlaygroundContentPart[] =>
-    attachments().map((a) => ({ type: 'image_url' as const, image_url: { url: a.dataUrl } }));
+  const attachmentParts = (): PlaygroundContentPart[] => attachments().map(attachmentToContentPart);
 
   /** Run-level options shared by every column of a submit. */
   const runOptions = () => ({
@@ -437,7 +438,9 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   ) => {
     const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
-    const kind = outputKindForModel((available() ?? []).find((m) => m.model_name === model));
+    const entry = (available() ?? []).find((m) => m.model_name === model);
+    const kind = outputKindForModel(entry);
+    const harness = entry?.harness ?? undefined;
     setPickerForColumn(null);
     const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
     if (keys.length > 1) {
@@ -449,6 +452,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         authType: resolvedAuth,
         displayName,
         kind,
+        harness,
         keys,
       });
     } else {
@@ -460,6 +464,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         displayName,
         keys[0]?.label,
         kind,
+        harness,
       );
     }
   };
@@ -472,7 +477,9 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   ) => {
     const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
-    const kind = outputKindForModel((available() ?? []).find((m) => m.model_name === model));
+    const entry = (available() ?? []).find((m) => m.model_name === model);
+    const kind = outputKindForModel(entry);
+    const harness = entry?.harness ?? undefined;
     setShowAddPicker(false);
     const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
     if (keys.length > 1) {
@@ -483,10 +490,11 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         authType: resolvedAuth,
         displayName,
         kind,
+        harness,
         keys,
       });
     } else {
-      store().addColumn(model, provider, resolvedAuth, displayName, keys[0]?.label, kind);
+      store().addColumn(model, provider, resolvedAuth, displayName, keys[0]?.label, kind, harness);
     }
   };
 
@@ -503,6 +511,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
       authType: col.authType,
       displayName: col.displayName,
       kind: col.kind,
+      harness: col.harness,
       keys,
     });
   };
@@ -518,6 +527,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         pending.displayName,
         label ?? undefined,
         pending.kind,
+        pending.harness,
       );
     } else if (pending.mode === 'replace' && pending.columnId) {
       store().replaceColumnModel(
@@ -528,6 +538,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         pending.displayName,
         label ?? undefined,
         pending.kind,
+        pending.harness,
       );
     } else if (pending.mode === 'changeKey' && pending.columnId) {
       store().setColumnKeyLabel(pending.columnId, label ?? undefined);
@@ -756,7 +767,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
                 onError={(message) => toast.error(message)}
               />
             }
-            onPasteImages={(files) => {
+            onPasteFiles={(files) => {
               void addAttachmentFiles(attachments(), files, (message) => toast.error(message)).then(
                 setAttachments,
               );

@@ -2408,3 +2408,65 @@ describe('Google Adapter', () => {
     });
   });
 });
+
+describe('Google Adapter — multimodal attachments', () => {
+  it('converts an inline image data URI to inlineData', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } },
+            ],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([
+      { text: 'what is this?' },
+      { inlineData: { mimeType: 'image/png', data: 'AA' } },
+    ]);
+  });
+
+  it('converts an inline audio part to inlineData with the audio mime type', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'input_audio', input_audio: { data: 'QUJD', format: 'wav' } }],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([{ inlineData: { mimeType: 'audio/wav', data: 'QUJD' } }]);
+  });
+
+  it('converts a document data URI and a remote file URL', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'file', file: { file_data: 'data:application/pdf;base64,QUJD' } },
+              { type: 'file', file: { url: 'https://cdn.example/doc.pdf' } },
+            ],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([
+      { inlineData: { mimeType: 'application/pdf', data: 'QUJD' } },
+      { fileData: { fileUri: 'https://cdn.example/doc.pdf' } },
+    ]);
+  });
+});

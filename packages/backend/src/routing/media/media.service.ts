@@ -53,6 +53,12 @@ export interface MediaCallInput {
   /** Caller IP for the per-IP rate limit. */
   ip?: string;
   signal?: AbortSignal;
+  /**
+   * Agent whose header tiers resolve a synthetic `auto-*` model. Defaults to
+   * `ctx.agentId`. The Playground runs under the reserved Playground agent,
+   * which owns no tiers, so it passes the harness that defines the tier.
+   */
+  routingAgentId?: string;
 }
 
 export interface MediaCallResult {
@@ -128,7 +134,7 @@ export class MediaService {
   ) {}
 
   async handle(input: MediaCallInput): Promise<MediaCallResult> {
-    const { ctx, headers, apiMode, signal, ip } = input;
+    const { ctx, headers, apiMode, signal, ip, routingAgentId } = input;
     // Accept the provider-native `extra_body` wrapper as well as the
     // OpenAI-shaped top level, once, before validation or forwarding. Every
     // downstream reader (validation, translation, cost) then sees one shape.
@@ -175,7 +181,7 @@ export class MediaService {
     }
 
     try {
-      const resolved = await this.resolveRoute(ctx, body, headers, expected);
+      const resolved = await this.resolveRoute(ctx, body, headers, expected, routingAgentId);
       if (!resolved) {
         return this.recordManifestFailure(
           new ManifestError(MODEL_UNAVAILABLE, HttpStatus.BAD_REQUEST, {
@@ -450,18 +456,18 @@ export class MediaService {
     body: Record<string, unknown>,
     headers: IncomingHttpHeaders,
     expected: 'image' | 'video',
+    routingAgentId?: string,
   ): Promise<ResolvedMediaRoute | null> {
     const requested = requestedModelOf(body);
+    // Synthetic tiers and inbound header tiers are agent-scoped; a caller that
+    // runs under a different agent (the Playground) names the routing agent.
+    const agentId = routingAgentId ?? ctx.agentId;
     let resolved: ResolveResponse | null = null;
     let tier = 'direct';
     let reason = 'direct';
 
     if (requested && /^auto-(.+)$/i.test(requested)) {
-      resolved = await this.resolveService.resolveAutoTierModel(
-        ctx.agentId,
-        ctx.tenantId,
-        requested,
-      );
+      resolved = await this.resolveService.resolveAutoTierModel(agentId, ctx.tenantId, requested);
       if (resolved) {
         tier = resolved.tier;
         reason = resolved.reason;
@@ -469,7 +475,7 @@ export class MediaService {
     }
     if (!resolved) {
       const headerMatch = await this.resolveService.resolveHeaderTier(
-        ctx.agentId,
+        agentId,
         ctx.tenantId,
         headers,
       );

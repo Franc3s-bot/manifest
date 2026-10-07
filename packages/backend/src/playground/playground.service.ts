@@ -1,6 +1,6 @@
 import { HttpException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
 import type { Response as ExpressResponse } from 'express';
 import type {
@@ -15,6 +15,7 @@ import type {
   VideoStatus,
 } from 'manifest-shared';
 import { AgentMessage } from '../entities/agent-message.entity';
+import { Agent } from '../entities/agent.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
 import { ProviderClient } from '../routing/proxy/provider-client';
 import { resolveForwardEndpoint } from '../routing/proxy/forward-endpoint-resolver';
@@ -80,6 +81,8 @@ export interface PlaygroundCatalogModel {
   synthetic: boolean;
   tier_name?: string | null;
   tier_color?: string | null;
+  /** Harness (agent) that owns the header tier behind a synthetic model. */
+  harness?: string | null;
 }
 
 /** The concrete provider/model a text run should forward to. */
@@ -117,6 +120,8 @@ export class PlaygroundService {
     private readonly history: PlaygroundHistoryService,
     @InjectRepository(AgentMessage)
     private readonly messageRepo: Repository<AgentMessage>,
+    @InjectRepository(Agent)
+    private readonly agentRepo: Repository<Agent>,
     @InjectRepository(CustomProvider)
     private readonly customProviderRepo: Repository<CustomProvider>,
     private readonly customProviders: CustomProviderService,
@@ -130,7 +135,8 @@ export class PlaygroundService {
   /**
    * Models the Playground can run: every discovered model plus one synthetic
    * `auto-{tier}` entry per enabled header tier that has an override route.
-   * The synthetic entries execute through the real routing resolver, so the
+   * The reserved Playground agent owns no tiers, so synthetic entries come from
+   * the tenant's harnesses and execute through the real routing resolver — the
    * Playground can test a harness's tier behaviour (primary + fallbacks)
    * without a harness.
    */
@@ -157,11 +163,21 @@ export class PlaygroundService {
       synthetic: false,
     }));
 
-    const tiers = await this.headerTiers.list(agent.id);
+    // Synthetic tiers live on the tenant's harnesses, not on the reserved
+    // Playground agent. Aggregate them across the tenant and dedupe by
+    // `auto-{tier}` so the picker has one entry per synthetic model id; the
+    // owning harness is shown on the row and used to resolve the tier at run
+    // time. Ordering matches `listForTenant` (name, agent_id) so listing and
+    // resolution agree when several harnesses share a tier name.
+    const tiers = await this.headerTiers.listForTenant(agent.tenant_id);
+    const harnessNames = await this.harnessNames(agent.tenant_id);
+    const seenSynthetic = new Set<string>();
     for (const tier of tiers) {
-      if (!tier.enabled || !tier.override_route) continue;
+      if (!tier.override_route) continue;
       const id = `auto-${tier.name.toLowerCase()}`;
-      if (rows.some((r) => r.model_name === id)) continue;
+      if (seenSynthetic.has(id)) continue;
+      seenSynthetic.add(id);
+      const harness = harnessNames.get(tier.agent_id) ?? null;
       const profile = buildSyntheticTierProfile(tier, discovered);
       rows.push({
         model_name: id,
@@ -178,14 +194,76 @@ export class PlaygroundService {
         input_modalities: profile.inputModalities,
         output_modalities: profile.outputModalities,
         quality_score: 0,
-        display_name: `Auto · ${tier.name}`,
+        display_name: harness ? `Auto · ${tier.name} · ${harness}` : `Auto · ${tier.name}`,
         synthetic: true,
         tier_name: tier.name,
         tier_color: tier.badge_color,
+        harness,
       });
     }
 
     return rows;
+  }
+
+  /** Map every live agent id of a tenant to its name. */
+  private async harnessNames(tenantId: string): Promise<Map<string, string>> {
+    const agents = await this.agentRepo.find({
+      where: { tenant_id: tenantId, deleted_at: IsNull() },
+      select: ['id', 'name'],
+    });
+    return new Map(agents.map((a) => [a.id, a.name]));
+  }
+
+  /**
+   * Resolve a synthetic `auto-{tier}` model. The reserved Playground agent owns
+   * no tiers, so this falls back to the tenant's harnesses and returns the
+   * agent that actually defines the tier (plus its name). `harness` pins the
+   * resolution to one harness when the client sent it.
+   */
+  private async resolveSyntheticTier(
+    tenantId: string,
+    playgroundAgentId: string,
+    model: string,
+    harness?: string,
+  ): Promise<{
+    resolved: Awaited<ReturnType<ResolveService['resolveAutoTierModel']>>;
+    agentId: string;
+    harnessName: string | null;
+  } | null> {
+    // 1. The Playground agent itself (covers a tenant that copied tiers there).
+    const own = await this.resolveService.resolveAutoTierModel(playgroundAgentId, tenantId, model);
+    if (own?.route) {
+      return { resolved: own, agentId: playgroundAgentId, harnessName: null };
+    }
+
+    // 2. The harness that defines the tier.
+    const suffix = model.replace(AUTO_TIER_PATTERN, '$1').toLowerCase();
+    const tiers = await this.headerTiers.listForTenant(tenantId);
+    const candidates = tiers.filter((t) => t.override_route && t.name.toLowerCase() === suffix);
+    if (candidates.length === 0) return null;
+    const harnessNames = await this.harnessNames(tenantId);
+    if (harness) {
+      candidates.sort((a, b) => {
+        const aMatch = harnessNames.get(a.agent_id) === harness ? 0 : 1;
+        const bMatch = harnessNames.get(b.agent_id) === harness ? 0 : 1;
+        return aMatch - bMatch;
+      });
+    }
+    for (const tier of candidates) {
+      const resolved = await this.resolveService.resolveAutoTierModel(
+        tier.agent_id,
+        tenantId,
+        model,
+      );
+      if (resolved?.route) {
+        return {
+          resolved,
+          agentId: tier.agent_id,
+          harnessName: harnessNames.get(tier.agent_id) ?? null,
+        };
+      }
+    }
+    return null;
   }
 
   /**
@@ -650,6 +728,14 @@ export class PlaygroundService {
     const apiMode = kind === 'image' ? 'images' : 'videos';
     const startedAt = Date.now();
 
+    // A synthetic `auto-*` run must resolve its tier against the harness that
+    // defines it — the reserved Playground agent owns no tiers.
+    const syntheticResolution = AUTO_TIER_PATTERN.test(dto.model)
+      ? await this.resolveSyntheticTier(agent.tenant_id, agent.id, dto.model, dto.harness).catch(
+          () => null,
+        )
+      : null;
+
     let result: Awaited<ReturnType<MediaService['handle']>>;
     try {
       result = await this.mediaService.handle({
@@ -663,6 +749,7 @@ export class PlaygroundService {
         headers: {},
         apiMode,
         signal: abort.signal,
+        ...(syntheticResolution ? { routingAgentId: syntheticResolution.agentId } : {}),
       });
     } catch (err) {
       if (abort.signal.aborted) {
@@ -678,7 +765,7 @@ export class PlaygroundService {
       return;
     }
 
-    const route = this.mediaRoute(result.resolvedRoute, dto);
+    const route = this.mediaRoute(result.resolvedRoute, dto, syntheticResolution?.harnessName);
     const durationMs = Date.now() - startedAt;
 
     if (result.status >= 400) {
@@ -807,15 +894,17 @@ export class PlaygroundService {
     if (dto.outputKind) return dto.outputKind;
     try {
       if (AUTO_TIER_PATTERN.test(dto.model)) {
-        const resolved = await this.resolveService.resolveAutoTierModel(
-          agent.id,
+        const found = await this.resolveSyntheticTier(
           agent.tenant_id,
+          agent.id,
           dto.model,
+          dto.harness,
         );
-        if (resolved?.output_modality === 'image' || resolved?.output_modality === 'video') {
-          return resolved.output_modality;
+        if (found?.resolved) {
+          const modality = found.resolved.output_modality;
+          if (modality === 'image' || modality === 'video') return modality;
+          return 'text';
         }
-        if (resolved) return 'text';
       }
       const models = await this.modelDiscovery.getModelsForAgent(agent.tenant_id, agent.id);
       const match =
@@ -844,24 +933,28 @@ export class PlaygroundService {
     dto: RunPlaygroundDto,
   ): Promise<ResolvedTextRoute> {
     if (AUTO_TIER_PATTERN.test(dto.model)) {
-      const resolved = await this.resolveService.resolveAutoTierModel(
-        agent.id,
+      const found = await this.resolveSyntheticTier(
         agent.tenant_id,
+        agent.id,
         dto.model,
+        dto.harness,
       );
-      if (resolved?.route) {
+      const resolved = found?.resolved;
+      const route = resolved?.route;
+      if (resolved && route) {
         return {
-          provider: resolved.route.provider,
-          model: resolved.route.model,
-          authType: resolved.route.authType ?? dto.authType,
-          keyLabel: resolved.route.keyLabel ?? undefined,
+          provider: route.provider,
+          model: route.model,
+          authType: route.authType ?? dto.authType,
+          keyLabel: route.keyLabel ?? undefined,
           route: {
-            provider: resolved.route.provider,
-            model: resolved.route.model,
+            provider: route.provider,
+            model: route.model,
             tier: resolved.header_tier_name ?? null,
             tierColor: resolved.header_tier_color ?? null,
             synthetic: true,
             requestedModel: dto.model,
+            harness: found?.harnessName ?? null,
           },
           syntheticResolved: true,
         };
@@ -891,6 +984,7 @@ export class PlaygroundService {
   private mediaRoute(
     resolved: MediaResolvedRoute | null | undefined,
     dto: RunPlaygroundDto,
+    harness?: string | null,
   ): PlaygroundResolvedRoute | null {
     if (!resolved) return null;
     return {
@@ -900,6 +994,7 @@ export class PlaygroundService {
       tierColor: resolved.headerTierColor ?? null,
       synthetic: AUTO_TIER_PATTERN.test(dto.model),
       requestedModel: dto.model,
+      harness: harness ?? null,
     };
   }
 

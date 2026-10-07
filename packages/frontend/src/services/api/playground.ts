@@ -37,7 +37,10 @@ export interface PlaygroundStreamResult {
 
 /** One OpenAI-style content part of a multimodal user message. */
 export type PlaygroundContentPart =
-  { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+  | { type: 'input_audio'; input_audio: { data: string; format: string } }
+  | { type: 'file'; file: { file_data?: string; url?: string; filename?: string } };
 
 export interface RunPlaygroundRequest {
   agentName: string;
@@ -45,6 +48,8 @@ export interface RunPlaygroundRequest {
   provider: string;
   authType?: AuthType;
   providerKeyLabel?: string;
+  /** Harness whose header tier a synthetic `auto-*` model resolves against. */
+  harness?: string;
   /** Standard chat-completions shape. Text runs always set this. */
   messages?: { role: 'system' | 'user' | 'assistant'; content: string | PlaygroundContentPart[] }[];
   /** Media-generation prompt (image / video). */

@@ -90,7 +90,7 @@ interface Mocks {
   customProviders: { canonicalizeAgentMessageKeys: jest.Mock };
   opencodeGoCatalog: { resolveCostPerRequest: jest.Mock };
   resolveService: { resolveAutoTierModel: jest.Mock };
-  headerTiers: { list: jest.Mock };
+  headerTiers: { list: jest.Mock; listForTenant: jest.Mock };
   modelDiscovery: { getModelsForAgent: jest.Mock };
   mediaService: { handle: jest.Mock; videoStatus: jest.Mock };
   playgroundAgent: { resolve: jest.Mock };
@@ -117,6 +117,7 @@ interface Mocks {
   eventBus: { emit: jest.Mock };
   history: { saveColumn: jest.Mock };
   messageRepo: { insert: jest.Mock };
+  agentRepo: { find: jest.Mock; findOne: jest.Mock };
   customProviderRepo: { findOne: jest.Mock };
 }
 
@@ -153,6 +154,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     eventBus: { emit: jest.fn() },
     history: { saveColumn: jest.fn().mockResolvedValue('col-1') },
     messageRepo: { insert: jest.fn().mockResolvedValue(undefined) },
+    agentRepo: {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
+    },
     customProviderRepo: { findOne: jest.fn().mockResolvedValue(null) },
     customProviders: {
       canonicalizeAgentMessageKeys: jest
@@ -163,7 +168,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     },
     opencodeGoCatalog: { resolveCostPerRequest: jest.fn().mockResolvedValue(null) },
     resolveService: { resolveAutoTierModel: jest.fn().mockResolvedValue(null) },
-    headerTiers: { list: jest.fn().mockResolvedValue([]) },
+    headerTiers: {
+      list: jest.fn().mockResolvedValue([]),
+      listForTenant: jest.fn().mockResolvedValue([]),
+    },
     modelDiscovery: { getModelsForAgent: jest.fn().mockResolvedValue([]) },
     mediaService: { handle: jest.fn(), videoStatus: jest.fn() },
     ...mocks,
@@ -182,6 +190,7 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     full.eventBus as unknown as IngestEventBusService,
     full.history as unknown as PlaygroundHistoryService,
     full.messageRepo as unknown as Repository<AgentMessage>,
+    full.agentRepo as never,
     full.customProviderRepo as unknown as Repository<CustomProvider>,
     full.customProviders as unknown as CustomProviderService,
     full.opencodeGoCatalog as unknown as OpencodeGoCatalogService,

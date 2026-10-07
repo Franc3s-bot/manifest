@@ -47,6 +47,12 @@ export interface PlaygroundResolvedRoute {
   synthetic: boolean;
   /** The model id the client requested (may differ from `model`). */
   requestedModel: string;
+  /**
+   * The harness (agent) whose header tier the synthetic model resolved to.
+   * A reserved Playground agent owns no tiers, so synthetic runs resolve
+   * against the harness that defines the tier.
+   */
+  harness?: string | null;
 }
 
 /** Synchronous image-generation output (OpenAI `images/generations` shape). */
