@@ -32,6 +32,8 @@ export interface PlaygroundColumn {
   displayName: string;
   /** Output modality this column produces. */
   kind: PlaygroundOutputKind;
+  /** Harness whose header tier a synthetic `auto-*` model resolves against. */
+  harness?: string;
   status: ColumnStatus;
   response?: string;
   /** Generated media for an image / video column. */
@@ -72,6 +74,7 @@ export interface PlaygroundStore {
     displayName: string,
     providerKeyLabel?: string,
     kind?: PlaygroundOutputKind,
+    harness?: string,
   ) => void;
   removeColumn: (id: string) => void;
   replaceColumnModel: (
@@ -82,6 +85,7 @@ export interface PlaygroundStore {
     displayName: string,
     providerKeyLabel?: string,
     kind?: PlaygroundOutputKind,
+    harness?: string,
   ) => void;
   setColumnKeyLabel: (id: string, providerKeyLabel?: string) => void;
   runAll: (options?: RunOptions) => string | undefined;
@@ -255,6 +259,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     displayName,
     providerKeyLabel,
     kind = 'text',
+    harness,
   ) => {
     if (columns.length >= MAX_COLUMNS) return;
     setColumns((prev) => [
@@ -267,6 +272,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         providerKeyLabel,
         displayName,
         kind,
+        harness,
         status: 'idle',
       },
     ]);
@@ -293,6 +299,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
     displayName,
     providerKeyLabel,
     kind = 'text',
+    harness,
   ) => {
     abortColumn(id);
     setColumns(
@@ -305,6 +312,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
         col.displayName = displayName;
         col.providerKeyLabel = providerKeyLabel;
         col.kind = kind;
+        col.harness = harness;
         col.status = 'idle';
         col.response = undefined;
         col.media = undefined;
@@ -403,6 +411,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
       provider: col.provider,
       authType: col.authType,
       providerKeyLabel: col.providerKeyLabel,
+      ...(col.harness ? { harness: col.harness } : {}),
       runId,
       position,
       ...(options?.requestHeaders && Object.keys(options.requestHeaders).length > 0
@@ -528,6 +537,7 @@ export function createPlaygroundStore(agentName: string): PlaygroundStore {
       providerKeyLabel: c.providerKeyLabel ?? undefined,
       displayName: c.displayName ?? c.model,
       kind: c.kind ?? 'text',
+      harness: c.route?.harness ?? undefined,
       status: c.status,
       response: c.content ?? undefined,
       media: c.media ?? undefined,

@@ -238,6 +238,35 @@ function normalizeAnthropicImageBlock(part: Record<string, unknown>): ContentBlo
   return null;
 }
 
+/**
+ * Translate a generic OpenAI-style `file` part into an Anthropic `document`
+ * block. Anthropic accepts base64 or URL sources; only PDFs are supported, so
+ * a non-PDF attachment is still forwarded and rejected by the provider rather
+ * than silently dropped.
+ */
+function fileToAnthropicBlock(file: unknown): ContentBlock | null {
+  if (!isObjectRecord(file)) return null;
+  const data = typeof file.file_data === 'string' ? file.file_data : undefined;
+  if (data) {
+    const dataUrl = DATA_IMAGE_URL_RE.exec(data);
+    if (dataUrl) {
+      return {
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: dataUrl[1] || 'application/pdf',
+          data: dataUrl[2],
+        },
+      };
+    }
+  }
+  const url = typeof file.url === 'string' ? file.url : undefined;
+  if (url) {
+    return { type: 'document', source: { type: 'url', url } };
+  }
+  return null;
+}
+
 function toContentBlocks(content: unknown, includeImages = false): ContentBlock[] {
   if (typeof content === 'string') return content ? [{ type: 'text', text: content }] : [];
   if (Array.isArray(content)) {
@@ -254,6 +283,10 @@ function toContentBlocks(content: unknown, includeImages = false): ContentBlock[
               ? imageUrlToAnthropicBlock(part.image_url)
               : normalizeAnthropicImageBlock(part);
         if (imageBlock) blocks.push(imageBlock);
+        else if (part.type === 'file') {
+          const documentBlock = fileToAnthropicBlock(part.file);
+          if (documentBlock) blocks.push(documentBlock);
+        }
       }
     }
     return blocks;

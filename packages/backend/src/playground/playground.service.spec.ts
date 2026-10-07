@@ -165,7 +165,7 @@ interface Mocks {
   customProviders: { canonicalizeAgentMessageKeys: jest.Mock };
   opencodeGoCatalog: { resolveCostPerRequest: jest.Mock };
   resolveService: { resolveAutoTierModel: jest.Mock };
-  headerTiers: { list: jest.Mock };
+  headerTiers: { list: jest.Mock; listForTenant: jest.Mock };
   modelDiscovery: { getModelsForAgent: jest.Mock };
   mediaService: { handle: jest.Mock; videoStatus: jest.Mock };
   playgroundAgent: { resolve: jest.Mock };
@@ -199,6 +199,7 @@ interface Mocks {
     insert: jest.Mock;
     manager?: { getRepository: jest.Mock };
   };
+  agentRepo: { find: jest.Mock; findOne: jest.Mock };
   customProviderRepo: { findOne: jest.Mock };
 }
 
@@ -239,6 +240,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
       updateColumnMedia: jest.fn().mockResolvedValue(undefined),
     },
     messageRepo: { insert: jest.fn().mockResolvedValue(undefined) },
+    agentRepo: {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
+    },
     customProviderRepo: { findOne: jest.fn().mockResolvedValue(null) },
     customProviders: {
       canonicalizeAgentMessageKeys: jest
@@ -249,7 +254,10 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     },
     opencodeGoCatalog: { resolveCostPerRequest: jest.fn().mockResolvedValue(null) },
     resolveService: { resolveAutoTierModel: jest.fn().mockResolvedValue(null) },
-    headerTiers: { list: jest.fn().mockResolvedValue([]) },
+    headerTiers: {
+      list: jest.fn().mockResolvedValue([]),
+      listForTenant: jest.fn().mockResolvedValue([]),
+    },
     modelDiscovery: { getModelsForAgent: jest.fn().mockResolvedValue([]) },
     mediaService: {
       handle: jest.fn(),
@@ -271,6 +279,7 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     full.eventBus as unknown as IngestEventBusService,
     full.history as unknown as PlaygroundHistoryService,
     full.messageRepo as unknown as Repository<AgentMessage>,
+    full.agentRepo as never,
     full.customProviderRepo as unknown as Repository<CustomProvider>,
     full.customProviders as unknown as CustomProviderService,
     full.opencodeGoCatalog as unknown as OpencodeGoCatalogService,
@@ -1594,6 +1603,130 @@ describe('PlaygroundService media + synthetic routes', () => {
     });
   });
 
+  it('resolves a synthetic tier from the harness that defines it when the Playground agent owns none', async () => {
+    const { service, mocks } = buildService();
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-1', name: 'hermes' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
+      {
+        id: 't1',
+        agent_id: 'harness-1',
+        name: 'Standard',
+        enabled: true,
+        badge_color: '#fff',
+        override_route: { provider: 'anthropic', authType: 'api_key', model: 'claude-sonnet-4' },
+      },
+    ]);
+    mocks.resolveService.resolveAutoTierModel.mockImplementation((agentId: string) =>
+      Promise.resolve(
+        agentId === 'harness-1'
+          ? {
+              tier: 'standard',
+              route: { provider: 'anthropic', authType: 'api_key', model: 'claude-sonnet-4' },
+              fallback_routes: null,
+              output_modality: 'text',
+              response_mode: 'streamed',
+              confidence: 1,
+              score: 0,
+              reason: 'header-match',
+              header_tier_name: 'Standard',
+              header_tier_color: '#fff',
+            }
+          : null,
+      ),
+    );
+    mocks.providerClient.forward.mockResolvedValue(
+      okStream(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({ model: 'auto-standard', provider: 'manifest', harness: 'hermes' }),
+      asRes(res),
+    );
+
+    const forwardArgs = mocks.providerClient.forward.mock.calls[0][0];
+    expect(forwardArgs.provider).toBe('anthropic');
+    expect(forwardArgs.model).toBe('claude-sonnet-4');
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.route).toMatchObject({
+      model: 'claude-sonnet-4',
+      harness: 'hermes',
+      synthetic: true,
+      requestedModel: 'auto-standard',
+    });
+  });
+
+  it('passes the harness agent id to MediaService for a synthetic media run', async () => {
+    const { service, mocks } = buildService();
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-2', name: 'coding' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
+      {
+        id: 't1',
+        agent_id: 'harness-2',
+        name: 'Image',
+        enabled: true,
+        badge_color: '#fff',
+        override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+      },
+    ]);
+    mocks.resolveService.resolveAutoTierModel.mockImplementation((agentId: string) =>
+      Promise.resolve(
+        agentId === 'harness-2'
+          ? {
+              tier: 'standard',
+              route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+              fallback_routes: null,
+              output_modality: 'image',
+              response_mode: 'buffered',
+              confidence: 1,
+              score: 0,
+              reason: 'header-match',
+              header_tier_name: 'Image',
+              header_tier_color: '#fff',
+            }
+          : null,
+      ),
+    );
+    mocks.mediaService.handle.mockResolvedValue({
+      status: 200,
+      body: { created: 1, data: [{ url: 'https://cdn/x.png' }] },
+      resolvedRoute: {
+        provider: 'agnes',
+        model: 'agnes-image-2.1-flash',
+        tier: 'standard',
+        reason: 'header-match',
+        headerTierName: 'Image',
+      },
+      costUsd: 0.02,
+    });
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({
+        model: 'auto-image',
+        provider: 'manifest',
+        messages: undefined,
+        prompt: 'a red cube',
+        harness: 'coding',
+      }),
+      asRes(res),
+    );
+
+    const call = mocks.mediaService.handle.mock.calls[0][0];
+    expect(call.apiMode).toBe('images');
+    expect(call.routingAgentId).toBe('harness-2');
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.route).toMatchObject({ model: 'agnes-image-2.1-flash', harness: 'coding' });
+  });
+
   it('reports a clear error when a synthetic auto-* model resolves to no route', async () => {
     const { service, mocks } = buildService();
     mocks.resolveService.resolveAutoTierModel.mockResolvedValue(null);
@@ -1672,15 +1805,36 @@ describe('PlaygroundService.listModels', () => {
         outputPricePerToken: 0.000002,
       },
     ]);
-    mocks.headerTiers.list.mockResolvedValue([
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-1', name: 'hermes' },
+      { id: 'harness-2', name: 'coding' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
       {
         id: 't1',
+        agent_id: 'harness-1',
         name: 'Standard',
         enabled: true,
         badge_color: '#123456',
         override_route: { provider: 'openai', authType: 'api_key', model: 'gpt-4o' },
       },
-      { id: 't2', name: 'Off', enabled: false, override_route: null },
+      {
+        id: 't2',
+        agent_id: 'harness-1',
+        name: 'Off',
+        enabled: true,
+        badge_color: '#000000',
+        override_route: null,
+      },
+      {
+        id: 't3',
+        agent_id: 'harness-2',
+        name: 'Standard',
+        enabled: true,
+        badge_color: '#ffffff',
+        override_route: { provider: 'openai', authType: 'api_key', model: 'gpt-4o' },
+      },
     ]);
 
     const rows = await service.listModels(CTX);
@@ -1689,11 +1843,15 @@ describe('PlaygroundService.listModels', () => {
       synthetic: false,
       output_modalities: ['text'],
     });
-    const synthetic = rows.find((r) => r.model_name === 'auto-standard');
-    expect(synthetic).toMatchObject({
+    const synthetic = rows.filter((r) => r.model_name === 'auto-standard');
+    // Deduped across harnesses: one entry, tagged with the owning harness.
+    expect(synthetic).toHaveLength(1);
+    expect(synthetic[0]).toMatchObject({
       synthetic: true,
       provider: 'manifest',
       tier_name: 'Standard',
+      harness: 'hermes',
+      display_name: 'Auto · Standard · hermes',
     });
     expect(rows.some((r) => r.model_name === 'auto-off')).toBe(false);
   });

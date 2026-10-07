@@ -173,6 +173,56 @@ function imageUrlToGooglePart(imageUrl: unknown): GeminiPart | null {
   return { fileData: { fileUri: url } };
 }
 
+const DATA_URL_RE = /^data:([^;,]+)?(?:;[^,]*)?,(.*)$/is;
+
+function dataUrlToGooglePart(url: string): GeminiPart | null {
+  const match = DATA_URL_RE.exec(url);
+  if (!match) return null;
+  return {
+    inlineData: { mimeType: match[1] || 'application/octet-stream', data: match[2] },
+  };
+}
+
+/**
+ * Translate an OpenAI-style multimodal content block into a Gemini part.
+ * Images, inline audio and generic file attachments (PDF, video, …) all map
+ * onto `inlineData` (data URI / base64) or `fileData` (public URL).
+ */
+function attachmentToGooglePart(block: Record<string, unknown>): GeminiPart | null {
+  const type = block.type;
+  if (type === 'image_url' || type === 'input_image') {
+    return imageUrlToGooglePart(block.image_url ?? block.image);
+  }
+  if (type === 'input_audio') {
+    const audio = block.input_audio;
+    if (!isRecord(audio)) return null;
+    const data = typeof audio.data === 'string' ? audio.data : null;
+    if (!data) return null;
+    return (
+      dataUrlToGooglePart(data) ?? {
+        inlineData: {
+          mimeType: `audio/${typeof audio.format === 'string' ? audio.format : 'wav'}`,
+          data,
+        },
+      }
+    );
+  }
+  if (type === 'file') {
+    const file = block.file;
+    if (!isRecord(file)) return null;
+    const data = typeof file.file_data === 'string' ? file.file_data : undefined;
+    if (data) {
+      const inline = dataUrlToGooglePart(data);
+      if (inline) return inline;
+    }
+    const url = typeof file.url === 'string' ? file.url : undefined;
+    if (url) {
+      return dataUrlToGooglePart(url) ?? { fileData: { fileUri: url } };
+    }
+  }
+  return null;
+}
+
 /**
  * Scan the message list for assistant tool_calls and build a map from
  * tool_call_id to function name. Needed because OpenAI's tool-response
@@ -211,6 +261,9 @@ function messageToContent(
       } else if (block.type === 'image_url' || block.type === 'input_image') {
         const imagePart = imageUrlToGooglePart(block.image_url);
         if (imagePart) parts.push(imagePart);
+      } else {
+        const attachment = attachmentToGooglePart(block);
+        if (attachment) parts.push(attachment);
       }
     }
   }

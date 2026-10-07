@@ -209,6 +209,8 @@ const ModelPickerModal: Component<Props> = (props) => {
   const handleRefreshGroup = async (provId: string, displayName: string) => {
     if (!props.agentName) return;
     if (provId.startsWith('custom:')) return;
+    // Synthetic `auto-*` entries are not a real provider; nothing to refresh.
+    if (provId === 'manifest') return;
     setRefreshingProvId(provId);
     try {
       const result = await refreshProviderModels(props.agentName, provId, activeTab());
@@ -723,7 +725,13 @@ const ModelPickerModal: Component<Props> = (props) => {
                       : providerIcon(item.provId, 16)}
                   </span>
                   <span class="routing-modal__group-name">{item.name}</span>
-                  <Show when={props.agentName && !item.provId.startsWith('custom:')}>
+                  <Show
+                    when={
+                      props.agentName &&
+                      !item.provId.startsWith('custom:') &&
+                      item.provId !== 'manifest'
+                    }
+                  >
                     <button
                       class="routing-modal__group-refresh"
                       disabled={refreshingProvId() !== null}

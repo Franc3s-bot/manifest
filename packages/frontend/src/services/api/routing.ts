@@ -379,6 +379,8 @@ export interface AvailableModel {
   tier_name?: string | null;
   /** Header-tier badge color for a synthetic model. */
   tier_color?: string | null;
+  /** Harness (agent) that owns the tier behind a synthetic model. */
+  harness?: string | null;
 }
 
 export function getAvailableModels(agentName: string) {

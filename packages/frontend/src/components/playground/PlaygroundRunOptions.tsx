@@ -1,13 +1,17 @@
 import { createSignal, For, Show, type Component } from 'solid-js';
 import type { PlaygroundOutputKind } from 'manifest-shared';
+import type { PlaygroundContentPart } from '../../services/api.js';
 import type { PlaygroundMediaOptions } from '../../services/playground-store.js';
 
-/** One image attached to a multimodal chat prompt. */
+export type PlaygroundAttachmentKind = 'image' | 'audio' | 'video' | 'file';
+
+/** One attachment on a multimodal chat prompt: a URL or an inlined local file. */
 export interface PlaygroundAttachment {
   id: string;
+  kind: PlaygroundAttachmentKind;
   name: string;
-  /** `data:` URI sent to the model as an `image_url` part. */
-  dataUrl: string;
+  /** Public URL or `data:` URI. */
+  url: string;
 }
 
 export const MAX_ATTACHMENTS = 5;
@@ -21,12 +25,24 @@ interface Props {
   media: PlaygroundMediaOptions;
   onMediaChange: (media: PlaygroundMediaOptions) => void;
   disabled?: boolean;
-  /** Surfaced when a file is rejected (too large / too many / not an image). */
+  /** Surfaced when a file/URL is rejected (too large / too many / unsupported). */
   onError?: (message: string) => void;
 }
 
 let attachmentCounter = 0;
 const nextAttachmentId = (): string => `att-${++attachmentCounter}-${Date.now().toString(36)}`;
+
+/** Map a MIME type to the attachment kind the provider adapters understand. */
+export function attachmentKindFor(mime: string, name = ''): PlaygroundAttachmentKind {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext)) return 'image';
+  if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)) return 'audio';
+  if (['mp4', 'webm', 'mov', 'mkv'].includes(ext)) return 'video';
+  return 'file';
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -38,8 +54,9 @@ function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 /**
- * Validate + inline image files as attachments. Exported so the prompt's paste
- * handler can reuse the exact same rules (type, size, count).
+ * Validate + inline files as attachments. Accepts any file type (image, audio,
+ * video, PDF, …); the kind drives how it is forwarded to the provider.
+ * Exported so the prompt's paste handler reuses the exact same rules.
  */
 export async function addAttachmentFiles(
   existing: PlaygroundAttachment[],
@@ -48,10 +65,6 @@ export async function addAttachmentFiles(
 ): Promise<PlaygroundAttachment[]> {
   const next = [...existing];
   for (const file of Array.from(files)) {
-    if (!file.type.startsWith('image/')) {
-      onError?.(`${file.name}: only image files are supported`);
-      continue;
-    }
     if (file.size > MAX_ATTACHMENT_BYTES) {
       onError?.(`${file.name} is larger than 8 MB`);
       continue;
@@ -61,8 +74,13 @@ export async function addAttachmentFiles(
       break;
     }
     try {
-      const dataUrl = await readFileAsDataUrl(file);
-      next.push({ id: nextAttachmentId(), name: file.name, dataUrl });
+      const url = await readFileAsDataUrl(file);
+      next.push({
+        id: nextAttachmentId(),
+        kind: attachmentKindFor(file.type, file.name),
+        name: file.name,
+        url,
+      });
     } catch {
       onError?.(`Could not read ${file.name}`);
     }
@@ -71,13 +89,58 @@ export async function addAttachmentFiles(
 }
 
 /**
- * Run-level input controls shared by every column: multimodal image
- * attachments for chat columns and generation options for image / video
- * columns. Attachments are inlined as `data:` URIs so the backend can forward
- * them to any provider without an upload round-trip.
+ * Turn an attachment into the OpenAI-style content part the backend forwards.
+ * Images ride as `image_url`; inline audio as `input_audio`; everything else as
+ * a generic `file` part (data URI or URL) that the provider adapters translate
+ * to their native block.
+ */
+export function attachmentToContentPart(attachment: PlaygroundAttachment): PlaygroundContentPart {
+  if (attachment.kind === 'image') {
+    return { type: 'image_url', image_url: { url: attachment.url } };
+  }
+  if (attachment.kind === 'audio') {
+    const match = /^data:audio\/([^;,]+)(?:;[^,]*)?;base64,(.*)$/is.exec(attachment.url);
+    if (match) {
+      return { type: 'input_audio', input_audio: { data: match[2]!, format: match[1]! } };
+    }
+  }
+  return {
+    type: 'file',
+    file: {
+      ...(attachment.url.startsWith('data:')
+        ? { file_data: attachment.url }
+        : { url: attachment.url }),
+      filename: attachment.name,
+    },
+  };
+}
+
+/** Best-effort name for a pasted URL. */
+function nameFromUrl(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    const last = path.split('/').filter(Boolean).pop();
+    return last || 'attachment';
+  } catch {
+    return 'attachment';
+  }
+}
+
+const KIND_LABEL: Record<PlaygroundAttachmentKind, string> = {
+  image: 'IMG',
+  audio: 'AUD',
+  video: 'VID',
+  file: 'FILE',
+};
+
+/**
+ * Run-level input controls shared by every column: multimodal attachments for
+ * chat columns (by URL or local file) and generation options for image / video
+ * columns.
  */
 const PlaygroundRunOptions: Component<Props> = (props) => {
   const [mediaOpen, setMediaOpen] = createSignal(false);
+  const [urlDraft, setUrlDraft] = createSignal('');
   let fileInput: HTMLInputElement | undefined;
 
   const hasMedia = () => props.mediaKinds.includes('image') || props.mediaKinds.includes('video');
@@ -86,6 +149,25 @@ const PlaygroundRunOptions: Component<Props> = (props) => {
   const handleFiles = async (files: FileList | File[]) => {
     const next = await addAttachmentFiles(props.attachments, files, props.onError);
     props.onAttachmentsChange(next);
+  };
+
+  const addUrl = () => {
+    const url = urlDraft().trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      props.onError?.('Enter an http(s) URL');
+      return;
+    }
+    if (props.attachments.length >= MAX_ATTACHMENTS) {
+      props.onError?.(`At most ${MAX_ATTACHMENTS} attachments per prompt`);
+      return;
+    }
+    const name = nameFromUrl(url);
+    props.onAttachmentsChange([
+      ...props.attachments,
+      { id: nextAttachmentId(), kind: attachmentKindFor('', name), name, url },
+    ]);
+    setUrlDraft('');
   };
 
   const update = <K extends keyof PlaygroundMediaOptions>(
@@ -104,24 +186,46 @@ const PlaygroundRunOptions: Component<Props> = (props) => {
     <div class="playground-options">
       <Show when={hasText()}>
         <div class="playground-options__row">
+          <input
+            type="url"
+            class="playground-options__url"
+            placeholder="Paste an image / audio / video / PDF URL…"
+            value={urlDraft()}
+            disabled={props.disabled}
+            onInput={(e) => setUrlDraft(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                addUrl();
+              }
+            }}
+            aria-label="Attachment URL"
+          />
+          <button
+            type="button"
+            class="playground-options__attach"
+            disabled={props.disabled || urlDraft().trim().length === 0}
+            onClick={addUrl}
+          >
+            Add URL
+          </button>
           <button
             type="button"
             class="playground-options__attach"
             disabled={props.disabled}
             onClick={() => fileInput?.click()}
-            title="Attach images (vision)"
+            title="Upload a file from disk"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V6a3 3 0 0 1 6 0v11a1.5 1.5 0 0 1-3 0V7H9v10a3 3 0 0 0 6 0V6a4.5 4.5 0 0 0-9 0v11.5a6 6 0 0 0 12 0V6z" />
+              <path d="M12 3l4 4h-3v6h-2V7H8zm-7 14h14v2H5z" />
             </svg>
-            <span>Images</span>
+            <span>Upload</span>
           </button>
           <input
             ref={(el) => {
               fileInput = el;
             }}
             type="file"
-            accept="image/*"
             multiple
             class="playground-options__file-input"
             onChange={(event) => {
@@ -130,27 +234,47 @@ const PlaygroundRunOptions: Component<Props> = (props) => {
               event.currentTarget.value = '';
             }}
           />
-          <For each={props.attachments}>
-            {(attachment) => (
-              <span class="playground-options__thumb">
-                <img src={attachment.dataUrl} alt={attachment.name} title={attachment.name} />
-                <button
-                  type="button"
-                  class="playground-options__thumb-remove"
-                  aria-label={`Remove ${attachment.name}`}
-                  disabled={props.disabled}
-                  onClick={() =>
-                    props.onAttachmentsChange(
-                      props.attachments.filter((a) => a.id !== attachment.id),
-                    )
-                  }
-                >
-                  ×
-                </button>
-              </span>
-            )}
-          </For>
         </div>
+        <Show when={props.attachments.length > 0}>
+          <ul class="playground-options__list">
+            <For each={props.attachments}>
+              {(attachment) => (
+                <li class="playground-options__item">
+                  <Show
+                    when={attachment.kind === 'image'}
+                    fallback={
+                      <span class="playground-options__kind" title={attachment.kind}>
+                        {KIND_LABEL[attachment.kind]}
+                      </span>
+                    }
+                  >
+                    <img
+                      class="playground-options__thumb"
+                      src={attachment.url}
+                      alt={attachment.name}
+                    />
+                  </Show>
+                  <span class="playground-options__name" title={attachment.url}>
+                    {attachment.name}
+                  </span>
+                  <button
+                    type="button"
+                    class="playground-options__remove"
+                    aria-label={`Remove ${attachment.name}`}
+                    disabled={props.disabled}
+                    onClick={() =>
+                      props.onAttachmentsChange(
+                        props.attachments.filter((a) => a.id !== attachment.id),
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </li>
+              )}
+            </For>
+          </ul>
+        </Show>
       </Show>
 
       <Show when={hasMedia()}>

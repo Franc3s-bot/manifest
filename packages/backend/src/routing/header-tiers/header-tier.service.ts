@@ -66,6 +66,23 @@ export class HeaderTierService {
     return rows;
   }
 
+  /**
+   * Every enabled header tier of the tenant that has an override route — i.e.
+   * the tiers a client can reach as a synthetic `auto-{name}` model. Unlike
+   * `list(agentId)`, this spans all of the tenant's harnesses: the reserved
+   * Playground agent owns no tiers of its own, so it surfaces (and resolves)
+   * the harnesses' synthetic models.
+   *
+   * Ordered by name then agent so listing and resolution pick the same tier
+   * when several harnesses share a tier name.
+   */
+  async listForTenant(tenantId: string): Promise<HeaderTier[]> {
+    return this.repo.find({
+      where: { tenant_id: tenantId, enabled: true },
+      order: { name: 'ASC', agent_id: 'ASC' },
+    });
+  }
+
   async create(
     agentId: string,
     tenantId: string,

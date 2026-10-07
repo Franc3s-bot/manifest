@@ -66,13 +66,34 @@ export class PlaygroundMessageContentConstraint implements ValidatorConstraintIn
         }
         continue;
       }
+      // OpenAI-style inline audio: `{ input_audio: { data, format } }`.
+      if (type === 'input_audio') {
+        const audio = record['input_audio'];
+        if (audio === null || typeof audio !== 'object') return false;
+        const a = audio as Record<string, unknown>;
+        if (typeof a['data'] !== 'string' || a['data'].length === 0) return false;
+        if (typeof a['format'] !== 'string' || a['format'].length === 0) return false;
+        continue;
+      }
+      // Generic attachment (PDF, video, other): a URL or a data URI plus an
+      // optional filename. Providers translate it to their native block.
+      if (type === 'file') {
+        const file = record['file'];
+        if (file === null || typeof file !== 'object') return false;
+        const f = file as Record<string, unknown>;
+        const hasData = typeof f['file_data'] === 'string' && f['file_data'].length > 0;
+        const hasUrl = typeof f['url'] === 'string' && f['url'].length > 0;
+        if (!hasData && !hasUrl) return false;
+        if (f['filename'] !== undefined && typeof f['filename'] !== 'string') return false;
+        continue;
+      }
       return false;
     }
     return true;
   }
 
   defaultMessage(): string {
-    return 'content must be a non-empty string or an array of {type:"text"|"image_url"} parts';
+    return 'content must be a non-empty string or an array of text/image/audio/file parts';
   }
 }
 
@@ -149,6 +170,17 @@ export class RunPlaygroundDto {
   @IsString()
   @MaxLength(100)
   providerKeyLabel?: string;
+
+  /**
+   * Harness (agent) whose header tier a synthetic `auto-*` model should
+   * resolve against. The Playground runs under the reserved Playground agent,
+   * which owns no tiers, so a synthetic run names the harness that defines the
+   * tier. Ignored for a non-synthetic model.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  harness?: string;
 
   @IsOptional()
   @IsArray()
