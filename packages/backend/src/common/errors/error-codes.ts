@@ -68,6 +68,12 @@ export const MANIFEST_ERRORS = {
     title: 'Missing messages array',
     template: '`messages` array is required.',
   },
+  M301: {
+    title: 'Output modality mismatch',
+    template:
+      'This endpoint generates {expected} output, but the resolved model "{model}" produces {actual}. ' +
+      'Point an {expected} tier at an {expected} model, or call the matching endpoint.',
+  },
   M302: {
     title: 'Model not available',
     template:

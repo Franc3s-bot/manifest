@@ -721,4 +721,67 @@ describe('HeaderTierService', () => {
       expect(repo.save).not.toHaveBeenCalled();
     });
   });
+
+  describe('setOutputModality', () => {
+    const tierWithChain = () =>
+      ({
+        id: 'h1',
+        name: 'Images',
+        agent_id: 'agent-1',
+        output_modality: 'text',
+        override_route: route('agnes', 'api_key', 'agnes-image-2.1-flash'),
+        fallback_routes: null,
+      }) as HeaderTier;
+
+    it('accepts an image modality when the chain has an image model', async () => {
+      repo.findOne.mockResolvedValue(tierWithChain());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        {
+          ...discovered('agnes-image-2.1-flash', 'agnes', 'api_key'),
+          outputModalities: ['image'],
+        },
+      ]);
+
+      const result = await svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'image');
+
+      expect(result.output_modality).toBe('image');
+      expect(repo.save).toHaveBeenCalled();
+      expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('rejects an image modality when no chain model generates images', async () => {
+      repo.findOne.mockResolvedValue(tierWithChain());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        { ...discovered('agnes-image-2.1-flash', 'agnes', 'api_key'), outputModalities: ['text'] },
+      ]);
+
+      await expect(svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'image')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a media modality when the tier has no model configured', async () => {
+      repo.findOne.mockResolvedValue({
+        ...tierWithChain(),
+        override_route: null,
+        fallback_routes: null,
+      } as HeaderTier);
+
+      await expect(svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'video')).rejects.toThrow(
+        /configure a model first/,
+      );
+    });
+
+    it('always allows reverting to text', async () => {
+      repo.findOne.mockResolvedValue({
+        ...tierWithChain(),
+        output_modality: 'image',
+      } as HeaderTier);
+
+      const result = await svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'text');
+
+      expect(result.output_modality).toBe('text');
+    });
+  });
 });

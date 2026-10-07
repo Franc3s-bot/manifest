@@ -76,6 +76,24 @@ export type { ResponseMode } from './response-mode';
 export { DEFAULT_OUTPUT_MODALITY, OUTPUT_MODALITIES, isOutputModality } from './output-modality';
 export type { OutputModality } from './output-modality';
 export {
+  MEDIA_OUTPUT_MODALITIES,
+  IMAGE_RESPONSE_FORMATS,
+  VIDEO_STATUSES,
+  AGNES_MEDIA_PRICES,
+  isMediaOutputModality,
+} from './media';
+export type {
+  MediaOutputModality,
+  ImageResponseFormat,
+  ImageGenerationRequest,
+  GeneratedImage,
+  ImageGenerationResponse,
+  VideoStatus,
+  VideoGenerationRequest,
+  VideoObject,
+  MediaPriceTable,
+} from './media';
+export {
   routeEquals,
   isModelRoute,
   isModelRouteArray,

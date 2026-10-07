@@ -306,6 +306,12 @@ export interface SuccessMessageOpts extends HeaderTierRef {
    * request was recovered by Auto-fix.
    */
   recoveredByKeyRotation?: boolean;
+  /**
+   * Precomputed cost in USD for a non-token surface (image/video generation).
+   * `undefined` keeps the token-based computation; `null` records "cost not
+   * tracked" without falling back to a token estimate that would be zero.
+   */
+  costUsdOverride?: number | null;
 }
 
 export interface AutofixOriginalOpts extends HeaderTierRef {
@@ -422,6 +428,7 @@ function buildRequestRow(
     error_class: terminal ? classified.error_class : null,
     requested_model: attempt.fallback_from_model ?? attempt.model ?? null,
     api_mode: apiMode ?? null,
+    media_task_id: null,
     caller_attribution: attempt.caller_attribution ?? null,
     request_headers: attempt.request_headers ?? null,
     request_params: attempt.request_params ?? null,
@@ -1354,6 +1361,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       autofix,
       apiMode,
       recoveredByKeyRotation,
+      costUsdOverride,
     } = opts ?? {};
     const requestId = providedRequestId ?? uuid();
 
@@ -1365,20 +1373,23 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       model,
     );
 
-    const costUsd = await this.computeCost(
-      ctx,
-      model,
-      provider,
-      authType,
-      usage,
-      tenantProviderId,
-      canonical.provider,
-      // Bill a peak/off-peak model on when the attempt started, not on when
-      // this row is written: a long stream that opens at 09:59 and records at
-      // 10:01 is a peak request, and the fallback path already reads it this
-      // way. Falls back to now when the caller tracked no attempt.
-      attempt ? new Date(attempt.startedAt) : undefined,
-    );
+    const costUsd =
+      costUsdOverride !== undefined
+        ? costUsdOverride
+        : await this.computeCost(
+            ctx,
+            model,
+            provider,
+            authType,
+            usage,
+            tenantProviderId,
+            canonical.provider,
+            // Bill a peak/off-peak model on when the attempt started, not on when
+            // this row is written: a long stream that opens at 09:59 and records at
+            // 10:01 is a peak request, and the fallback path already reads it this
+            // way. Falls back to now when the caller tracked no attempt.
+            attempt ? new Date(attempt.startedAt) : undefined,
+          );
 
     const canonicalModel = canonical.model;
     const canonicalProvider = canonical.provider;

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import type { AuthType, ModelRoute, ResponseMode } from 'manifest-shared';
+import type { AuthType, ModelRoute, OutputModality, ResponseMode } from 'manifest-shared';
 import {
   DEFAULT_RESPONSE_MODE,
   DEFAULT_OUTPUT_MODALITY,
@@ -158,6 +158,55 @@ export class HeaderTierService {
     await this.repo.save(row);
     this.routingCache.invalidateAgent(agentId);
     return row;
+  }
+
+  /**
+   * Set the modality this tier produces. A media modality is validated against
+   * the configured chain so an image tier cannot point at a text-only model.
+   */
+  async setOutputModality(
+    agentId: string,
+    tenantId: string,
+    id: string,
+    outputModality: OutputModality,
+  ): Promise<HeaderTier> {
+    const row = await this.findOrThrow(agentId, id);
+    await this.assertChainSupportsModality(row, tenantId, outputModality);
+    row.output_modality = outputModality;
+    row.updated_at = new Date().toISOString();
+    await this.repo.save(row);
+    this.routingCache.invalidateAgent(agentId);
+    return row;
+  }
+
+  private async assertChainSupportsModality(
+    row: HeaderTier,
+    tenantId: string,
+    modality: OutputModality,
+  ): Promise<void> {
+    if (modality === 'text') return;
+    const routes = [row.override_route, ...(readFallbackRoutes(row) ?? [])].filter(
+      (route): route is ModelRoute => route !== null,
+    );
+    if (routes.length === 0) {
+      throw new BadRequestException(
+        `Cannot set ${modality} output for custom tier "${row.name}": configure a model first.`,
+      );
+    }
+    const available = await this.discoveryService.getModelsForAgent(tenantId, row.agent_id);
+    const supports = routes.some((route) => {
+      const model =
+        available.find(
+          (m) => m.id === route.model && m.provider.toLowerCase() === route.provider.toLowerCase(),
+        ) ?? available.find((m) => m.id === route.model);
+      return model?.outputModalities?.includes(modality) ?? false;
+    });
+    if (!supports) {
+      throw new BadRequestException(
+        `Cannot set ${modality} output for custom tier "${row.name}": ` +
+          `none of its models generate ${modality}. Point the tier at an ${modality} model first.`,
+      );
+    }
   }
 
   async delete(agentId: string, id: string): Promise<void> {

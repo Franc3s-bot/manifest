@@ -1,0 +1,136 @@
+/**
+ * Shared contracts for image and video generation.
+ *
+ * Manifest exposes an OpenAI-compatible media surface:
+ *   POST /v1/images/generations   (synchronous)
+ *   POST /v1/videos               (asynchronous, returns a task id)
+ *   GET  /v1/videos/{id}          (task status)
+ *
+ * Provider-specific extras (Agnes `ratio`, size tiers, reference images) ride
+ * along as optional fields. The routing tier's `output_modality` decides which
+ * surface a synthetic `auto-{name}` model belongs to.
+ */
+
+/** Media output modalities, mirroring the `image` / `video` members of OutputModality. */
+export const MEDIA_OUTPUT_MODALITIES = ['image', 'video'] as const;
+export type MediaOutputModality = (typeof MEDIA_OUTPUT_MODALITIES)[number];
+
+export function isMediaOutputModality(value: unknown): value is MediaOutputModality {
+  return (
+    typeof value === 'string' && (MEDIA_OUTPUT_MODALITIES as readonly string[]).includes(value)
+  );
+}
+
+/* ── Image generation ─────────────────────────────────────────────── */
+
+export const IMAGE_RESPONSE_FORMATS = ['url', 'b64_json'] as const;
+export type ImageResponseFormat = (typeof IMAGE_RESPONSE_FORMATS)[number];
+
+export interface ImageGenerationRequest {
+  model?: string;
+  prompt: string;
+  /** Number of images. Providers that only return one image are called n times. */
+  n?: number;
+  /**
+   * Output size. Either a provider tier (`1K`, `2K`, …) or an exact
+   * `WIDTHxHEIGHT` (e.g. `1024x1024`). Translated per provider.
+   */
+  size?: string;
+  /** Aspect ratio (Agnes extension), e.g. `16:9`. */
+  ratio?: string;
+  response_format?: ImageResponseFormat;
+  /**
+   * Reference images for image-to-image / composition. Each entry is a
+   * publicly reachable URL or a `data:` URI.
+   */
+  image?: string | readonly string[];
+  /** Provider passthrough for unrecognised params. */
+  [key: string]: unknown;
+}
+
+export interface GeneratedImage {
+  url?: string;
+  b64_json?: string;
+  revised_prompt?: string;
+}
+
+export interface ImageGenerationResponse {
+  created: number;
+  data: GeneratedImage[];
+}
+
+/* ── Video generation ─────────────────────────────────────────────── */
+
+export const VIDEO_STATUSES = ['queued', 'processing', 'completed', 'failed'] as const;
+export type VideoStatus = (typeof VIDEO_STATUSES)[number];
+
+export interface VideoGenerationRequest {
+  model?: string;
+  prompt: string;
+  /** Output resolution tier (`720P`, `1080P`, `1K`, `2K`). */
+  size?: string;
+  /** Aspect ratio (Agnes extension), e.g. `16:9`. */
+  ratio?: string;
+  /** Output duration in seconds (4–12 on Agnes). */
+  seconds?: number;
+  /** Agnes generation mode. */
+  mode?: 'text' | 'keyframe' | 'reference';
+  /** First-frame image for keyframe mode. */
+  first_frame?: string;
+  /** Last-frame image for keyframe mode. */
+  last_frame?: string;
+  /** Reference images / audio / video for reference mode. */
+  images?: readonly string[];
+  audios?: readonly string[];
+  videos?: readonly { url: string; start_seconds?: number; require_audio?: boolean }[];
+  [key: string]: unknown;
+}
+
+/** OpenAI-shaped video task object. */
+export interface VideoObject {
+  id: string;
+  object: 'video';
+  model: string;
+  status: VideoStatus;
+  created_at: number;
+  progress?: number;
+  seconds?: number;
+  size?: string;
+  /** Download URL once the task completes. */
+  url?: string;
+  error?: { message: string } | null;
+  /** Provider passthrough for unrecognised fields. */
+  [key: string]: unknown;
+}
+
+/* ── Pricing ──────────────────────────────────────────────────────── */
+
+/**
+ * USD per generated image, keyed by `<provider>/<model>`. Unknown models fall
+ * through to the provider default, then to `null` (cost not tracked).
+ */
+export interface MediaPriceTable {
+  /** USD per image for a given model. */
+  imagePerImage?: Readonly<Record<string, number>>;
+  /** Default USD per image for the provider when the model is not listed. */
+  imageDefaultPerImage?: number;
+  /** USD per second of output for a given model. */
+  videoPerSecond?: Readonly<Record<string, number>>;
+  /** Default USD per second for the provider when the model is not listed. */
+  videoDefaultPerSecond?: number;
+}
+
+/**
+ * Agnes public reference pricing. Video is billed per second of output
+ * duration (billable = output duration + input video duration).
+ */
+export const AGNES_MEDIA_PRICES: MediaPriceTable = {
+  imagePerImage: {
+    // Agnes image pricing is not published per image in the public catalog;
+    // the subscription quota is images-per-day. Leave unknown so cost is not
+    // fabricated until a real rate is configured.
+  },
+  videoPerSecond: {
+    'agnes-video-v2.0': 0.04,
+  },
+};

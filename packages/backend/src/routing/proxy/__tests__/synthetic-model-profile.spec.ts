@@ -181,4 +181,37 @@ describe('buildSyntheticTierProfile', () => {
     const profile = buildSyntheticTierProfile(tier, models);
     expect(profile.contextWindow).toBe(200_000);
   });
+
+  it('advertises the tier modality for an image tier regardless of chain modalities', () => {
+    const tier = makeTier({
+      output_modality: 'image',
+      override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+    });
+    const models = [
+      makeModel({
+        id: 'agnes-image-2.1-flash',
+        provider: 'agnes',
+        authType: 'api_key',
+        outputModalities: ['image'],
+      }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.outputModalities).toEqual(['image']);
+  });
+
+  it('advertises video for a video tier', () => {
+    const tier = makeTier({
+      output_modality: 'video',
+      override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-video-v2.0' },
+    });
+    const models = [
+      makeModel({
+        id: 'agnes-video-v2.0',
+        provider: 'agnes',
+        authType: 'api_key',
+        outputModalities: ['video'],
+      }),
+    ];
+    expect(buildSyntheticTierProfile(tier, models).outputModalities).toEqual(['video']);
+  });
 });

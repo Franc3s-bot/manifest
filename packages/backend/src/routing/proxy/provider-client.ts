@@ -108,7 +108,9 @@ function wireFormat(endpoint: ProviderEndpoint): ProviderWireFormat | undefined 
   return undefined;
 }
 
-const INPUT_WIRE_FORMATS: Record<ProxyApiMode, ProviderWireFormat> = {
+// Media surfaces ('images' / 'videos') never reach this client — the media
+// adapter builds their wire format — so they are intentionally absent.
+const INPUT_WIRE_FORMATS: Partial<Record<ProxyApiMode, ProviderWireFormat>> = {
   chat_completions: 'openai_chat_completions',
   messages: 'anthropic_messages',
   responses: 'openai_responses',
@@ -259,10 +261,7 @@ function buildPromptCacheKey(sessionKey: string): string {
 }
 
 function isOpenCode(endpointKey: string, provider: string): boolean {
-  return (
-    endpointKey.startsWith('opencode-') ||
-    provider.toLowerCase().startsWith('opencode')
-  );
+  return endpointKey.startsWith('opencode-') || provider.toLowerCase().startsWith('opencode');
 }
 
 function applyHashedPromptCacheKey(
@@ -539,7 +538,9 @@ export class ProviderClient {
     // Affinity headers are routing-critical and must win over caller-supplied
     // extraHeaders (provider-side observability hints), so they spread last.
     const finalHeaders: Record<string, string> =
-      affinity || extraHeaders ? { ...headers, ...extraHeaders, ...affinity?.headers } : { ...headers };
+      affinity || extraHeaders
+        ? { ...headers, ...extraHeaders, ...affinity?.headers }
+        : { ...headers };
 
     // OpenCode Go and OpenCode Zen require an x-opencode-session header on all requests
     // to route to the appropriate backend provider and maintain prompt-cache affinity.

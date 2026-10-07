@@ -88,6 +88,21 @@ export function setHeaderTierResponseMode(
   );
 }
 
+export function setHeaderTierOutputModality(
+  agentName: string,
+  id: string,
+  outputModality: OutputModality,
+) {
+  return fetchMutate<HeaderTier>(
+    routingPath(agentName, `header-tiers/${encodeURIComponent(id)}/output-modality`),
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ output_modality: outputModality }),
+    },
+  );
+}
+
 export function deleteHeaderTier(agentName: string, id: string) {
   return fetchMutate(routingPath(agentName, `header-tiers/${encodeURIComponent(id)}`), {
     method: 'DELETE',

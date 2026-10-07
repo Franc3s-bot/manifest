@@ -18,8 +18,10 @@ import { Transform, Type } from 'class-transformer';
 import {
   AUTH_TYPES,
   MAX_FALLBACKS,
+  OUTPUT_MODALITIES,
   RESPONSE_MODES,
   TIER_SLOTS,
+  type OutputModality,
   type ResponseMode,
 } from 'manifest-shared';
 import { PROVIDER_BY_ID_OR_ALIAS } from '../../common/constants/providers';
@@ -257,6 +259,21 @@ export class SetResponseModeDto {
 
 export function responseModeFromDto(body: SetResponseModeDto): ResponseMode | undefined {
   return body.response_mode ?? body.responseMode;
+}
+
+/** Set the output modality (text | image | video) of a routing tier. */
+export class SetOutputModalityDto {
+  @IsOptional()
+  @IsIn(OUTPUT_MODALITIES)
+  output_modality?: OutputModality;
+
+  @IsOptional()
+  @IsIn(OUTPUT_MODALITIES)
+  outputModality?: OutputModality;
+}
+
+export function outputModalityFromDto(body: SetOutputModalityDto): OutputModality | undefined {
+  return body.output_modality ?? body.outputModality;
 }
 
 /** Maximum key labels one rotation rule may list. */

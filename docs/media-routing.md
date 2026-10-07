@@ -123,38 +123,61 @@ Key points:
 - Not yet: a media endpoint to actually call. That is Phase 2.
 
 ### Phase 2 — Image endpoint (vertical slice)
-- `ProxyApiMode` gains `images`.
-- `MediaController` + `MediaRoutingService` + `AgnesAdapter` for
-  `POST /v1/images/generations`.
-- Recording with `cost_usd` from the image price table.
-- Tests: adapter translation, modality gate, fallback on provider error,
-  recording shape.
+- `ProxyApiMode` gains `images` (**done**).
+- `MediaController` + `MediaService` + `MediaProviderClient` (Agnes adapter) for
+  `POST /v1/images/generations` (**done**).
+- Recording with `cost_usd` from the image price table (**done**).
+- Tests: adapter translation, modality gate, credential failure, provider
+  error, recording shape (**done**).
 
 ### Phase 3 — Synthetic media tiers and UI
-- Header-tier create/update accepts `output_modality: image | video`, validated
-  against the configured chain.
-- `auto-{name}` models advertise media `output_modalities`
-  (`synthetic-model-profile.ts` already aggregates discovered modalities).
-- Frontend: modality selector on the tier card; model picker filtered by
-  modality; provider connect tile for Agnes.
+- Header-tier `output_modality` is settable through
+  `PATCH .../header-tiers/:id/output-modality`, validated against the chain
+  (**done**).
+- `auto-{name}` models advertise the tier's media modality
+  (**done** — `synthetic-model-profile.ts` prefers the tier modality).
+- Frontend: modality selector on the tier modal (**done**); provider tile and
+  model picker for Agnes (**done**).
 
 ### Phase 4 — Video endpoint (async)
-- `ProxyApiMode` gains `videos`.
-- `POST /v1/videos`, `GET /v1/videos/{id}`; task id persisted on the Request.
-- Completion updates `cost_usd` from `VIDEO_PRICE_PER_SECOND × seconds`.
+- `ProxyApiMode` gains `videos` (**done**).
+- `POST /v1/videos`, `GET /v1/videos/{id}`; the task id is persisted on the
+  Request (`requests.media_task_id`, migration
+  `1803200000000-AddRequestMediaTaskId`) (**done**).
+- Completion finalizes `cost_usd` from `VIDEO_PRICE_PER_SECOND × seconds` and
+  maps the provider status onto the canonical success/failed vocabulary
+  (**done**).
 
 ### Phase 5 — Cost accounting and analytics
 - Media pricing tables (image per-image, video per-second) resolved by
-  `(provider, model, size, seconds)`.
-- Dashboard: media requests excluded from token metrics, included in cost.
+  `(provider, model, size, seconds)` in `media-pricing.ts` (**done**).
+- Media rows carry zero tokens and their USD cost in `agent_messages.cost_usd`,
+  so token metrics are untouched and cost is included (**done**).
+
+## Verification
+
+- Unit: `media-provider-client.spec.ts`, `media.service.spec.ts`,
+  `media.controller.spec.ts`, `synthetic-model-profile.spec.ts`,
+  `header-tier.service.spec.ts`.
+- Integration (compiled app + real Postgres + mock Agnes upstream): image
+  generation, modality gate (M301), video create, video status, cost
+  finalization (10s → $0.40), `requests.media_task_id`, `api_mode`, and the
+  `auto-image` / `auto-video` `/v1/models` capabilities.
+- Migration verified against a real database (column + index created).
+- Live video generation against the real Agnes API is **not** verifiable until
+  API credit is loaded; the video path is covered end-to-end against a mock
+  upstream instead.
 
 ## Open questions
 
-- Does Agnes expose `/v1/models`? If yes, discovery can fetch; if not, the
-  curated catalog is authoritative and must be updated on new releases.
-- OpenAI's `size` is `1024x1024`; Agnes uses `1K`/`2K` tiers plus `ratio`. Do we
-  accept both and translate, or only Agnes-native?
-- Should media requests count against the same plan request limit as text?
-- Where does the raw media payload live — `attempt_recording` today stores
-  request/response bodies; image base64 can be large. A size cap or URL-only
-  policy is needed.
+- Does Agnes expose `/v1/models`? Discovery tries it and falls back to the
+  curated `AGNES_MODELS` catalog when it is missing or empty. Update the
+  catalog on new releases.
+- OpenAI's `size` is `1024x1024`; Agnes uses `1K`/`2K` tiers plus `ratio`.
+  The Agnes adapter passes `size`/`ratio` through unchanged; a generic
+  OpenAI-images adapter exists for providers that take the exact-size form.
+- Media requests count against the same plan request limit and rate limits as
+  text (they are Manifest Requests like any other).
+- Provider-attempt payload recording (`attempt_recording`) is not yet wired for
+  media: image base64 can be large. The media Request/Attempt rows, cost, and
+  attribution are recorded; the raw payload is not.

@@ -5,11 +5,13 @@ const mockCreateHeaderTier = vi.fn();
 const mockUpdateHeaderTier = vi.fn();
 const mockGetSeenHeaders = vi.fn();
 const mockSetHeaderTierResponseMode = vi.fn();
+const mockSetHeaderTierOutputModality = vi.fn();
 vi.mock("../../src/services/api/header-tiers.js", () => ({
   createHeaderTier: (...args: unknown[]) => mockCreateHeaderTier(...args),
   updateHeaderTier: (...args: unknown[]) => mockUpdateHeaderTier(...args),
   getSeenHeaders: (...args: unknown[]) => mockGetSeenHeaders(...args),
   setHeaderTierResponseMode: (...args: unknown[]) => mockSetHeaderTierResponseMode(...args),
+  setHeaderTierOutputModality: (...args: unknown[]) => mockSetHeaderTierOutputModality(...args),
 }));
 
 const mockToastError = vi.fn();
@@ -80,6 +82,7 @@ describe("HeaderTierModal", () => {
     mockCreateHeaderTier.mockResolvedValue({ ...existingTier, id: "ht-new", name: "Created", response_mode: "buffered" });
     mockUpdateHeaderTier.mockResolvedValue({ ...existingTier, response_mode: "buffered" });
     mockSetHeaderTierResponseMode.mockResolvedValue({ ...existingTier, response_mode: "stream" });
+    mockSetHeaderTierOutputModality.mockResolvedValue({ ...existingTier, output_modality: "image" });
   });
 
   describe("create mode", () => {
@@ -693,6 +696,36 @@ describe("HeaderTierModal", () => {
         expect(mockSetHeaderTierResponseMode).toHaveBeenCalledWith("demo", existingTier.id, "stream");
       });
       expect(onSaved).toHaveBeenCalled();
+    });
+
+    it("persists the output modality via setHeaderTierOutputModality on save", async () => {
+      const onSaved = vi.fn();
+      const { container } = render(() => (
+        <HeaderTierModal
+          agentName="demo"
+          existingTiers={[existingTier]}
+          editing={existingTier}
+          onClose={vi.fn()}
+          onSaved={onSaved}
+        />
+      ));
+      const imageBtn = Array.from(container.querySelectorAll("button")).find(
+        (b) => b.textContent?.trim() === "Image",
+      ) as HTMLButtonElement;
+      expect(imageBtn).toBeTruthy();
+      fireEvent.click(imageBtn);
+      fireEvent.click(
+        Array.from(container.querySelectorAll("button")).find((b) =>
+          b.textContent?.includes("Save changes"),
+        ) as HTMLButtonElement,
+      );
+      await waitFor(() => {
+        expect(mockSetHeaderTierOutputModality).toHaveBeenCalledWith(
+          "demo",
+          existingTier.id,
+          "image",
+        );
+      });
     });
 
     it("shows stream description when stream mode is active", () => {
