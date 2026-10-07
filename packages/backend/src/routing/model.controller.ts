@@ -14,6 +14,8 @@ import {
   inputModalitiesFromCapabilities,
   resolveModelCapabilityMetadata,
 } from '../model-discovery/model-capabilities';
+import { openAiModelCapabilities } from './proxy/openai-model-capabilities';
+import { mediaCostProjection } from './media/media-pricing';
 import {
   dropShadowedGatewayModels,
   publishedOpencodeGoIds,
@@ -158,12 +160,29 @@ export class ModelController {
         } = await resolveModelCapabilityMetadata(m, this.providerParamSpecs, this.modelsDevSync);
         const inputModalities =
           knownInputModalities ?? inputModalitiesFromCapabilities(modelCapabilities);
+        const outputModalities =
+          m.outputModalities && m.outputModalities.length > 0 ? m.outputModalities : ['text'];
+        // Same projection the OpenAI-compatible `/v1/models` uses, so the
+        // picker and an agent reading the API see identical facts. The
+        // dashboard keeps showing the nominal `context_window` (a picker wants
+        // a number); `context_window_source` tells the UI whether it is a real
+        // measurement or the discovery fallback.
+        const projectedCapabilities = openAiModelCapabilities({
+          ...m,
+          capabilities: modelCapabilities ?? m.capabilities,
+          inputModalities,
+          outputModalities:
+            m.outputModalities && m.outputModalities.length > 0 ? m.outputModalities : undefined,
+        });
         // OpenCode Go bills a per-request slice of its dollar quota rather than
         // per token, so surface that cost; other subscriptions stay flat-fee.
         const costPerRequest =
           m.provider === 'opencode-go'
             ? await this.opencodeGoCatalog.resolveCostPerRequest(m.id)
             : null;
+        // Media generation is not billed per token, so an image/video model
+        // carries its per-image / per-second rate instead.
+        const mediaCost = mediaCostProjection(m.provider, m.id, m.outputModalities);
         return {
           model_name: m.id,
           provider: m.provider,
@@ -171,7 +190,15 @@ export class ModelController {
           input_price_per_token: m.inputPricePerToken,
           output_price_per_token: m.outputPricePerToken,
           ...(costPerRequest != null ? { cost_per_request: costPerRequest } : {}),
+          ...(mediaCost ? { media_cost: mediaCost } : {}),
           context_window: m.contextWindow,
+          context_window_source: m.contextWindowSource ?? null,
+          ...(projectedCapabilities?.max_output_tokens !== undefined
+            ? { max_output_tokens: projectedCapabilities.max_output_tokens }
+            : {}),
+          ...(projectedCapabilities?.supported_endpoints
+            ? { supported_endpoints: projectedCapabilities.supported_endpoints }
+            : {}),
           capability_reasoning: m.capabilityReasoning,
           capability_code: m.capabilityCode,
           ...(modelCapabilities ? { capabilities: modelCapabilities } : {}),
@@ -179,8 +206,7 @@ export class ModelController {
           // The discovered output modality is authoritative. It used to be
           // hardcoded to ['text'], which hid image/video models from the
           // picker even when discovery kept them.
-          output_modalities:
-            m.outputModalities && m.outputModalities.length > 0 ? m.outputModalities : ['text'],
+          output_modalities: outputModalities,
           quality_score: m.qualityScore,
           display_name: isCustom
             ? CustomProviderService.rawModelName(m.id)

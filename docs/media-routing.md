@@ -110,6 +110,50 @@ Key points:
   `agent_messages` rows. `api_mode` is extended with `images` / `videos` so
   analytics can filter media traffic without touching token metrics.
 
+## Accepted request shapes
+
+The media endpoints accept the OpenAI-shaped top level and the provider-native
+`extra_body` wrapper (`normalizeMediaBody`,
+`packages/backend/src/routing/media/media-request-body.ts`). Agnes accepts
+`response_format` and reference images only inside `extra_body`, so an existing
+Agnes client pointed at the gateway must keep working:
+
+```jsonc
+// Both of these produce the same upstream request.
+{ "model": "agnes/agnes-image-2.1-flash", "prompt": "a cat",
+  "response_format": "b64_json", "image": "https://example.com/ref.png" }
+
+{ "model": "agnes/agnes-image-2.1-flash", "prompt": "a cat",
+  "extra_body": { "response_format": "b64_json", "image": "https://example.com/ref.png" } }
+```
+
+The top level wins when both shapes carry the same field, and the `extra_body`
+wrapper is removed after normalization so nothing is forwarded twice.
+Normalization happens once, before validation and translation, so validation
+(M304) and the recorded upstream body see the same shape.
+
+## Model projection
+
+`GET /v1/models?capabilities=true` publishes what a media client needs without
+fetching the whole catalog:
+
+- `supported_endpoints` is `/v1/images/generations` for image output and
+  `/v1/videos` for video output. Agnes media models get it at discovery time
+  (`buildAgnesModel`); any other media model derives it from its output
+  modality.
+- `?cost=true` adds `media_cost: { unit: "image" | "second", rates }` from
+  `AGNES_MEDIA_PRICES` (the same table that bills the request), instead of the
+  per-token `cost` block.
+- `?output=image|video|text` filters the list in one call, and
+  `GET /v1/models/{id}` returns a single entry with the same projection.
+- Pure media models carry no `context_window` / `max_output_tokens`, and the
+  `auto-image` / `auto-video` tiers omit them too.
+
+A model id published by `/v1/models` is accepted verbatim by the media
+endpoints, including the provider-qualified form
+(`agnes/agnes-image-2.1-flash`): resolution goes through the same
+`routeForOpenAiModelId` the chat proxy uses.
+
 ## Phases
 
 ### Phase 1 — Contracts and provider catalog
@@ -162,8 +206,15 @@ Key points:
 ## Verification
 
 - Unit: `media-provider-client.spec.ts`, `media.service.spec.ts`,
-  `media.controller.spec.ts`, `synthetic-model-profile.spec.ts`,
+  `media.controller.spec.ts`, `media-request-body.spec.ts`,
+  `synthetic-model-profile.spec.ts`, `openai-model-capabilities.spec.ts`,
   `header-tier.service.spec.ts`.
+- E2E: `test/model-capabilities.e2e-spec.ts` — context window on a concrete
+  chat model, `supported_endpoints` + `media_cost` on an image model, the
+  router marker on `auto`, no `context_window` on `auto-image`, `?output=image`
+  filtering, single-model lookup, a listed media model routing without M302 for
+  the same agent key, and identical upstream bodies for `extra_body.image` and
+  top-level `image`.
 - Integration (compiled app + real Postgres + mock Agnes upstream): image
   generation, modality gate (M301), video create, video status, cost
   finalization (10s → $0.40), `requests.media_task_id`, `api_mode`, and the

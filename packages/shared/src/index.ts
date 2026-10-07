@@ -80,7 +80,10 @@ export {
   IMAGE_RESPONSE_FORMATS,
   VIDEO_STATUSES,
   AGNES_MEDIA_PRICES,
+  IMAGE_GENERATION_ENDPOINT,
+  VIDEO_GENERATION_ENDPOINT,
   isMediaOutputModality,
+  mediaEndpointsForOutputModalities,
 } from './media';
 export type {
   MediaOutputModality,

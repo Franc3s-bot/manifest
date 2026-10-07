@@ -1,5 +1,6 @@
 import type {
   AuthType,
+  MediaRate,
   ModelCapability,
   ModelModality,
   ModelRoute,
@@ -365,6 +366,18 @@ export interface AvailableModel {
   /** Per-request USD cost for per-request subscriptions (e.g. OpenCode Go). */
   cost_per_request?: number | null;
   context_window: number;
+  /**
+   * Where `context_window` came from. `provider_default` (or absent) means it
+   * may be the discovery fallback rather than a measured value; the API's
+   * `/v1/models?capabilities=true` omits the window entirely in that case.
+   */
+  context_window_source?:
+    'provider' | 'provider_default' | 'subscription_config' | 'catalog' | null;
+  max_output_tokens?: number;
+  /** Manifest endpoints this model serves, e.g. `/v1/images/generations`. */
+  supported_endpoints?: readonly string[];
+  /** Per-image / per-second pricing for media models (token costs do not apply). */
+  media_cost?: { unit: 'image' | 'second'; rates: MediaRate };
   capability_reasoning: boolean;
   capability_code: boolean;
   capabilities?: ModelCapability[];

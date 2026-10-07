@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AGNES_BASE_URL, type VideoStatus } from 'manifest-shared';
 import { parseDurationSeconds } from './media-pricing';
+import { normalizeMediaBody } from './media-request-body';
 
 /** The media surfaces Manifest exposes. Mirrors the media members of ProxyApiMode. */
 export type MediaApiMode = 'images' | 'videos';
@@ -305,7 +306,7 @@ const OPENAI_IMAGE_BASES: Readonly<Record<string, string>> = {
  * rejected) and reference images as `extra_body.image`.
  */
 export function translateAgnesImageBody(body: Record<string, unknown>): Record<string, unknown> {
-  const { response_format, image, n: _n, ...rest } = body;
+  const { response_format, image, n: _n, ...rest } = normalizeMediaBody(body);
   const extraBody: Record<string, unknown> = {
     response_format: typeof response_format === 'string' ? response_format : 'url',
   };
@@ -323,7 +324,7 @@ export function translateAgnesImageBody(body: Record<string, unknown>): Record<s
  * expects one, and `aspect_ratio` is the Agnes name for `ratio`.
  */
 export function translateAgnesVideoBody(body: Record<string, unknown>): Record<string, unknown> {
-  const { ratio, aspect_ratio, seconds, ...rest } = body;
+  const { ratio, aspect_ratio, seconds, ...rest } = normalizeMediaBody(body);
   const out: Record<string, unknown> = {
     ...rest,
     mode: typeof rest.mode === 'string' ? rest.mode : 'text',

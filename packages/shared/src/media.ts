@@ -15,6 +15,30 @@
 export const MEDIA_OUTPUT_MODALITIES = ['image', 'video'] as const;
 export type MediaOutputModality = (typeof MEDIA_OUTPUT_MODALITIES)[number];
 
+/**
+ * Manifest endpoints that serve each output modality. Published on
+ * `/v1/models` as `capabilities.supported_endpoints` so a client can tell a
+ * media model from a chat model without fetching the whole catalog and
+ * filtering `output_modalities` itself.
+ */
+export const IMAGE_GENERATION_ENDPOINT = '/v1/images/generations';
+export const VIDEO_GENERATION_ENDPOINT = '/v1/videos';
+
+/**
+ * The media endpoints a model's output modalities imply, or `undefined` when
+ * the model produces no media. Pure-media models deliberately do not list
+ * `/v1/chat/completions`: they cannot hold a text conversation.
+ */
+export function mediaEndpointsForOutputModalities(
+  outputs: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (!outputs || outputs.length === 0) return undefined;
+  const endpoints: string[] = [];
+  if (outputs.includes('image')) endpoints.push(IMAGE_GENERATION_ENDPOINT);
+  if (outputs.includes('video')) endpoints.push(VIDEO_GENERATION_ENDPOINT);
+  return endpoints.length > 0 ? endpoints : undefined;
+}
+
 export function isMediaOutputModality(value: unknown): value is MediaOutputModality {
   return (
     typeof value === 'string' && (MEDIA_OUTPUT_MODALITIES as readonly string[]).includes(value)
