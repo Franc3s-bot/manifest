@@ -255,12 +255,18 @@ export class MediaService {
         apiMode,
       );
 
+      // The provider must receive the CONCRETE model the route resolved to,
+      // never the caller's alias: a synthetic `auto-{tier}` (or a header tier)
+      // resolves to a real model, but the media forwarders read the model out
+      // of the body they are handed. Direct calls are unaffected because the
+      // resolved model equals the requested one there.
+      const forwardBody = { ...body, model: route.model };
       const forward = await this.mediaClient.forward({
         provider: route.provider,
         apiKey: credentials.apiKey,
         model: route.model,
         apiMode,
-        body,
+        body: forwardBody,
         signal,
       });
 

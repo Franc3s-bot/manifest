@@ -149,6 +149,9 @@ describe('MediaService image generation', () => {
         provider: 'agnes',
         apiMode: 'images',
         model: 'agnes-image-2.1-flash',
+        // The provider body must carry the resolved model, not the `auto-image`
+        // alias the caller sent — the media forwarders read it from the body.
+        body: expect.objectContaining({ model: 'agnes-image-2.1-flash', prompt: 'a cat' }),
       }),
     );
     expect(result.status).toBe(200);
@@ -370,7 +373,7 @@ describe('MediaService image generation', () => {
 
 describe('MediaService video generation', () => {
   it('creates a video task, records it, and attaches the task id', async () => {
-    const { service, recorder, requestRepo } = build({
+    const { service, recorder, requestRepo, mediaClient } = build({
       resolveService: {
         resolveAutoTierModel: jest
           .fn()
@@ -399,6 +402,13 @@ describe('MediaService video generation', () => {
     });
 
     expect(result.status).toBe(200);
+    // The provider body must carry the resolved model, not the `auto-video` alias.
+    expect(mediaClient.forward).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'agnes-image-2.1-flash',
+        body: expect.objectContaining({ model: 'agnes-image-2.1-flash', prompt: 'x' }),
+      }),
+    );
     const successOpts = recorder.recordSuccessMessage.mock.calls[0][5];
     // Video cost is unknown until the task completes.
     expect(successOpts.costUsdOverride).toBeNull();
