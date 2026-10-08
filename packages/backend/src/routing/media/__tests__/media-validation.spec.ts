@@ -129,6 +129,43 @@ describe('validateMediaRequest', () => {
     });
   });
 
+  describe('fal rules', () => {
+    const falImage = (body: Record<string, unknown>) =>
+      validateMediaRequest({ provider: 'fal', apiMode: 'images', body });
+    const falVideo = (body: Record<string, unknown>) =>
+      validateMediaRequest({ provider: 'fal', apiMode: 'videos', body });
+
+    it('accepts an image request with a tier, WIDTHxHEIGHT, or ratio', () => {
+      expect(falImage({ prompt: 'x', size: '2K' })).toBeUndefined();
+      expect(falImage({ prompt: 'x', size: '1280x720' })).toBeUndefined();
+      expect(falImage({ prompt: 'x', ratio: '16:9' })).toBeUndefined();
+    });
+
+    it('rejects a malformed image size or ratio', () => {
+      expect(falImage({ prompt: 'x', size: 1024 })).toMatch(/"size"/);
+      expect(falImage({ prompt: 'x', ratio: 'wide' })).toMatch(/"ratio"/);
+    });
+
+    it('accepts the native 480P/768P/1080P resolutions', () => {
+      expect(falVideo({ prompt: 'x', resolution: '768P' })).toBeUndefined();
+      expect(falVideo({ prompt: 'x', size: '1080P' })).toBeUndefined();
+      expect(falVideo({ prompt: 'x', resolution: '480p' })).toBeUndefined();
+    });
+
+    it('rejects a resolution fal does not serve', () => {
+      expect(falVideo({ prompt: 'x', size: '720P' })).toMatch(/"resolution"/);
+      expect(falVideo({ prompt: 'x', resolution: 768 })).toMatch(/"resolution"/);
+    });
+
+    it('requires a positive duration and a well-formed aspect ratio', () => {
+      expect(falVideo({ prompt: 'x', seconds: 0 })).toMatch(/"seconds"/);
+      expect(falVideo({ prompt: 'x', duration: -1 })).toMatch(/"seconds"/);
+      expect(falVideo({ prompt: 'x', seconds: 5 })).toBeUndefined();
+      expect(falVideo({ prompt: 'x', duration: 3.5 })).toBeUndefined();
+      expect(falVideo({ prompt: 'x', ratio: 'wide' })).toMatch(/"aspect_ratio"/);
+    });
+  });
+
   it('does not apply Agnes rules to other providers', () => {
     expect(
       validateMediaRequest({

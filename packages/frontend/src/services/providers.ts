@@ -252,6 +252,16 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
       { label: 'Agnes Video 2.0', value: 'agnes-video-v2.0' },
     ],
   },
+  fal: {
+    initial: 'Fa',
+    subtitle: 'MiniMax H3 Max video, FLUX images',
+    models: [
+      { label: 'MiniMax H3 Max (Text to Video)', value: 'minimax/h3-max/text-to-video' },
+      { label: 'MiniMax H3 Max (Image to Video)', value: 'minimax/h3-max/image-to-video' },
+      { label: 'FLUX.1 [schnell]', value: 'fal-ai/flux/schnell' },
+      { label: 'FLUX.1 [dev]', value: 'fal-ai/flux/dev' },
+    ],
+  },
   fireworks: {
     initial: 'Fw',
     subtitle: 'DeepSeek V4, Kimi, Qwen 3.7, Nemotron',
@@ -557,6 +567,7 @@ const PROVIDER_ORDER = [
   'cline-pass',
   'commandcode',
   'deepseek',
+  'fal',
   'fireworks',
   'gemini-free',
   'copilot',

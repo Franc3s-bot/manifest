@@ -80,6 +80,7 @@ export {
   IMAGE_RESPONSE_FORMATS,
   VIDEO_STATUSES,
   AGNES_MEDIA_PRICES,
+  FAL_MEDIA_PRICES,
   IMAGE_GENERATION_ENDPOINT,
   VIDEO_GENERATION_ENDPOINT,
   isMediaOutputModality,
@@ -180,6 +181,11 @@ export {
   AGNES_MODEL_BY_ID,
   AGNES_BASE_URL,
   AGNES_TASK_ORIGIN,
+  FAL_MODELS,
+  FAL_MODEL_BY_ID,
+  FAL_BASE_URL,
+  FAL_QUEUE_BASE_URL,
+  FAL_PLATFORM_MODELS_URL,
   normalizeProviderName,
 } from './providers';
 export type {
@@ -187,6 +193,7 @@ export type {
   LocalServerHint,
   MetaModelApiModel,
   AgnesModelEntry,
+  FalModelEntry,
 } from './providers';
 export type { ResolveResponse } from './resolve-response';
 export {

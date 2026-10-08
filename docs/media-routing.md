@@ -19,12 +19,12 @@ Requests / Provider Attempts, and cost accounting.
 These are the defaults this design is built on. Each is a user decision; change
 one and the phases below shift.
 
-| # | Decision | Choice |
-|---|----------|--------|
-| 1 | Integration | A media adapter abstraction in the backend, with **Agnes as the first provider**. Provider-specific quirks live in the adapter; the routing/credential/recording layers are shared. |
-| 2 | Public API | **OpenAI-compatible**: `POST /v1/images/generations`, `POST /v1/videos`, `GET /v1/videos/{id}`. Clients keep using OpenAI-style SDKs; Agnes-specific fields (`ratio`, `size` tiers, `extra_body.image`) are accepted as extensions. |
-| 3 | Synthetic tiers | **Reuse header tiers.** `header_tiers.output_modality` becomes `text \| image \| video`; a tier with a media modality is exposed as `auto-{name}` in `GET /v1/models` with matching `output_modalities`, and routes to the media endpoint. |
-| 4 | Cost | **Per-image / per-second USD.** Media pricing is stored as a price table and written to `agent_messages.cost_usd`; token columns stay `0`. No fake token-equivalents. |
+| #   | Decision        | Choice                                                                                                                                                                                                                                     |
+| --- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Integration     | A media adapter abstraction in the backend, with **Agnes as the first provider**. Provider-specific quirks live in the adapter; the routing/credential/recording layers are shared.                                                        |
+| 2   | Public API      | **OpenAI-compatible**: `POST /v1/images/generations`, `POST /v1/videos`, `GET /v1/videos/{id}`. Clients keep using OpenAI-style SDKs; Agnes-specific fields (`ratio`, `size` tiers, `extra_body.image`) are accepted as extensions.        |
+| 3   | Synthetic tiers | **Reuse header tiers.** `header_tiers.output_modality` becomes `text \| image \| video`; a tier with a media modality is exposed as `auto-{name}` in `GET /v1/models` with matching `output_modalities`, and routes to the media endpoint. |
+| 4   | Cost            | **Per-image / per-second USD.** Media pricing is stored as a price table and written to `agent_messages.cost_usd`; token columns stay `0`. No fake token-equivalents.                                                                      |
 
 ## What already exists
 
@@ -53,11 +53,11 @@ one and the phases below shift.
 The public [Agnes AI Model Catalog](https://github.com/AgnesAI-Labs/AgnesAI-Models)
 lists an OpenAI-compatible surface at `https://apihub.agnes-ai.com/v1`:
 
-| Kind | Models | Endpoint |
-|------|--------|----------|
-| Text | `agnes-2.5-flash` (512K ctx), `agnes-2.0-flash` (256K), `agnes-1.5-flash` (256K) | `POST /v1/chat/completions` |
-| Image | `agnes-image-2.1-flash`, `agnes-image-2.0-flash` | `POST /v1/images/generations` |
-| Video | `agnes-video-v2.0` | `POST /v1/videos` (async) |
+| Kind  | Models                                                                           | Endpoint                      |
+| ----- | -------------------------------------------------------------------------------- | ----------------------------- |
+| Text  | `agnes-2.5-flash` (512K ctx), `agnes-2.0-flash` (256K), `agnes-1.5-flash` (256K) | `POST /v1/chat/completions`   |
+| Image | `agnes-image-2.1-flash`, `agnes-image-2.0-flash`                                 | `POST /v1/images/generations` |
+| Video | `agnes-video-v2.0`                                                               | `POST /v1/videos` (async)     |
 
 Video task status: `GET https://apihub.agnes-ai.com/agnesapi?video_id=<ID>`.
 Auth: `Authorization: Bearer <key>`.
@@ -66,6 +66,40 @@ So Agnes is added as a **normal OpenAI-compatible provider** (text routes throug
 the existing chat proxy) plus a **media-capable** one (image/video route through
 the media adapter). This is why the shared provider entry carries a `media`
 descriptor rather than the whole provider being special-cased.
+
+## fal.ai is a media-only provider
+
+[fal.ai](https://fal.ai) serves image and video models (MiniMax H3 Max, FLUX,
+…) and has no chat surface. Model ids are fal endpoint ids and contain slashes
+(`minimax/h3-max/text-to-video`), which routing matches as-is; the published
+`/v1/models` id is `fal/<endpoint_id>`.
+
+| Kind         | Endpoint                                                               | Wire                                                                 |
+| ------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Image        | `POST https://fal.run/{endpoint_id}`                                   | synchronous, returns the model's output object (`{ images: [...] }`) |
+| Video submit | `POST https://queue.fal.run/{endpoint_id}`                             | returns `{ request_id, status_url, response_url, cancel_url }`       |
+| Video status | `GET https://queue.fal.run/{endpoint_id}/requests/{request_id}/status` | `IN_QUEUE` / `IN_PROGRESS` / `COMPLETED` (+ `error` on failure)      |
+| Video result | `GET https://queue.fal.run/{endpoint_id}/requests/{request_id}`        | model output (`{ video: { url } }`)                                  |
+
+Auth: `Authorization: Key <key>` (not a bearer token). Failure bodies carry
+`{ detail, error_type }` rather than `error.message`.
+
+The adapter (`forwardFalImage` / `forwardFalVideo` / `falVideoStatus` in
+`media-provider-client.ts`) translates the OpenAI-shaped surface onto fal's
+input schema: `seconds` → `duration`, `size`/`resolution` → `resolution`
+(`480P`/`768P`/`1080P`), `ratio` → `aspect_ratio`, `first_frame`/`last_frame` →
+`image_url`/`end_image_url`, `n` → `num_images`, `size`+`ratio` → `image_size`,
+and `response_format: "b64_json"` → `sync_mode` (the returned data URI is split
+back into `b64_json`). Unknown caller fields are dropped because fal rejects
+them with a 422.
+
+fal's platform listing (`api.fal.ai/v1/models`) needs an API-scope key, is
+paginated, and carries a `metadata.category` rather than an output modality, so
+`parseFal` keeps only image/video categories, annotates entries from the curated
+`FAL_MODELS` catalog, and appends catalog models the listing omits — falling
+back to the curated catalog when the live fetch yields nothing. Because fal is
+media-only, it has **no `PROVIDER_ENDPOINTS` entry**; `PROVIDER_CONFIGS`
+(`fal`) drives its discovery and the media adapter builds its URLs directly.
 
 ## Architecture
 
@@ -85,8 +119,9 @@ POST /v1/images/generations            POST /v1/videos
                     MediaProviderClient
         ┌─────────────────┼──────────────────────────────┐
         │                 │                              │
-   AgnesAdapter      OpenAiImagesAdapter          (future adapters)
-   image + video     /v1/images/generations
+   AgnesAdapter      OpenAiImagesAdapter       falAdapter (media-only)
+   image + video     /v1/images/generations    fal.run (image) +
+                                               queue.fal.run (video)
 ```
 
 Key points:
@@ -142,8 +177,8 @@ fetching the whole catalog:
   (`buildAgnesModel`); any other media model derives it from its output
   modality.
 - `?cost=true` adds `media_cost: { unit: "image" | "second", rates }` from
-  `AGNES_MEDIA_PRICES` (the same table that bills the request), instead of the
-  per-token `cost` block.
+  the provider's price table (`AGNES_MEDIA_PRICES`, `FAL_MEDIA_PRICES` — the
+  same table that bills the request), instead of the per-token `cost` block.
 - `?output=image|video|text` filters the list in one call, and
   `GET /v1/models/{id}` returns a single entry with the same projection.
 - Pure media models carry no `context_window` / `max_output_tokens`, and the
@@ -157,21 +192,24 @@ endpoints, including the provider-qualified form
 ## Phases
 
 ### Phase 1 — Contracts and provider catalog
+
 - `OUTPUT_MODALITIES = ['text', 'image', 'video']` (**done**).
-- `SharedProviderEntry.media` descriptor; `agnes` registered with
+- `SharedProviderEntry.media` descriptor; `agnes` and `fal` registered with
   `media: { image: true, video: true }` (**done**).
 - `AGNES_MODELS` curated catalog (ids, display names, output modality, context
-  windows) + `AGNES_BASE_URL` / `AGNES_TASK_ORIGIN` (**done**).
-- Discovery: `parseAgnes` annotates the live `/v1/models` listing from the
-  catalog, appends curated media models the listing omits, and media-capable
+  windows) + `AGNES_BASE_URL` / `AGNES_TASK_ORIGIN`, and `FAL_MODELS` +
+  `FAL_BASE_URL` / `FAL_QUEUE_BASE_URL` / `FAL_PLATFORM_MODELS_URL` (**done**).
+- Discovery: `parseAgnes` / `parseFal` annotate the live listing from the
+  catalog, append curated media models the listing omits, and media-capable
   providers bypass `filterNonChatModels` (**done**).
 - `agnes` OpenAI-compatible chat endpoint in `PROVIDER_ENDPOINTS` (**done**).
 - Synthetic tier profile already aggregates the chain's `outputModalities`, so
   an `auto-{name}` tier over an image model advertises `output_modalities:
-  ['image']` today (**done**).
+['image']` today (**done**).
 - Not yet: a media endpoint to actually call. That is Phase 2.
 
 ### Phase 2 — Image endpoint (vertical slice)
+
 - `ProxyApiMode` gains `images` (**done**).
 - `MediaController` + `MediaService` + `MediaProviderClient` (Agnes adapter) for
   `POST /v1/images/generations` (**done**).
@@ -180,6 +218,7 @@ endpoints, including the provider-qualified form
   error, recording shape (**done**).
 
 ### Phase 3 — Synthetic media tiers and UI
+
 - Header-tier `output_modality` is settable through
   `PATCH .../header-tiers/:id/output-modality`, validated against the chain
   (**done**).
@@ -189,6 +228,7 @@ endpoints, including the provider-qualified form
   model picker for Agnes (**done**).
 
 ### Phase 4 — Video endpoint (async)
+
 - `ProxyApiMode` gains `videos` (**done**).
 - `POST /v1/videos`, `GET /v1/videos/{id}`; the task id is persisted on the
   Request (`requests.media_task_id`, migration
@@ -198,6 +238,7 @@ endpoints, including the provider-qualified form
   (**done**).
 
 ### Phase 5 — Cost accounting and analytics
+
 - Media pricing tables (image per-image, video per-second) resolved by
   `(provider, model, size, seconds)` in `media-pricing.ts` (**done**).
 - Media rows carry zero tokens and their USD cost in `agent_messages.cost_usd`,
@@ -229,6 +270,12 @@ endpoints, including the provider-qualified form
 - Does Agnes expose `/v1/models`? Discovery tries it and falls back to the
   curated `AGNES_MODELS` catalog when it is missing or empty. Update the
   catalog on new releases.
+- fal's platform listing is paginated and only its first page (`limit=100`) is
+  fetched; the curated `FAL_MODELS` catalog guarantees the H3 Max video target.
+  Widen pagination if a deployment needs more of fal's catalog.
+- fal image models are billed per megapixel by the provider; Manifest's table
+  is per image, so `fal-ai/flux/*` rates are the 1-megapixel list price and
+  over-report larger images rather than fabricating a tier fal does not expose.
 - OpenAI's `size` is `1024x1024`; Agnes uses `1K`/`2K` tiers plus `ratio`.
   The Agnes adapter passes `size`/`ratio` through unchanged; a generic
   OpenAI-images adapter exists for providers that take the exact-size form.

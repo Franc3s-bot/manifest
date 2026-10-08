@@ -53,6 +53,12 @@ export interface SharedProviderEntry {
     readonly image?: boolean;
     readonly video?: boolean;
   };
+  /**
+   * Providers that serve only media and have no chat surface (fal.ai). They
+   * are skipped by the text-proxy endpoint registry (`PROVIDER_ENDPOINTS`);
+   * media routing reaches them through the media adapter instead.
+   */
+  mediaOnly?: boolean;
 }
 
 export interface MetaModelApiModel {
@@ -132,6 +138,56 @@ export const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1';
 
 /** Video task status lives at the host root, not under the API version prefix. */
 export const AGNES_TASK_ORIGIN = 'https://apihub.agnes-ai.com';
+
+/**
+ * fal.ai's published media catalog.
+ *
+ * fal is media-only: it serves image and video models through a queue API
+ * (`queue.fal.run`) for long-running work and a synchronous endpoint
+ * (`fal.run`) for images. Model ids are fal endpoint ids and contain slashes
+ * (`minimax/h3-max/text-to-video`), so routing matches them as-is.
+ *
+ * This catalog is the authoritative fallback: fal's platform listing
+ * (`api.fal.ai/v1/models`) needs an API-scope key, is paginated, and does not
+ * carry the output modality routing needs. Any catalog model missing from the
+ * live listing is appended so image/video synthetic tiers always have a target.
+ *
+ * Source: https://fal.ai/explore/minimax and https://fal.ai/models.
+ */
+export interface FalModelEntry {
+  id: string;
+  displayName: string;
+  /** What the model produces. Drives the media endpoint that serves it. */
+  output: 'image' | 'video';
+}
+
+export const FAL_MODELS: readonly FalModelEntry[] = [
+  {
+    id: 'minimax/h3-max/text-to-video',
+    displayName: 'MiniMax H3 Max (Text to Video)',
+    output: 'video',
+  },
+  {
+    id: 'minimax/h3-max/image-to-video',
+    displayName: 'MiniMax H3 Max (Image to Video)',
+    output: 'video',
+  },
+  { id: 'fal-ai/flux/schnell', displayName: 'FLUX.1 [schnell]', output: 'image' },
+  { id: 'fal-ai/flux/dev', displayName: 'FLUX.1 [dev]', output: 'image' },
+];
+
+export const FAL_MODEL_BY_ID: ReadonlyMap<string, FalModelEntry> = new Map(
+  FAL_MODELS.map((model) => [model.id, model]),
+);
+
+/** Synchronous inference endpoint (images): `POST {FAL_BASE_URL}/{model_id}`. */
+export const FAL_BASE_URL = 'https://fal.run';
+
+/** Async queue endpoint (video): `POST {FAL_QUEUE_BASE_URL}/{model_id}`. */
+export const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
+
+/** Platform model listing, used for discovery. Requires an API-scope key. */
+export const FAL_PLATFORM_MODELS_URL = 'https://api.fal.ai/v1/models';
 
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
@@ -592,6 +648,24 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     // base URL. The media flags keep its image/video models out of the
     // non-chat discovery filter so synthetic media tiers can route to them.
     media: { image: true, video: true },
+  },
+  {
+    id: 'fal',
+    displayName: 'fal.ai',
+    aliases: ['fal-ai', 'fal ai', 'falai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#EC0648',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'fal API key',
+    // fal is media-only: no chat endpoint, only image (`fal.run`) and video
+    // (`queue.fal.run`) generation. The media flags keep its image/video
+    // models out of the non-chat discovery filter so synthetic media tiers
+    // can route to them.
+    media: { image: true, video: true },
+    mediaOnly: true,
   },
 ] as const;
 

@@ -171,3 +171,25 @@ export const AGNES_MEDIA_PRICES: MediaPriceTable = {
     'agnes-video-2.5-flash': { default: 0, '720P': 0 },
   },
 };
+
+/**
+ * fal.ai public pricing (https://fal.ai/pricing).
+ *
+ * Video is billed per second of output by resolution tier (H3 Max list rates,
+ * after the launch promotion). Image models on fal are billed per megapixel
+ * and rounded up; Manifest's table is per image, so the listed rates are the
+ * 1-megapixel (roughly 1K) price and over-report larger images rather than
+ * fabricating a tier the provider does not expose.
+ */
+export const FAL_MEDIA_PRICES: MediaPriceTable = {
+  imagePerImage: {
+    // $0.003 / megapixel.
+    'fal-ai/flux/schnell': 0.003,
+    // $0.025 / megapixel.
+    'fal-ai/flux/dev': 0.025,
+  },
+  videoPerSecond: {
+    'minimax/h3-max/text-to-video': { default: 0.08, '480P': 0.05, '768P': 0.08, '1080P': 0.16 },
+    'minimax/h3-max/image-to-video': { default: 0.08, '480P': 0.05, '768P': 0.08, '1080P': 0.16 },
+  },
+};

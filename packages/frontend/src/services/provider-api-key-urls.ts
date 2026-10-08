@@ -10,6 +10,7 @@ export const ROUTING_PROVIDER_API_KEY_URLS: Record<string, string> = {
   cerebras: 'https://cloud.cerebras.ai',
   'cline-pass': 'https://app.cline.bot/settings/api-keys',
   deepseek: 'https://platform.deepseek.com/api_keys',
+  fal: 'https://fal.ai/dashboard/keys',
   fireworks: 'https://app.fireworks.ai/api-keys',
   gemini: 'https://aistudio.google.com/apikey',
   kiro: 'https://app.kiro.dev',

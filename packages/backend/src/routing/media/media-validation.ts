@@ -29,6 +29,9 @@ export function validateMediaRequest(input: MediaValidationInput): string | unde
   if (input.provider.toLowerCase() === 'agnes') {
     return validateAgnes(input.apiMode, input.body);
   }
+  if (input.provider.toLowerCase() === 'fal') {
+    return validateFal(input.apiMode, input.body);
+  }
   return undefined;
 }
 
@@ -130,6 +133,42 @@ function validateAgnesVideo(body: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/* ── fal.ai ────────────────────────────────────────────────────────── */
+
+/** fal's H3 Max video models accept these native resolution tiers. */
+const FAL_VIDEO_RESOLUTIONS = ['480P', '768P', '1080P'] as const;
+
+function validateFal(apiMode: MediaApiMode, body: Record<string, unknown>): string | undefined {
+  if (apiMode === 'images') return validateFalImage(body);
+  return validateFalVideo(body);
+}
+
+function validateFalImage(body: Record<string, unknown>): string | undefined {
+  if (body.size !== undefined && (typeof body.size !== 'string' || body.size.trim().length === 0)) {
+    return '"size" must be a size tier (1K, 2K, …) or "WIDTHxHEIGHT".';
+  }
+  if (body.ratio !== undefined && !isAspectRatio(body.ratio)) {
+    return '"ratio" must be an aspect ratio such as "16:9".';
+  }
+  return undefined;
+}
+
+function validateFalVideo(body: Record<string, unknown>): string | undefined {
+  const resolution = body.resolution ?? body.size;
+  if (resolution !== undefined && !isFalResolution(resolution)) {
+    return '"resolution" (or "size") must be one of "480P", "768P", or "1080P".';
+  }
+  const duration = body.seconds ?? body.duration;
+  if (duration !== undefined && !isPositiveNumber(duration)) {
+    return '"seconds" (or "duration") must be a positive number of seconds.';
+  }
+  const aspectRatio = body.aspect_ratio ?? body.ratio;
+  if (aspectRatio !== undefined && !isAspectRatio(aspectRatio)) {
+    return '"aspect_ratio" (or "ratio") must be an aspect ratio such as "16:9".';
+  }
+  return undefined;
+}
+
 /* ── Helpers ──────────────────────────────────────────────────────── */
 
 function isAgnesVideoMode(value: unknown): value is (typeof AGNES_VIDEO_MODES)[number] {
@@ -142,6 +181,25 @@ function isResponseFormat(value: unknown): boolean {
 
 function isNonEmptyString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isFalResolution(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim().toUpperCase();
+  return (FAL_VIDEO_RESOLUTIONS as readonly string[]).includes(normalized);
+}
+
+function isPositiveNumber(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) && parsed > 0;
+  }
+  return false;
+}
+
+function isAspectRatio(value: unknown): boolean {
+  return typeof value === 'string' && /^\d+\s*:\s*\d+$/.test(value.trim());
 }
 
 function isValidReferences(value: unknown): boolean {

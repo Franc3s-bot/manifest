@@ -3,6 +3,8 @@ import {
   toVideoObject,
   translateAgnesImageBody,
   translateAgnesVideoBody,
+  translateFalImageBody,
+  translateFalVideoBody,
 } from '../media-provider-client';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -122,6 +124,95 @@ describe('media request translation', () => {
     const translated = translateAgnesVideoBody({ prompt: 'x', aspect_ratio: '1:1', ratio: '9:16' });
     expect(translated.aspect_ratio).toBe('1:1');
     expect(translated.seconds).toBe('5');
+  });
+});
+
+describe('fal request translation', () => {
+  it('maps the OpenAI-shaped image fields onto fal input', () => {
+    const translated = translateFalImageBody({
+      model: 'fal-ai/flux/schnell',
+      prompt: 'a cat',
+      n: 2,
+      size: '1K',
+      ratio: '16:9',
+      response_format: 'b64_json',
+      image: 'https://example.com/ref.png',
+    });
+
+    expect(translated).toEqual({
+      prompt: 'a cat',
+      num_images: 2,
+      image_size: { width: 1024, height: 576 },
+      sync_mode: true,
+      image_url: 'https://example.com/ref.png',
+    });
+    // The model is not part of a fal endpoint's input schema.
+    expect(translated).not.toHaveProperty('model');
+  });
+
+  it('translates an explicit WIDTHxHEIGHT size and passes fal-native fields through', () => {
+    const translated = translateFalImageBody({
+      prompt: 'x',
+      size: '1280x720',
+      num_inference_steps: 8,
+      seed: 42,
+      image_size: 'landscape_4_3',
+    });
+
+    expect(translated).toMatchObject({
+      prompt: 'x',
+      num_inference_steps: 8,
+      seed: 42,
+      image_size: 'landscape_4_3',
+    });
+    expect(translated).not.toHaveProperty('n');
+    expect(translated).not.toHaveProperty('size');
+  });
+
+  it('tags multiple references as image_urls', () => {
+    const translated = translateFalImageBody({
+      prompt: 'x',
+      images: ['https://a.png', 'https://b.png'],
+    });
+    expect(translated.image_urls).toEqual(['https://a.png', 'https://b.png']);
+  });
+
+  it('maps the OpenAI-shaped video fields onto fal input', () => {
+    const translated = translateFalVideoBody({
+      model: 'minimax/h3-max/text-to-video',
+      prompt: 'waves',
+      seconds: 5,
+      size: '768P',
+      ratio: '16:9',
+      first_frame: 'https://a.png',
+      last_frame: 'https://b.png',
+    });
+
+    expect(translated).toEqual({
+      prompt: 'waves',
+      duration: 5,
+      resolution: '768P',
+      aspect_ratio: '16:9',
+      image_url: 'https://a.png',
+      end_image_url: 'https://b.png',
+    });
+  });
+
+  it('normalizes the resolution and drops an unsupported tier', () => {
+    expect(translateFalVideoBody({ prompt: 'x', resolution: '480p' }).resolution).toBe('480P');
+    expect(translateFalVideoBody({ prompt: 'x', size: '720P' })).not.toHaveProperty('resolution');
+  });
+
+  it('prefers fal-native image_url/end_image_url over the aliases', () => {
+    const translated = translateFalVideoBody({
+      prompt: 'x',
+      image_url: 'https://native.png',
+      end_image_url: 'https://native-end.png',
+      first_frame: 'https://ignored.png',
+      last_frame: 'https://ignored-end.png',
+    });
+    expect(translated.image_url).toBe('https://native.png');
+    expect(translated.end_image_url).toBe('https://native-end.png');
   });
 });
 
@@ -293,5 +384,139 @@ describe('MediaProviderClient', () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls fal.run for images with Key auth and returns OpenAI-shaped data', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({
+        images: [{ url: 'https://fal/media/a.png', width: 1024, height: 1024 }],
+      }),
+    );
+
+    const result = await client.forward({
+      provider: 'fal',
+      apiKey: 'fal-key',
+      model: 'fal-ai/flux/schnell',
+      apiMode: 'images',
+      body: { prompt: 'a cat', size: '1K' },
+    });
+
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://fal.run/fal-ai/flux/schnell');
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe('Key fal-key');
+    expect(result.ok).toBe(true);
+    expect(result.body).toMatchObject({ data: [{ url: 'https://fal/media/a.png' }] });
+  });
+
+  it('turns a fal sync data URI into b64_json', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ images: [{ url: 'data:image/png;base64,QUJD' }] }));
+
+    const result = await client.forward({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'fal-ai/flux/schnell',
+      apiMode: 'images',
+      body: { prompt: 'x', response_format: 'b64_json' },
+    });
+
+    expect(result.body).toMatchObject({ data: [{ b64_json: 'QUJD' }] });
+  });
+
+  it('submits fal video to the queue and returns the request id', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ request_id: 'req_1', queue_position: 0 }));
+
+    const result = await client.forward({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'minimax/h3-max/text-to-video',
+      apiMode: 'videos',
+      body: { prompt: 'waves', seconds: 5 },
+    });
+
+    expect(fetchSpy.mock.calls[0][0]).toBe('https://queue.fal.run/minimax/h3-max/text-to-video');
+    const sent = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
+    expect(sent).toEqual({ prompt: 'waves', duration: 5 });
+    expect(result.ok).toBe(true);
+    expect(result.taskId).toBe('req_1');
+    expect(result.videoStatus).toBe('queued');
+    expect(result.seconds).toBe(5);
+  });
+
+  it('fails when a fal video submit returns no request id', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ status: 'IN_QUEUE' }));
+    const result = await client.forward({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'minimax/h3-max/text-to-video',
+      apiMode: 'videos',
+      body: { prompt: 'x' },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.errorMessage).toBe('Provider returned no video task id');
+  });
+
+  it('polls fal status then fetches the result video url', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(jsonResponse({ status: 'COMPLETED', request_id: 'req_1' }))
+      .mockResolvedValueOnce(jsonResponse({ video: { url: 'https://fal/media/v.mp4' } }));
+
+    const result = await client.videoStatus({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'minimax/h3-max/text-to-video',
+      taskId: 'req_1',
+    });
+
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      'https://queue.fal.run/minimax/h3-max/text-to-video/requests/req_1/status',
+    );
+    expect(fetchSpy.mock.calls[1][0]).toBe(
+      'https://queue.fal.run/minimax/h3-max/text-to-video/requests/req_1',
+    );
+    expect(result.videoStatus).toBe('completed');
+    expect(result.body).toMatchObject({ url: 'https://fal/media/v.mp4' });
+  });
+
+  it('reports fal IN_QUEUE/IN_PROGRESS without fetching a result', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse({ status: 'IN_PROGRESS' }));
+    const result = await client.videoStatus({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'minimax/h3-max/text-to-video',
+      taskId: 'req_1',
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result.videoStatus).toBe('processing');
+  });
+
+  it('treats a COMPLETED fal status with an error as failed', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ status: 'COMPLETED', error: 'prompt rejected', error_type: 'safety' }),
+    );
+    const result = await client.videoStatus({
+      provider: 'fal',
+      apiKey: 'k',
+      model: 'minimax/h3-max/text-to-video',
+      taskId: 'req_1',
+    });
+    expect(result.videoStatus).toBe('failed');
+    expect(result.body).toMatchObject({ error: { message: 'prompt rejected' } });
+  });
+
+  it('surfaces a fal failure detail on a non-ok response', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse({ detail: 'invalid api key', error_type: 'auth' }, 401),
+    );
+    const result = await client.forward({
+      provider: 'fal',
+      apiKey: 'bad',
+      model: 'fal-ai/flux/schnell',
+      apiMode: 'images',
+      body: { prompt: 'x' },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(401);
+    expect(result.errorMessage).toBe('invalid api key');
   });
 });

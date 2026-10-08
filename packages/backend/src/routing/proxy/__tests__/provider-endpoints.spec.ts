@@ -222,9 +222,10 @@ describe('resolveEndpointKey', () => {
   it('resolves every proxy-capable provider id and alias from the registry', () => {
     // tileOnly providers (LM Studio) don't have a fixed proxy endpoint —
     // they deep-link to the local-server detail view and route through
-    // the `custom:<uuid>` path once connected.
+    // the `custom:<uuid>` path once connected. mediaOnly providers (fal.ai)
+    // have no chat surface and route through the media adapter instead.
     for (const entry of PROVIDER_REGISTRY) {
-      if (entry.tileOnly) continue;
+      if (entry.tileOnly || entry.mediaOnly) continue;
       expect(resolveEndpointKey(entry.id)).not.toBeNull();
       for (const alias of entry.aliases) {
         expect(resolveEndpointKey(alias)).not.toBeNull();

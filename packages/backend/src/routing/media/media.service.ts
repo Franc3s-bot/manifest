@@ -302,7 +302,12 @@ export class MediaService {
 
       const isVideo = apiMode === 'videos';
       const imageCount = isVideo ? 0 : countImages(forward.body);
-      const size = typeof body.size === 'string' ? body.size : undefined;
+      const size =
+        typeof body.size === 'string'
+          ? body.size
+          : typeof body.resolution === 'string'
+            ? body.resolution
+            : undefined;
       const costUsd = isVideo
         ? videoCostUsd(route.provider, route.model, forward.seconds ?? 0, size)
         : imageCostUsd(route.provider, route.model, imageCount, size);
@@ -716,7 +721,10 @@ function countImages(body: unknown): number {
 }
 
 function requestedSeconds(body: Record<string, unknown>): number | undefined {
-  const raw = body.seconds;
+  return positiveSeconds(body.seconds) ?? positiveSeconds(body.duration);
+}
+
+function positiveSeconds(raw: unknown): number | undefined {
   if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
   if (typeof raw === 'string') {
     const parsed = Number.parseFloat(raw);
@@ -727,14 +735,12 @@ function requestedSeconds(body: Record<string, unknown>): number | undefined {
 
 function requestSeconds(request: ManifestRequest): number | undefined {
   const params = request.request_params as Record<string, unknown> | null | undefined;
-  const raw = params?.['seconds'];
-  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return raw;
-  return undefined;
+  return positiveSeconds(params?.['seconds']) ?? positiveSeconds(params?.['duration']);
 }
 
 function requestSize(request: ManifestRequest): string | undefined {
   const params = request.request_params as Record<string, unknown> | null | undefined;
-  const raw = params?.['size'];
+  const raw = params?.['size'] ?? params?.['resolution'];
   return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
 }
 

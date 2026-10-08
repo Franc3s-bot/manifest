@@ -43,6 +43,9 @@ import {
   AGNES_BASE_URL,
   AGNES_MODELS,
   AGNES_MODEL_BY_ID,
+  FAL_MODELS,
+  FAL_MODEL_BY_ID,
+  FAL_PLATFORM_MODELS_URL,
   getSubscriptionCapabilities,
   getSubscriptionKnownModels,
   META_MODEL_API_CONTEXT_WINDOW,
@@ -281,6 +284,86 @@ function inferAgnesOutput(id: string): 'text' | 'image' | 'video' {
   if (lower.startsWith('agnes-image') || /(^|[-_/])image([-_/]|$)/.test(lower)) return 'image';
   if (lower.startsWith('agnes-video') || /(^|[-_/])video([-_/]|$)/.test(lower)) return 'video';
   return 'text';
+}
+
+interface FalModelEntryApi {
+  endpoint_id?: unknown;
+  id?: unknown;
+  metadata?: {
+    display_name?: unknown;
+    category?: unknown;
+  };
+}
+
+/**
+ * fal is media-only. Its platform listing (`api.fal.ai/v1/models`) is
+ * paginated and needs an API-scope key, so every entry is annotated from the
+ * curated FAL_MODELS catalog and any catalog model missing from the live
+ * listing is appended. Entries whose category is neither image nor video
+ * (training, 3D, speech, …) are dropped: fal has no chat surface, so they
+ * could never route.
+ */
+function parseFal(body: unknown, provider: string): DiscoveredModel[] {
+  const arr = (body as { models?: unknown } | null)?.models;
+  const seen = new Set<string>();
+  const models: DiscoveredModel[] = [];
+  if (Array.isArray(arr)) {
+    for (const raw of arr) {
+      const entry = (raw ?? {}) as FalModelEntryApi;
+      const id = typeof entry.endpoint_id === 'string' ? entry.endpoint_id : undefined;
+      if (!id || seen.has(id)) continue;
+      const output = falOutputModality(entry.metadata?.category, id);
+      if (!output) continue;
+      seen.add(id);
+      models.push(buildFalModel(id, provider, output));
+    }
+  }
+  for (const entry of FAL_MODELS) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    models.push(buildFalModel(entry.id, provider, entry.output));
+  }
+  return models;
+}
+
+/** One fal model with the catalog's display name and modality applied. */
+function buildFalModel(id: string, provider: string, output: 'image' | 'video'): DiscoveredModel {
+  const catalog = FAL_MODEL_BY_ID.get(id);
+  const capabilities: ModelCapability[] =
+    output === 'image' ? ['text', 'image'] : ['text', 'video'];
+  const supportedEndpoints = mediaEndpointsForOutputModalities([output]);
+  return {
+    id,
+    displayName: catalog?.displayName ?? id,
+    provider,
+    contextWindow: DEFAULT_CONTEXT_WINDOW,
+    contextWindowSource: 'provider_default',
+    ...(supportedEndpoints ? { supportedEndpoints } : {}),
+    inputPricePerToken: null,
+    outputPricePerToken: null,
+    capabilityReasoning: false,
+    capabilityCode: false,
+    capabilities,
+    inputModalities: output === 'image' ? (['text', 'image'] as const) : (['text'] as const),
+    outputModalities: [output],
+    qualityScore: 2,
+  };
+}
+
+/**
+ * fal's platform listing carries a `metadata.category` such as
+ * `text-to-image`, `image-to-video`, or `training`. Video wins over image so
+ * `image-to-video` classifies as video; anything else falls back to the id's
+ * shape and is dropped when that says nothing.
+ */
+function falOutputModality(category: unknown, id: string): 'image' | 'video' | undefined {
+  const value = typeof category === 'string' ? category.toLowerCase() : '';
+  if (value.includes('video')) return 'video';
+  if (value.includes('image')) return 'image';
+  const lower = id.toLowerCase();
+  if (/(^|[-_/])video([-_/]|$)/.test(lower)) return 'video';
+  if (/(^|[-_/])image([-_/]|$)/.test(lower)) return 'image';
+  return undefined;
 }
 
 interface BedrockInferenceProfileEntry {
@@ -634,6 +717,11 @@ function bearerHeaders(key: string): Record<string, string> {
 
 function pioneerHeaders(key: string): Record<string, string> {
   return { 'X-API-Key': key };
+}
+
+/** fal authenticates with `Authorization: Key <key>`, not a bearer token. */
+function falHeaders(key: string): Record<string, string> {
+  return { Authorization: `Key ${key}` };
 }
 
 /* ── Provider-specific parsers ── */
@@ -1116,6 +1204,13 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: bearerHeaders,
     parse: parseAgnes,
   },
+  fal: {
+    // First page only: the curated catalog already pins the H3 Max video
+    // models, and every catalog model the page omits is appended by parseFal.
+    endpoint: `${FAL_PLATFORM_MODELS_URL}?limit=100&status=active`,
+    buildHeaders: falHeaders,
+    parse: parseFal,
+  },
   'minimax-subscription': {
     endpoint: MINIMAX_SUBSCRIPTION_MODELS_URL,
     buildHeaders: (key: string) => ({
@@ -1347,6 +1442,21 @@ export class ProviderModelFetcherService {
         configKey,
       );
       return fetched.length > 0 ? fetched : config.parse({ data: [] }, providerId);
+    }
+
+    if (configKey === 'fal') {
+      // fal's platform listing is paginated and needs an API-scope key. Fall
+      // back to the curated catalog whenever the live fetch yields nothing, so
+      // the H3 Max video models always have a target.
+      const fetched = await this.fetchModelList(
+        url,
+        headers,
+        config,
+        apiKey,
+        providerId,
+        configKey,
+      );
+      return fetched.length > 0 ? fetched : config.parse({ models: [] }, providerId);
     }
 
     if (configKey === 'bedrock') {

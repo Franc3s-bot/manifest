@@ -1,5 +1,6 @@
 import {
   AGNES_MEDIA_PRICES,
+  FAL_MEDIA_PRICES,
   type MediaPriceTable,
   type MediaRate,
   type ModelModality,
@@ -13,6 +14,7 @@ import {
  */
 const PROVIDER_MEDIA_PRICES: Readonly<Record<string, MediaPriceTable>> = {
   agnes: AGNES_MEDIA_PRICES,
+  fal: FAL_MEDIA_PRICES,
 };
 
 /**

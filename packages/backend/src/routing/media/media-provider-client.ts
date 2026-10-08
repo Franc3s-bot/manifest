@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AGNES_BASE_URL, type VideoStatus } from 'manifest-shared';
+import {
+  AGNES_BASE_URL,
+  FAL_BASE_URL,
+  FAL_QUEUE_BASE_URL,
+  type VideoStatus,
+} from 'manifest-shared';
 import { parseDurationSeconds } from './media-pricing';
 import { normalizeMediaBody } from './media-request-body';
 
@@ -23,6 +28,24 @@ function agnesTaskOrigin(): string {
   const explicit = process.env['AGNES_TASK_ORIGIN']?.trim();
   if (explicit) return explicit.replace(/\/+$/, '');
   return agnesBaseUrl().replace(/\/v\d+$/, '');
+}
+
+/**
+ * fal's synchronous inference origin (images) and async queue origin (video).
+ * `FAL_BASE_URL` / `FAL_QUEUE_BASE_URL` overrides let a self-hosted gateway or
+ * a test mock stand in for the public API.
+ */
+function falBaseUrl(): string {
+  return (process.env['FAL_BASE_URL']?.trim() || FAL_BASE_URL).replace(/\/+$/, '');
+}
+
+function falQueueBaseUrl(): string {
+  return (process.env['FAL_QUEUE_BASE_URL']?.trim() || FAL_QUEUE_BASE_URL).replace(/\/+$/, '');
+}
+
+/** fal authenticates with `Authorization: Key <key>`, not a bearer token. */
+function falHeaders(apiKey: string): Record<string, string> {
+  return { Authorization: `Key ${apiKey}` };
 }
 
 export interface MediaForwardOptions {
@@ -78,6 +101,9 @@ export class MediaProviderClient {
         ? this.forwardAgnesImage(opts)
         : this.forwardAgnesVideo(opts);
     }
+    if (provider === 'fal') {
+      return opts.apiMode === 'images' ? this.forwardFalImage(opts) : this.forwardFalVideo(opts);
+    }
     if (opts.apiMode === 'images') return this.forwardOpenAiImage(opts);
     return this.unsupported(opts, 'video');
   }
@@ -85,6 +111,7 @@ export class MediaProviderClient {
   /** Poll an asynchronous video task. */
   async videoStatus(opts: VideoStatusOptions): Promise<MediaForwardResult> {
     const provider = opts.provider.toLowerCase();
+    if (provider === 'fal') return this.falVideoStatus(opts);
     if (provider !== 'agnes') return this.unsupportedVideoStatus(opts);
 
     const query = new URLSearchParams({ video_id: opts.taskId, model_name: opts.model });
@@ -209,6 +236,159 @@ export class MediaProviderClient {
     };
   }
 
+  /* ── fal.ai ─────────────────────────────────────────────────────── */
+
+  /**
+   * fal images run on the synchronous endpoint (`POST fal.run/{model}`): the
+   * response is the model's own output object, so no queue polling is needed.
+   */
+  private async forwardFalImage(opts: MediaForwardOptions): Promise<MediaForwardResult> {
+    const url = `${falBaseUrl()}/${opts.model}`;
+    const translated = translateFalImageBody(opts.body);
+    const res = await this.request(
+      'POST',
+      url,
+      opts.apiKey,
+      translated,
+      opts.signal,
+      IMAGE_TIMEOUT_MS,
+      falHeaders(opts.apiKey),
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        body: res.body,
+        requestUrl: url,
+        requestBody: translated,
+        errorMessage: extractErrorMessage(res.body),
+      };
+    }
+    const payload = asRecord(res.body) ?? {};
+    const images = Array.isArray(payload.images) ? payload.images : [];
+    const data = images
+      .map((entry) => toFalImage(entry, translated.sync_mode === true))
+      .filter((entry): entry is Record<string, unknown> => entry !== undefined);
+    return {
+      ok: true,
+      status: 200,
+      body: { created: Math.floor(Date.now() / 1000), data },
+      requestUrl: url,
+      requestBody: translated,
+    };
+  }
+
+  /** fal videos are long-running, so they go through the queue. */
+  private async forwardFalVideo(opts: MediaForwardOptions): Promise<MediaForwardResult> {
+    const url = `${falQueueBaseUrl()}/${opts.model}`;
+    const translated = translateFalVideoBody(opts.body);
+    const res = await this.request(
+      'POST',
+      url,
+      opts.apiKey,
+      translated,
+      opts.signal,
+      VIDEO_CREATE_TIMEOUT_MS,
+      falHeaders(opts.apiKey),
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        body: res.body,
+        requestUrl: url,
+        requestBody: translated,
+        errorMessage: extractErrorMessage(res.body),
+      };
+    }
+    const payload = asRecord(res.body) ?? {};
+    const taskId = firstString(payload.request_id, payload.requestId);
+    if (!taskId) {
+      return {
+        ok: false,
+        status: 502,
+        body: res.body,
+        requestUrl: url,
+        requestBody: translated,
+        errorMessage: 'Provider returned no video task id',
+      };
+    }
+    const video = toVideoObject(taskId, opts.model, { status: 'queued' });
+    return {
+      ok: true,
+      status: 200,
+      body: video,
+      requestUrl: url,
+      requestBody: translated,
+      taskId,
+      videoStatus: 'queued',
+      seconds: parseDurationSeconds(translated.duration),
+    };
+  }
+
+  /**
+   * fal's queue status only carries the status; the result (a video URL) lives
+   * behind a second request. A status of `COMPLETED` with an `error` is a
+   * failed run, not a success.
+   */
+  private async falVideoStatus(opts: VideoStatusOptions): Promise<MediaForwardResult> {
+    const statusUrl = `${falQueueBaseUrl()}/${opts.model}/requests/${opts.taskId}/status`;
+    const res = await this.request(
+      'GET',
+      statusUrl,
+      opts.apiKey,
+      undefined,
+      opts.signal,
+      VIDEO_STATUS_TIMEOUT_MS,
+      falHeaders(opts.apiKey),
+    );
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        body: res.body,
+        requestUrl: statusUrl,
+        requestBody: {},
+        errorMessage: extractErrorMessage(res.body),
+      };
+    }
+    const payload = asRecord(res.body) ?? {};
+    const failed = payload.error !== undefined && payload.error !== null;
+    const status = mapFalStatus(payload.status, failed);
+
+    let result: Record<string, unknown> | undefined;
+    if (status === 'completed') {
+      const resultUrl = `${falQueueBaseUrl()}/${opts.model}/requests/${opts.taskId}`;
+      const resultRes = await this.request(
+        'GET',
+        resultUrl,
+        opts.apiKey,
+        undefined,
+        opts.signal,
+        VIDEO_STATUS_TIMEOUT_MS,
+        falHeaders(opts.apiKey),
+      );
+      if (resultRes.ok) result = asRecord(resultRes.body);
+    }
+
+    const video = toVideoObject(opts.taskId, opts.model, {
+      ...(result ?? {}),
+      status,
+      ...(result ? { url: firstString(asRecord(result.video)?.url, result.url) } : {}),
+      ...(failed ? { error: payload.error ?? payload.error_type } : {}),
+    });
+    return {
+      ok: true,
+      status: 200,
+      body: video,
+      requestUrl: statusUrl,
+      requestBody: {},
+      taskId: opts.taskId,
+      videoStatus: video.status,
+      seconds: parseDurationSeconds(video.seconds),
+    };
+  }
+
   /* ── Generic OpenAI-compatible images ───────────────────────────── */
 
   private async forwardOpenAiImage(opts: MediaForwardOptions): Promise<MediaForwardResult> {
@@ -237,6 +417,7 @@ export class MediaProviderClient {
     body: Record<string, unknown> | undefined,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    headers?: Record<string, string>,
   ): Promise<{ ok: boolean; status: number; body: unknown }> {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -248,6 +429,7 @@ export class MediaProviderClient {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           ...(body ? { 'Content-Type': 'application/json' } : {}),
+          ...headers,
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
         signal: controller.signal,
@@ -340,6 +522,200 @@ export function translateAgnesVideoBody(body: Record<string, unknown>): Record<s
   return out;
 }
 
+/* ── fal.ai translation ───────────────────────────────────────────── */
+
+/**
+ * fal rejects unknown input fields with a 422, so the translated body is built
+ * from the fields a fal endpoint actually accepts rather than spread from the
+ * caller's body. fal-native names are accepted alongside the OpenAI-shaped
+ * `size` / `ratio` / `seconds` aliases so an existing fal client pointed at the
+ * gateway keeps working.
+ */
+const FAL_IMAGE_FIELDS = [
+  'prompt',
+  'num_inference_steps',
+  'seed',
+  'guidance_scale',
+  'enable_safety_checker',
+  'output_format',
+  'acceleration',
+  'sync_mode',
+  'num_images',
+  'image_size',
+  'image_url',
+  'image_urls',
+] as const;
+
+const FAL_VIDEO_FIELDS = [
+  'prompt',
+  'seed',
+  'enable_safety_checker',
+  'sync_mode',
+  'prompt_expansion_mode',
+  'target_audio_url',
+  'image_url',
+  'end_image_url',
+] as const;
+
+/** Pixel side length for a Manifest image size tier. */
+const FAL_IMAGE_TIER_PX: Readonly<Record<string, number>> = {
+  '1K': 1024,
+  '2K': 2048,
+  '3K': 3072,
+  '4K': 4096,
+};
+
+/** fal named image sizes, used when the caller sends only an aspect ratio. */
+const FAL_NAMED_IMAGE_SIZES: Readonly<Record<string, string>> = {
+  '1:1': 'square_hd',
+  '16:9': 'landscape_16_9',
+  '9:16': 'portrait_16_9',
+  '4:3': 'landscape_4_3',
+  '3:4': 'portrait_4_3',
+};
+
+/**
+ * OpenAI-shaped image request → fal endpoint input. `size` / `ratio` become
+ * `image_size`, `n` becomes `num_images`, and `response_format: "b64_json"`
+ * becomes `sync_mode` (fal then returns a data URI Manifest turns into
+ * `b64_json`).
+ */
+export function translateFalImageBody(body: Record<string, unknown>): Record<string, unknown> {
+  const normalized = normalizeMediaBody(body);
+  const out = pickFalFields(normalized, FAL_IMAGE_FIELDS);
+
+  const count = positiveInteger(normalized.n);
+  if (out.num_images === undefined && count !== undefined) out.num_images = count;
+  if (out.image_size === undefined) {
+    const imageSize = falImageSize(normalized.size, normalized.ratio);
+    if (imageSize !== undefined) out.image_size = imageSize;
+  }
+  if (out.sync_mode === undefined && normalized.response_format === 'b64_json') {
+    out.sync_mode = true;
+  }
+
+  const references = normalizeReferences(normalized.image ?? normalized.images);
+  if (references && out.image_url === undefined && out.image_urls === undefined) {
+    if (references.length === 1) out.image_url = references[0];
+    else out.image_urls = references;
+  }
+  return out;
+}
+
+/**
+ * OpenAI-shaped video request → fal endpoint input. `seconds` → `duration`,
+ * `size`/`resolution` → `resolution`, `ratio` → `aspect_ratio`, and the
+ * keyframe aliases → `image_url` / `end_image_url`.
+ */
+export function translateFalVideoBody(body: Record<string, unknown>): Record<string, unknown> {
+  const normalized = normalizeMediaBody(body);
+  const out = pickFalFields(normalized, FAL_VIDEO_FIELDS);
+
+  const duration = positiveNumber(normalized.seconds) ?? positiveNumber(normalized.duration);
+  if (duration !== undefined) out.duration = duration;
+
+  const resolution =
+    normalizeFalResolution(normalized.resolution) ?? normalizeFalResolution(normalized.size);
+  if (resolution !== undefined) out.resolution = resolution;
+
+  const aspectRatio = firstString(normalized.aspect_ratio, normalized.ratio);
+  if (aspectRatio) out.aspect_ratio = aspectRatio;
+
+  if (out.image_url === undefined) {
+    const firstFrame = firstString(
+      normalized.first_frame,
+      normalizeReferences(normalized.image)?.[0],
+      normalizeReferences(normalized.images)?.[0],
+    );
+    if (firstFrame) out.image_url = firstFrame;
+  }
+  if (out.end_image_url === undefined) {
+    const lastFrame = firstString(normalized.last_frame);
+    if (lastFrame) out.end_image_url = lastFrame;
+  }
+  return out;
+}
+
+function pickFalFields(
+  body: Record<string, unknown>,
+  fields: readonly string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (body[field] !== undefined) out[field] = body[field];
+  }
+  return out;
+}
+
+/**
+ * Map a Manifest size / ratio onto fal's `image_size` (a named size or a
+ * `{ width, height }` object). An explicit `WIDTHxHEIGHT` wins; otherwise a
+ * tier and an aspect ratio compose into that tier's larger side.
+ */
+function falImageSize(size: unknown, ratio: unknown): unknown {
+  if (typeof size === 'string') {
+    const match = /^(\d+)\s*x\s*(\d+)$/i.exec(size.trim());
+    if (match) {
+      return { width: Number.parseInt(match[1], 10), height: Number.parseInt(match[2], 10) };
+    }
+  }
+
+  const tier = typeof size === 'string' ? FAL_IMAGE_TIER_PX[size.trim().toUpperCase()] : undefined;
+  const dimensions = typeof ratio === 'string' ? parseAspectRatio(ratio) : undefined;
+  if (tier !== undefined && dimensions) {
+    const [w, h] = dimensions;
+    return w >= h
+      ? { width: tier, height: Math.round((tier * h) / w) }
+      : { width: Math.round((tier * w) / h), height: tier };
+  }
+  if (tier !== undefined) return { width: tier, height: tier };
+  if (typeof ratio === 'string') {
+    const named = FAL_NAMED_IMAGE_SIZES[ratio.trim()];
+    if (named) return named;
+  }
+  return undefined;
+}
+
+function parseAspectRatio(value: string): [number, number] | undefined {
+  const match = /^(\d+)\s*:\s*(\d+)$/.exec(value.trim());
+  if (!match) return undefined;
+  const w = Number.parseInt(match[1], 10);
+  const h = Number.parseInt(match[2], 10);
+  return w > 0 && h > 0 ? [w, h] : undefined;
+}
+
+/** fal's `resolution` enum is `480P` / `768P` / `1080P`. */
+function normalizeFalResolution(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toUpperCase();
+  const match = /^(\d+)P?$/.exec(normalized);
+  if (!match) return undefined;
+  const candidate = `${match[1]}P`;
+  return ['480P', '768P', '1080P'].includes(candidate) ? candidate : undefined;
+}
+
+/** fal image entry → OpenAI-shaped generated image (`url` or `b64_json`). */
+function toFalImage(entry: unknown, syncMode: boolean): Record<string, unknown> | undefined {
+  const record = asRecord(entry);
+  if (!record) return undefined;
+  const url = firstString(record.url);
+  if (!url) return undefined;
+  if (syncMode && url.startsWith('data:')) {
+    const comma = url.indexOf(',');
+    if (comma !== -1) return { b64_json: url.slice(comma + 1) };
+  }
+  return { url };
+}
+
+/** fal queue vocabulary → canonical `VideoStatus`. */
+function mapFalStatus(raw: unknown, failed: boolean): VideoStatus {
+  const value = typeof raw === 'string' ? raw.toUpperCase() : '';
+  if (value === 'COMPLETED') return failed ? 'failed' : 'completed';
+  if (value === 'IN_PROGRESS') return 'processing';
+  if (value === 'IN_QUEUE') return 'queued';
+  return 'queued';
+}
+
 /** Map a provider task payload onto the OpenAI-shaped video object. */
 export function toVideoObject(
   taskId: string,
@@ -408,6 +784,15 @@ function positiveInteger(value: unknown): number | undefined {
   return undefined;
 }
 
+function positiveNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
 function firstString(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === 'string' && value.length > 0) return value;
@@ -435,6 +820,9 @@ function extractErrorMessage(body: unknown): string {
   const error = record ? asRecord(record.error) : undefined;
   const message = error ? firstString(error.message) : undefined;
   if (message) return message;
+  // fal reports failures as `{ detail, error_type }`.
+  const detail = record ? firstString(record.detail) : undefined;
+  if (detail) return detail;
   const direct = record ? firstString(record.message) : undefined;
   if (direct) return direct;
   if (typeof body === 'string' && body.length > 0) return body;
