@@ -212,6 +212,18 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     aliases: ['unsloth-studio', 'unsloth studio', 'unslothstudio'],
     authTypes: ['local'],
   },
+  {
+    id: 'agnes',
+    displayName: 'Agnes AI',
+    aliases: ['agnes-ai', 'agnes ai', 'agnesai'],
+    authTypes: ['api_key'],
+  },
+  {
+    id: 'fal',
+    displayName: 'fal.ai',
+    aliases: ['fal-ai', 'fal ai', 'falai'],
+    authTypes: ['api_key'],
+  },
 ];
 
 export interface PlatformCatalogEntry {

@@ -22,12 +22,12 @@ import { OtlpModule } from './otlp/otlp.module';
 import { ModelPricesModule } from './model-prices/model-prices.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { RoutingModule } from './routing/routing.module';
+import { SystemOneModule } from './routing/systemone/systemone.module';
 import { PlaygroundModule } from './playground/playground.module';
 import { CommonModule } from './common/common.module';
 import { SseModule } from './sse/sse.module';
 import { GithubModule } from './github/github.module';
 import { VersionModule } from './version/version.module';
-import { PublicStatsModule } from './public-stats/public-stats.module';
 import { ErrorPagesModule } from './error-pages/error-pages.module';
 import { SetupModule } from './setup/setup.module';
 import { FreeModelsModule } from './free-models/free-models.module';
@@ -37,6 +37,7 @@ import { BillingModule } from './billing/billing.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { CrmMetricsModule } from './crm-metrics/crm-metrics.module';
 import { McpModule } from './mcp/mcp.module';
+import { mcpAvailability } from './auth/mcp-availability';
 import { isSelfHosted } from './common/utils/detect-self-hosted';
 import { DebugSentryController } from './sentry/debug-sentry.controller';
 
@@ -76,6 +77,13 @@ const sentryDebugControllers =
 // its index so a self-hosted install sees no trace of this feature.
 const crmMetricsImports = isSelfHosted() ? [] : [CrmMetricsModule];
 
+// The remote MCP server is off on installs whose origin cannot carry an MCP
+// resource, and on installs that set MCP_ENABLED=false. Leaving the module
+// unregistered means `/api/v1/mcp` does not exist rather than answering an
+// unauthenticated 401 that no client could ever satisfy — the OAuth
+// authorization server behind it is not running either.
+const mcpImports = mcpAvailability().enabled ? [McpModule] : [];
+
 @Module({
   imports: [
     ...sentryImports,
@@ -102,11 +110,11 @@ const crmMetricsImports = isSelfHosted() ? [] : [CrmMetricsModule];
     ModelPricesModule,
     NotificationsModule,
     RoutingModule,
+    SystemOneModule,
     PlaygroundModule,
     SseModule,
     GithubModule,
     VersionModule,
-    PublicStatsModule,
     ErrorPagesModule,
     SetupModule,
     FreeModelsModule,
@@ -115,7 +123,7 @@ const crmMetricsImports = isSelfHosted() ? [] : [CrmMetricsModule];
     WaitlistModule,
     BillingModule,
     DiscoveryModule,
-    McpModule,
+    ...mcpImports,
     ...crmMetricsImports,
   ],
   providers: [

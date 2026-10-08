@@ -326,6 +326,7 @@ describe('ModelController', () => {
         output_price_per_token: 0.00001,
         output_modalities: ['text'],
         context_window: 128000,
+        context_window_source: null,
         capability_reasoning: false,
         capability_code: true,
         capabilities: ['stream'],
@@ -453,6 +454,7 @@ describe('ModelController', () => {
         'capability_code',
         'capability_reasoning',
         'context_window',
+        'context_window_source',
         'display_name',
         'input_modalities',
         'input_price_per_token',
@@ -479,6 +481,22 @@ describe('ModelController', () => {
       expect(result[0].capabilities).toEqual(['text', 'image', 'tools', 'stream']);
       expect(result[0].input_modalities).toEqual(['text', 'image']);
       expect(result[0].output_modalities).toEqual(['text']);
+    });
+
+    it('exposes the discovered output modality so media models reach the picker', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'agnes-image-2.5-flash',
+          provider: 'agnes',
+          outputModalities: ['image'],
+        }),
+        makeDiscovered({ id: 'agnes-video-2.5', provider: 'agnes', outputModalities: ['video'] }),
+      ]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result[0].output_modalities).toEqual(['image']);
+      expect(result[1].output_modalities).toEqual(['video']);
     });
 
     it('resolves gateway models to the underlying provider for capability metadata', async () => {

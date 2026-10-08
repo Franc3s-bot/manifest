@@ -43,6 +43,22 @@ export interface SharedProviderEntry {
    * skips entries with `tileOnly: true`.
    */
   tileOnly?: boolean;
+  /**
+   * Media generation capabilities for this provider. Setting either flag
+   * marks the provider media-capable: its image/video models bypass the
+   * non-chat discovery filter and publish their output modality in
+   * `GET /v1/models`, so a synthetic tier can route to them.
+   */
+  media?: {
+    readonly image?: boolean;
+    readonly video?: boolean;
+  };
+  /**
+   * Providers that serve only media and have no chat surface (fal.ai). They
+   * are skipped by the text-proxy endpoint registry (`PROVIDER_ENDPOINTS`);
+   * media routing reaches them through the media adapter instead.
+   */
+  mediaOnly?: boolean;
 }
 
 export interface MetaModelApiModel {
@@ -64,6 +80,114 @@ export const META_MODEL_API_MODELS: readonly MetaModelApiModel[] = [
 export const META_MODEL_API_MODEL_BY_ID: ReadonlyMap<string, MetaModelApiModel> = new Map(
   META_MODEL_API_MODELS.map((model) => [model.id, model]),
 );
+
+/**
+ * Agnes AI's published model catalog.
+ *
+ * Agnes exposes an OpenAI-compatible API (`https://apihub.agnes-ai.com/v1`)
+ * whose `/v1/models` listing is not guaranteed to carry the media models or
+ * their modalities. This catalog is the authoritative fallback: it supplies
+ * the model ids, display names, context windows, and — critically — the
+ * output modality that routing needs to build image/video synthetic tiers.
+ *
+ * Source: Agnes AI Model Catalog (github.com/AgnesAI-Labs/AgnesAI-Models).
+ */
+export interface AgnesModelEntry {
+  id: string;
+  displayName: string;
+  /** What the model produces. `image` / `video` models route to media endpoints. */
+  output: 'text' | 'image' | 'video';
+  /** Context window for text models; omitted for media models. */
+  contextWindow?: number;
+  maxOutputTokens?: number;
+}
+
+export const AGNES_MODELS: readonly AgnesModelEntry[] = [
+  {
+    id: 'agnes-2.5-flash',
+    displayName: 'Agnes 2.5 Flash',
+    output: 'text',
+    contextWindow: 524_288,
+    maxOutputTokens: 65_536,
+  },
+  {
+    id: 'agnes-2.0-flash',
+    displayName: 'Agnes 2.0 Flash',
+    output: 'text',
+    contextWindow: 262_144,
+    maxOutputTokens: 65_536,
+  },
+  {
+    id: 'agnes-1.5-flash',
+    displayName: 'Agnes 1.5 Flash',
+    output: 'text',
+    contextWindow: 262_144,
+    maxOutputTokens: 65_536,
+  },
+  { id: 'agnes-image-2.5-flash', displayName: 'Agnes Image 2.5 Flash', output: 'image' },
+  { id: 'agnes-image-2.1-flash', displayName: 'Agnes Image 2.1 Flash', output: 'image' },
+  { id: 'agnes-image-2.0-flash', displayName: 'Agnes Image 2.0 Flash', output: 'image' },
+  { id: 'agnes-video-v2.0', displayName: 'Agnes Video 2.0', output: 'video' },
+];
+
+export const AGNES_MODEL_BY_ID: ReadonlyMap<string, AgnesModelEntry> = new Map(
+  AGNES_MODELS.map((model) => [model.id, model]),
+);
+
+export const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+
+/** Video task status lives at the host root, not under the API version prefix. */
+export const AGNES_TASK_ORIGIN = 'https://apihub.agnes-ai.com';
+
+/**
+ * fal.ai's published media catalog.
+ *
+ * fal is media-only: it serves image and video models through a queue API
+ * (`queue.fal.run`) for long-running work and a synchronous endpoint
+ * (`fal.run`) for images. Model ids are fal endpoint ids and contain slashes
+ * (`minimax/h3-max/text-to-video`), so routing matches them as-is.
+ *
+ * This catalog is the authoritative fallback: fal's platform listing
+ * (`api.fal.ai/v1/models`) needs an API-scope key, is paginated, and does not
+ * carry the output modality routing needs. Any catalog model missing from the
+ * live listing is appended so image/video synthetic tiers always have a target.
+ *
+ * Source: https://fal.ai/explore/minimax and https://fal.ai/models.
+ */
+export interface FalModelEntry {
+  id: string;
+  displayName: string;
+  /** What the model produces. Drives the media endpoint that serves it. */
+  output: 'image' | 'video';
+}
+
+export const FAL_MODELS: readonly FalModelEntry[] = [
+  {
+    id: 'minimax/h3-max/text-to-video',
+    displayName: 'MiniMax H3 Max (Text to Video)',
+    output: 'video',
+  },
+  {
+    id: 'minimax/h3-max/image-to-video',
+    displayName: 'MiniMax H3 Max (Image to Video)',
+    output: 'video',
+  },
+  { id: 'fal-ai/flux/schnell', displayName: 'FLUX.1 [schnell]', output: 'image' },
+  { id: 'fal-ai/flux/dev', displayName: 'FLUX.1 [dev]', output: 'image' },
+];
+
+export const FAL_MODEL_BY_ID: ReadonlyMap<string, FalModelEntry> = new Map(
+  FAL_MODELS.map((model) => [model.id, model]),
+);
+
+/** Synchronous inference endpoint (images): `POST {FAL_BASE_URL}/{model_id}`. */
+export const FAL_BASE_URL = 'https://fal.run';
+
+/** Async queue endpoint (video): `POST {FAL_QUEUE_BASE_URL}/{model_id}`. */
+export const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
+
+/** Platform model listing, used for discovery. Requires an API-scope key. */
+export const FAL_PLATFORM_MODELS_URL = 'https://api.fal.ai/v1/models';
 
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
@@ -508,6 +632,40 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: '',
     minKeyLength: 0,
     keyPlaceholder: 'Unsloth API key (optional)',
+  },
+  {
+    id: 'agnes',
+    displayName: 'Agnes AI',
+    aliases: ['agnes-ai', 'agnes ai', 'agnesai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#7C3AED',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'Agnes API key',
+    // Agnes serves text, image, and video models from one OpenAI-compatible
+    // base URL. The media flags keep its image/video models out of the
+    // non-chat discovery filter so synthetic media tiers can route to them.
+    media: { image: true, video: true },
+  },
+  {
+    id: 'fal',
+    displayName: 'fal.ai',
+    aliases: ['fal-ai', 'fal ai', 'falai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#EC0648',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'fal API key',
+    // fal is media-only: no chat endpoint, only image (`fal.run`) and video
+    // (`queue.fal.run`) generation. The media flags keep its image/video
+    // models out of the non-chat discovery filter so synthetic media tiers
+    // can route to them.
+    media: { image: true, video: true },
+    mediaOnly: true,
   },
 ] as const;
 

@@ -62,6 +62,6 @@ import { AttemptRecordingService } from './attempt-recording.service';
     ProxyExceptionFilter,
     AttemptRecordingService,
   ],
-  exports: [ProviderClient],
+  exports: [ProviderClient, ProxyRateLimiter, ProxyMessageRecorder],
 })
 export class ProxyModule {}

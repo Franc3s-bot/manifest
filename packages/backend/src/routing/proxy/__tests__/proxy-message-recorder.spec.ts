@@ -231,6 +231,72 @@ describe('ProxyMessageRecorder', () => {
       expect(emitMock).toHaveBeenCalledWith('tenant-1', 'message', 'user-1');
     });
 
+    it('cancels only still-pending Attempts whose pending row was written', async () => {
+      const written: ProviderAttemptRef = {
+        id: 'attempt-left-pending',
+        attemptNumber: 1,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        completedAtMs: 1_250,
+        pendingWrite: Promise.resolve(true),
+      };
+      const inFlight: ProviderAttemptRef = {
+        id: 'attempt-in-flight',
+        attemptNumber: 2,
+        startedAtMs: Date.now(),
+        startedAt: new Date().toISOString(),
+        pendingWrite: Promise.resolve(true),
+      };
+      const neverInserted: ProviderAttemptRef = {
+        id: 'attempt-insert-failed',
+        attemptNumber: 3,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        pendingWrite: Promise.reject(new Error('insert failed')),
+      };
+
+      updateMock.mockResolvedValue({});
+
+      await recorder.cancelPendingProviderAttempts([written, inFlight, neverInserted]);
+
+      expect(updateMock).toHaveBeenCalledTimes(2);
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'attempt-left-pending', status: 'pending' },
+        {
+          status: 'cancelled',
+          error_message: null,
+          error_code: null,
+          error_http_status: null,
+          duration_ms: 250,
+        },
+      );
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'attempt-in-flight', status: 'pending' },
+        expect.objectContaining({ status: 'cancelled', duration_ms: expect.any(Number) }),
+      );
+    });
+
+    it('keeps cancelling the other Attempts when one update fails', async () => {
+      const attempt = (id: string): ProviderAttemptRef => ({
+        id,
+        attemptNumber: 1,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        completedAtMs: 1_100,
+        pendingWrite: Promise.resolve(true),
+      });
+      updateMock.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce({});
+
+      await expect(
+        recorder.cancelPendingProviderAttempts([attempt('first'), attempt('second')]),
+      ).resolves.toBeUndefined();
+
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'second', status: 'pending' },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
+    });
+
     it('updates the same pending row with terminal status and measured duration', async () => {
       const attempt: ProviderAttemptRef = {
         id: 'attempt-1',
@@ -821,6 +887,33 @@ describe('ProxyMessageRecorder', () => {
       });
     });
 
+    it('stamps the routing classification of a post-routing failure without claiming a provider', async () => {
+      await recorder.recordManifestBlockedRequest(ctx, {
+        errorMessage: 'adapter bug',
+        errorCode: 'M500',
+        reason: 'manifest_internal_error',
+        httpStatus: 500,
+        routing: {
+          tier: 'standard',
+          specificityCategory: 'coding',
+          headerTierId: 'header-tier-1',
+          headerTierName: 'Program Weeks',
+          headerTierColor: 'indigo',
+        },
+      });
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        error_code: 'M500',
+        provider: null,
+        auth_type: null,
+        routing_tier: 'standard',
+        specificity_category: 'coding',
+        header_tier_id: 'header-tier-1',
+        header_tier_name: 'Program Weeks',
+        header_tier_color: 'indigo',
+      });
+    });
+
     it('leaves error_code null when a Manifest row carries no documented code', async () => {
       await recorder.recordManifestBlockedRequest(ctx, {
         errorMessage: 'something went sideways',
@@ -1146,7 +1239,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://manifest.build/docs/errors/M100',
+                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M100/',
             },
           }),
           fallbackIndex: 0,
@@ -1177,7 +1270,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M102/',
             },
           }),
           fallbackIndex: 0,
@@ -1433,7 +1526,7 @@ describe('ProxyMessageRecorder', () => {
       const body = JSON.stringify({
         error: {
           message:
-            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M102/',
         },
       });
       await recorder.recordPrimaryFailure(

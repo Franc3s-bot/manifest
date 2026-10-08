@@ -8,7 +8,7 @@ Manifest is a smart model router for **AI agents**. It sits between an agent and
 
 **"Harness" is the dashboard word for an agent.** The UI now labels agents **Harnesses** (nav item "Harnesses", routes under `/harnesses`, categories `AI agent` / `Automation` / `App AI SDK` / `Coding Assistant` from `CATEGORY_LABELS` in `packages/shared/src/agent-type.ts`). This is a **copy-level rename only**: backend code, database tables (`agents`, `agent_messages`, …), API routes (`/api/v1/agents/*`), and entity/service names all still say *agent*. Legacy `/agents/*` dashboard URLs redirect to `/harnesses/*`. When writing UI copy say "harness"; when writing code or API docs keep "agent".
 
-**Pivot note:** Manifest is pivoting toward "the self-healing layer for APIs" (see the README banner). The dashboard shows a sidebar `PivotAnnouncement` card with a waiting-list modal in every deployment mode (per-session dismiss); waiting-list claims land on `POST /api/v1/waitlist/pivot/claim` and record their origin (cloud vs self-hosted). The open-source gateway remains available and maintained.
+**Product note:** this repo is **Manifest LLM Gateway**, the open-source LLM gateway of Manifest, available and maintained. The dashboard and the READMEs carry no promotion of the other Manifest product (the self-healing layer at `dashboard.manifest.build`), which is on hold. The dashboard announces **API Bot** instead: a banner above the page content (`ApiBotBanner.tsx`) and a sidebar card (`ApiBotAnnouncement.tsx`), both linking to `https://manifest.build/api-bot/`, shown in every deployment mode with a per-session dismiss, on API Bot's own dithered ground (`services/dither-ground.ts`). `POST /api/v1/waitlist/pivot/claim` stays only for self-hosted versions that still ship the old sidebar card.
 
 **Supported agents**: see `AGENT_PLATFORMS` in `packages/shared/src/agent-type.ts` for the current list (OpenClaw, Hermes, Claude Code, OpenCode, generic OpenAI/Anthropic SDK slots, and others — don't duplicate the list here, it grows independently of this doc). OpenClaw remains the deepest integration, but no new code or copy should frame Manifest as OpenClaw-only. When adding examples, prefer "AI agent" as the noun and pick OpenClaw as the worked example rather than the sole target. Manifest is consumed as a generic OpenAI-compatible HTTP endpoint — there are no first-party OpenClaw plugins in this repo anymore.
 
@@ -134,7 +134,6 @@ packages/
 │   │   ├── github/                          # GitHub stars endpoint
 │   │   ├── sse/                             # Server-Sent Events for real-time updates
 │   │   ├── setup/                           # First-run admin setup wizard
-│   │   ├── public-stats/                    # Public aggregate usage endpoints (opt-in)
 │   │   ├── free-models/                     # Free LLM model catalog
 │   │   ├── model-discovery/                 # Per-provider model fetching + fallback
 │   │   ├── billing/                         # Stripe billing status + plan limits
@@ -370,10 +369,11 @@ The CLI refuses HTTP redirects (so the key cannot leak cross-origin) and strips 
 `POST /api/v1/mcp` (`mcp/mcp.controller.ts`) is a remote MCP server over stateless Streamable HTTP: a fresh `McpServer` per POST (`mcp-server.factory.ts`), closed when the request ends, so no session affinity is needed. GET and DELETE answer **405 + `Allow: POST`** as the spec requires for a stateless JSON transport (a 404 made clients log an error on every connect).
 
 - **Auth**: the route is `@Public()` to skip the session/API-key guards, and `requireMcpAuth` from `@better-auth/mcp` is the real gate. Better Auth's MCP plugin is the authorization server (PKCE, resource-bound JWT access tokens, CIMD client identity, RFC 8414/9728 discovery). A missing or dead token answers 401 with `WWW-Authenticate: … resource_metadata=…`, which is how a client learns it must run OAuth. `mcp-auth.ts` maps the verified token's `sub` to a tenant through `TenantCacheService`, so tools are scoped exactly like the dashboard and CLI; a tenant-less user gets 401.
+- **Availability**: MCP is on by default and off in two cases, both decided by `auth/mcp-availability.ts` before Better Auth is built: the operator set `MCP_ENABLED=false`, or the MCP resource (`${BETTER_AUTH_URL}/api/v1/mcp`) is not HTTPS and not loopback. The second case is **not** opt-in on purpose — `mcp()` validates its resource URL as it is constructed and throws, and that throw happens while `auth.instance.ts` is being imported, so an HTTP-only self-hosted install would refuse to boot at all (issue #2939). When MCP is off, `buildPlugins()` omits `mcp()` and `cimd()`, `app.module.ts` leaves `McpModule` unregistered so `/api/v1/mcp` does not exist, `main.ts` mounts `mountMcpUnavailable()` so the well-known paths answer a JSON 404 rather than the SPA shell, and the dashboard hides the MCP nav entry (`GET /api/v1/setup/status` carries `mcpEnabled`). `mcp-availability.ts` is a leaf module for the same reason `mcp-scopes.ts` is — it must be importable from the unit suite, which cannot load Better Auth's ESM.
 - **Discovery**: `mcp-discovery.ts` (mounted in `main.ts`) serves the OAuth documents at the well-known **root** paths (`/.well-known/oauth-authorization-server`, `/.well-known/oauth-protected-resource[/api/v1/mcp]`) in addition to Better Auth's `/api/auth/.well-known/…`, because clients start from the MCP origin's root.
 - **Consent**: `pages/Consent.tsx` at `/consent` is the OAuth consent screen.
 - **Scopes**: `mcp:read` is required for every token; each `register*Tools()` returns before registering its write tools unless `operator.scopes` has `mcp:write`, so a read-only client never sees them (the server `instructions` string tells it to reconnect with the write scope). Revealing an ingest key also requires `mcp:write` because it is a live secret.
-- **Tools** (`mcp/tools/*.tools.ts`): identity, agents, environment (+ a `doctor` that walks dependencies in order), providers (including custom providers), routing (status, fallbacks, Autofix, recording, custom/header tiers), models/pricing, and the request ledger. They call the same services as the REST controllers through `McpToolDeps` (`tool-deps.ts`); `tool-result.ts` is the shared result envelope.
+- **Tools** (`mcp/tools/*.tools.ts`): identity, agents, environment (+ a `doctor` that walks dependencies in order), providers (including custom providers), routing (status, fallbacks, Autofix, recording, custom/header tiers, per-tier model params), models/pricing, and the request ledger. They call the same services as the REST controllers through `McpToolDeps` (`tool-deps.ts`); `tool-result.ts` is the shared result envelope.
 - **Testing**: `auth.instance.ts` is ESM-only and cannot load under Jest on Node 22, which is why the scope constants live in the leaf module `auth/mcp-scopes.ts` — import from there in guards, tools, and specs.
 
 ## Multi-Tenancy Model
@@ -424,7 +424,7 @@ Every resource belongs to a tenant; users only authenticate and (optionally) app
 | GET                       | `/api/v1/errors/breakdown`                      | Session/API Key                     | Error breakdown analytics                                                                                   |
 | GET/PATCH                 | `/api/v1/billing/*`                             | Session/API Key                     | Billing status, light `plan` endpoint, email preferences (Stripe)                                           |
 | POST                      | `/api/v1/waitlist/autofix/claim`                | Public                              | Deprecated no-op compatibility route for older self-hosted versions                                         |
-| POST                      | `/api/v1/waitlist/pivot/claim`                  | Public                              | Pivot ("self-healing layer for APIs") waiting-list claim; records origin (cloud/self-hosted)                |
+| POST                      | `/api/v1/waitlist/pivot/claim`                  | Public                              | Closed pivot waiting-list claim, kept for older self-hosted versions; records origin (cloud/self-hosted)   |
 | GET/POST                  | `/api/v1/autofix/status` / `.../enable-all`     | Session/API Key                     | Workspace Autofix coverage + API-only fleet enable (no dashboard caller)                                    |
 | GET                       | `/api/v1/overview/autofix-*`                    | Session/API Key                     | Autofix analytics (stats, timeseries, per-agent/provider/model)                                             |
 | POST                      | `/api/v1/discovery/complete`                    | Session/API Key                     | Best-effort self-hosted discovery submission forwarded to Peacock                                           |
@@ -433,6 +433,7 @@ Every resource belongs to a tenant; users only authenticate and (optionally) app
 | GET/PUT/DELETE            | `/api/v1/agents/:agentName/enabled-providers*`  | Session/API Key                     | Per-agent provider enable/disable + impact preview                                                          |
 | GET/POST/PATCH/DELETE     | `/api/v1/notifications/*`                       | Session/API Key                     | Notification rules CRUD + email provider config                                                             |
 | GET/POST/PUT/PATCH/DELETE | `/api/v1/routing/:agentName/*`                  | Session/API Key                     | Routing config (tiers, providers, model-params, header-tiers, custom-providers, specificity, autofix, recording, etc.) |
+| GET/PATCH                 | `/api/v1/routing/:agentName/tiers/:tier/model-params` | Session/API Key                     | Model params addressed by tier (`default` or a custom tier name) + `?model=` (defaults to the tier primary); backs `mnfst routing params` and the MCP `manifest_routing_params_*` tools. Writes the same rows as the scope-keyed `…/model-params` |
 | POST                      | `/api/v1/routing/ollama/sync`                   | Session/API Key                     | Sync Ollama models                                                                                          |
 | GET                       | `/api/v1/routing/pricing-health`                | Session/API Key                     | OpenRouter pricing sync health                                                                              |
 | POST                      | `/api/v1/routing/pricing/refresh`               | Session/API Key                     | Force pricing cache refresh                                                                                 |
@@ -441,14 +442,14 @@ Every resource belongs to a tenant; users only authenticate and (optionally) app
 | POST                      | `/api/v1/routing/subscription-providers`        | Bearer (mnfst\_\*)                  | Subscription provider config                                                                                |
 | GET                       | `/api/v1/setup/status`                          | Public                              | First-run setup status                                                                                      |
 | POST                      | `/api/v1/setup/admin`                           | Public                              | Create initial admin user                                                                                   |
-| GET                       | `/api/v1/public/*`                              | Public (opt-in)                     | Aggregate public stats (controlled by `MANIFEST_PUBLIC_STATS`)                                              |
+| GET                       | `/api/v1/public/error-pages*`                   | Public (opt-in)                     | Published error pages for the marketing site (controlled by `MANIFEST_PUBLIC_STATS`)                        |
 | GET                       | `/v1/models`                                    | Bearer (mnfst\_\*)                  | Available model list (proxy)                                                                                |
 | POST                      | `/v1/chat/completions`                          | Bearer (mnfst\_\*)                  | LLM proxy (OpenAI-compatible)                                                                               |
 | POST                      | `/v1/responses`                                 | Bearer (mnfst\_\*)                  | LLM proxy (OpenAI Responses API)                                                                            |
 | POST                      | `/v1/messages`                                  | Bearer (mnfst\_\*)                  | LLM proxy (Anthropic Messages API)                                                                          |
 | POST                      | `/chat/completions`                             | Public                              | Structured 404 pointing callers at `/v1/chat/completions` (missing `/v1` basePath — not a proxy alias)      |
 | ALL                       | `/otlp/v1/*`, `/v1/{traces,metrics,logs}`       | Public                              | Structured **410 Gone** — OTLP ingest is removed (`otlp-deprecated.controller.ts`)                          |
-| GET/POST/PATCH            | `/api/v1/playground/*`                          | Session/API Key                     | Playground runs (run, list, star, mark best)                                                                |
+| GET/POST/PATCH/DELETE    | `/api/v1/playground/*`                          | Session/API Key                     | Playground: model catalog (incl. synthetic `auto-*`), run text/image/video, video task poll, run history (list, rename, delete, star, mark best, delete column) |
 | GET                       | `/api/v1/events`                                | Session                             | SSE real-time events                                                                                        |
 | GET                       | `/api/v1/github/stars`                          | Public                              | GitHub star count                                                                                           |
 | GET                       | `/api/v1/version`                               | Session/API Key                     | Running version + latest GitHub release for the self-hosted update badge (24h cache; off in cloud)          |
@@ -473,6 +474,7 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - `WINGMAN_CORS_ORIGINS` — Production only. Extra browser origins allowed to call the gateway (comma-separated). The hosted Wingman (`https://wingman.manifest.build`) is always allowed.
 - `BETTER_AUTH_URL` — Base URL for Better Auth. Default: `http://localhost:{PORT}`
 - `FRONTEND_PORT` — Extra trusted origin port for Better Auth.
+- `MCP_ENABLED` — Set `false` to run without the remote MCP server. MCP needs an HTTPS `BETTER_AUTH_URL` (loopback HTTP is fine in dev) because `@better-auth/mcp` validates its protected-resource URL as the plugin is built; a plain-HTTP LAN or tailnet origin turns MCP off **automatically**, so this variable is only for switching it off on an install that could otherwise serve it. See [Remote MCP server](#remote-mcp-server).
 - `API_KEY` — Secret for programmatic API access (X-API-Key header).
 - `CLI_TOKEN_TTL_DAYS` — Sliding TTL in days for CLI-minted tokens (`mnfst login`); every authenticated request pushes the expiry out again. Default: `30`
 - `CLI_TOKEN_ABSOLUTE_TTL_DAYS` — Hard ceiling in days from issuance for CLI-minted tokens; the sliding TTL never outlives it. Default: `90`
@@ -491,6 +493,7 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - `STREAM_IDLE_TIMEOUT_MS` — Max silence (ms) between upstream streaming events before the attempt is failed with HTTP 504. Default: `180000`
 - `CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS` — Timeout (ms) to wait for deliverable ChatGPT Codex text or tool output. Default: `60000`
 - `MANIFEST_CONCURRENCY_MAX` — Per-tenant concurrent in-flight request limit for each backend process. Accepts a plain positive integer; invalid values fall back to `10`.
+- `MANIFEST_RATE_MAX_REQUESTS` / `MANIFEST_IP_RATE_MAX_REQUESTS` — Per-tenant (M201) and per-IP (M202) requests-per-minute caps on `/v1` proxy traffic for each backend process. Accept a plain positive integer; invalid values fall back to `200` / `500`.
 - `EMAIL_PROVIDER` — Unified email provider: `resend` (recommended), `mailgun`, or `sendgrid`. Used for Better Auth transactional emails and threshold alerts.
 - `EMAIL_API_KEY` — API key for the configured `EMAIL_PROVIDER`.
 - `EMAIL_DOMAIN` — Sending domain (required for Mailgun).
@@ -503,7 +506,7 @@ See `packages/backend/.env.example` for all variables. Key ones:
 - `MANIFEST_MODE` — `selfhosted` or `cloud` (default: `cloud`; auto-detected as `selfhosted` inside Docker via `/.dockerenv` or Podman via `/run/.containerenv`). Self-hosted mode allows custom-provider URLs with `http://` / private IPs. `local` is accepted as a legacy alias for `selfhosted`.
 - `MANIFEST_TELEMETRY_DISABLED` — Set `1` to opt out of anonymous telemetry (self-hosted only).
 - `MANIFEST_UPDATE_CHECK_DISABLED` — Set `1` to stop the self-hosted dashboard's daily "new version available" check against GitHub Releases (`GET /api/v1/version`, `version/` module). Separate from the telemetry opt-out: air-gapped installs want no outbound calls at all. Never runs in cloud mode.
-- `MANIFEST_PUBLIC_STATS` — Set `true` to expose `/api/v1/public/*` aggregate stats without auth (cloud-only marketing use).
+- `MANIFEST_PUBLIC_STATS` — Set `true` to serve the published error pages at `/api/v1/public/error-pages*` without auth (cloud-only marketing use). The name predates the removal of the aggregate usage endpoints; it is kept so existing deployments stay on.
 - `CRM_METRICS_SECRET` — Cloud only. Shared secret for `GET /api/v1/internal/crm-metrics*` (healed-user cohort; the response carries counts only, no provider breakdown — that join cost 1.1s against the route's 1.5s `statement_timeout` at a wide window), sent in the `x-internal-secret` header. Empty by default and anything under 32 chars counts as unset, because this is the only route that exports user email addresses across tenants. Separate from `ERROR_PAGE_PUSH_SECRET` on purpose: different consumer, different credential. Self-hosted installs never register the module and migration `1802200000000` skips its index there, so the feature leaves no trace on their schema or routes.
 - `TELEMETRY_ENDPOINT` — Where self-hosted installs POST the anonymous usage report. Default: `https://telemetry.manifest.build/v1/report`. See [Telemetry](#anonymous-usage-telemetry-self-hosted).
 - `DISCOVERY_ENDPOINT` — Optional override for the discovery submission endpoint. Default: `https://blue.manifest.build/v1/self-hosted/discovery`.
@@ -544,7 +547,7 @@ This rule exists because the Overview and Messages pages previously drifted and 
 
 ## Manifest's own errors (`M###`)
 
-Every failure Manifest itself produces — as opposed to one a provider returned — carries a documented code from `MANIFEST_ERRORS` in `packages/backend/src/common/errors/error-codes.ts`, published at `https://manifest.build/docs/errors/<code>`.
+Every failure Manifest itself produces — as opposed to one a provider returned — carries a documented code from `MANIFEST_ERRORS` in `packages/backend/src/common/errors/error-codes.ts`, published at `https://manifest.build/llm-gateway/docs/errors/<code>`.
 
 **Raise them with `ManifestError`** (`common/errors/manifest-error.ts`), never a bare `HttpException`. The type is what lets `proxy.controller.ts` tell "Manifest refused this request" from "the provider returned a 4xx". Before it existed, a malformed body (M300) and a Manifest bug (M500) were both recorded as _provider_ errors and counted against `provider_error_rate`.
 
@@ -637,7 +640,7 @@ send one aggregate usage report per 24h to `TELEMETRY_ENDPOINT` (default
   `MANIFEST_TELEMETRY_DISABLED=1` opt-out.
 - Runtime: `platform` (`process.platform`), `arch` (`process.arch`)
 
-User-facing spec: https://manifest.build/docs/self-hosted#telemetry
+User-facing spec: https://manifest.build/llm-gateway/docs/self-hosted/#telemetry
 
 **Explicitly never sent**: tenant/user IDs, emails, API keys, prompts,
 message contents, model names, custom provider URLs, OAuth client IDs,
@@ -767,7 +770,7 @@ The id is minted lazily by `InstallIdService.getOrCreate()` (exported from `Tele
 
 **Self-hosted consent is once, and rides on the per-agent enable.** On self-hosted, consent is remembered via `install_metadata.autofix_consented_at` — a single nullable column on the existing telemetry singleton. Consent is recorded by **any** enable path: the per-agent `PATCH …/autofix` with `enabled: true` (a disable never mints it), the enable-all endpoint, and the Autofix switch on first agent creation. The singleton row is upserted, minting an `install_id` if telemetry never did — so consent alone never starts telemetry.
 
-**The Autofix sidebar card is retired.** `components/Sidebar.tsx` now shows a `PivotAnnouncement` card instead (the "self-healing layer for APIs" pivot announcement + waiting-list modal, shown in every deployment mode with a per-session dismiss) — the old Autofix enablement card duplicated what notifications already cover. The per-harness **Settings** toggle (`SettingsAutofixSection.tsx`) is the enablement path in the dashboard.
+**The sidebar carries no Autofix card.** The Autofix enablement card duplicated what notifications already cover, and the cards promoting the self-healing product are gone. The only sidebar card is the API Bot announcement. The per-harness **Settings** toggle (`SettingsAutofixSection.tsx`) is the enablement path in the dashboard.
 
 `POST /api/v1/autofix/enable-all` remains as an API-level fleet backfill (no dashboard caller): it runs `UPDATE agents SET autofix_enabled = true` for every live, non-playground agent in the tenant (**including any previously turned off**), invalidates the per-tenant config cache, records consent, and returns the refreshed workspace status. Soft-deleted agents are left alone so resurrecting one doesn't silently arrive with Autofix on.
 

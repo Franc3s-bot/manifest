@@ -688,6 +688,79 @@ describe('Responses adapter', () => {
       });
     });
 
+    it('maps OpenAI-compatible cache and reasoning usage details', () => {
+      const openai = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 50,
+            total_tokens: 1050,
+            prompt_tokens_details: { cached_tokens: 800 },
+            completion_tokens_details: { reasoning_tokens: 30 },
+          },
+        },
+        'm',
+      );
+      const deepseek = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, prompt_cache_hit_tokens: 64 },
+        },
+        'm',
+      );
+
+      expect(openai.usage).toEqual({
+        input_tokens: 1000,
+        input_tokens_details: { cached_tokens: 800, cache_write_tokens: 0 },
+        output_tokens: 50,
+        output_tokens_details: { reasoning_tokens: 30 },
+        total_tokens: 1050,
+      });
+      expect(deepseek.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+      });
+    });
+
+    it('reports cached input from a top-level cached_tokens key', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, cached_tokens: 40 },
+        },
+        'm',
+      );
+
+      expect(result.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 40, cache_write_tokens: 0 },
+      });
+    });
+
+    it.each([
+      ['top-level cache_creation_tokens', { cache_creation_tokens: 12 }],
+      ['top-level cache_creation_input_tokens', { cache_creation_input_tokens: 12 }],
+      [
+        'prompt_tokens_details.cache_write_tokens',
+        { prompt_tokens_details: { cache_write_tokens: 12 } },
+      ],
+      [
+        'prompt_tokens_details.cache_creation_input_tokens',
+        { prompt_tokens_details: { cache_creation_input_tokens: 12 } },
+      ],
+    ])('reports cache writes from %s', (_key, cacheUsage) => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, ...cacheUsage },
+        },
+        'm',
+      );
+
+      expect(result.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 12 },
+      });
+    });
+
     it('handles missing choices, non-string content, and missing usage', () => {
       const result = fromChatCompletionResponse({ choices: [{ message: { content: 7 } }] }, 'm');
       expect(result.model).toBe('m');
@@ -695,97 +768,12 @@ describe('Responses adapter', () => {
       expect(result.usage).toBeNull();
     });
 
-    it('keeps tool calls when the structured-output tool name does not match', () => {
-      const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'lookup', arguments: '{"id":1}' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        'claude-sonnet-4',
-        { structuredOutputToolName: 'patient_summary' },
-      );
-
-      expect(result.output).toEqual([
-        expect.objectContaining({
-          type: 'function_call',
-          call_id: 'call_1',
-          name: 'lookup',
-          arguments: '{"id":1}',
-        }),
-      ]);
-    });
-
-    it('uses safe defaults for malformed structured-output tool calls', () => {
-      const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  null,
-                  { id: 'bad_call', type: 'function' },
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'patient_summary' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        'claude-sonnet-4',
-        {
-          structuredOutputToolName: 'patient_summary',
-          textFormat: { type: 'text' },
-        },
-      );
-
-      expect(result.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          role: 'assistant',
-          content: [{ type: 'output_text', text: '{}', annotations: [] }],
-        }),
-      ]);
-      expect(result.text).toEqual({ format: { type: 'text' } });
-    });
-
-    it('unwraps the configured structured-output tool call into response text', () => {
+    it('echoes the json_schema text format on the response', () => {
       const schema = { type: 'object', properties: { title: { type: 'string' } } };
       const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'patient_summary', arguments: '{"title":"ok"}' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
+        { choices: [{ message: { content: '{"title":"ok"}' } }] },
         'claude-sonnet-4',
         {
-          structuredOutputToolName: 'patient_summary',
           textFormat: {
             type: 'json_schema',
             name: 'patient_summary',
@@ -799,7 +787,6 @@ describe('Responses adapter', () => {
       expect(result.output).toEqual([
         expect.objectContaining({
           type: 'message',
-          role: 'assistant',
           content: [{ type: 'output_text', text: '{"title":"ok"}', annotations: [] }],
         }),
       ]);
@@ -812,6 +799,37 @@ describe('Responses adapter', () => {
           strict: true,
         },
       });
+    });
+
+    it('falls back to text for non-structured formats and skips malformed tool calls', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  null,
+                  { id: 'bad_call', type: 'function' },
+                  { id: 'call_1', type: 'function', function: { name: 'lookup' } },
+                ],
+              },
+            },
+          ],
+        },
+        'claude-sonnet-4',
+        { textFormat: { type: 'text' } },
+      );
+
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'lookup',
+          arguments: '{}',
+        }),
+      ]);
+      expect(result.text).toEqual({ format: { type: 'text' } });
     });
   });
 
@@ -1184,52 +1202,6 @@ describe('Responses adapter', () => {
       // `finish_reason` chunk carried no text delta, so the tail before finalize
       // is empty.
       expect(tail).toBe('');
-    });
-
-    it('streams configured structured-output tool arguments as response text', () => {
-      const t = createResponsesStreamTransformer('claude-sonnet-4', {
-        structuredOutputToolName: 'patient_summary',
-        textFormat: { type: 'json_object' },
-      });
-      const first =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"toolu_1","function":{"name":"patient_summary","arguments":"{\\"title\\""}}]}}]}\n\n',
-        ) ?? '';
-      const second =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"ok\\"}"}}]}}]}\n\n',
-        ) ?? '';
-      const end = t.finalize() ?? '';
-
-      expect(firstEventData(first, 'response.output_text.delta')!.delta).toBe('{"title"');
-      expect(firstEventData(second, 'response.output_text.delta')!.delta).toBe(':"ok"}');
-      const completed = firstEventData(end, 'response.completed')!;
-      expect(completed.response.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          content: [{ type: 'output_text', text: '{"title":"ok"}', annotations: [] }],
-        }),
-      ]);
-      expect(completed.response.text).toEqual({ format: { type: 'json_object' } });
-    });
-
-    it('ignores malformed structured-output stream tool-call entries', () => {
-      const t = createResponsesStreamTransformer('claude-sonnet-4', {
-        structuredOutputToolName: 'patient_summary',
-      });
-      const out =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[null,{"index":1},{"function":{"name":"patient_summary","arguments":"{}"}}]}}]}\n\n',
-        ) ?? '';
-
-      expect(firstEventData(out, 'response.output_text.delta')!.delta).toBe('{}');
-      const completed = firstEventData(t.finalize() ?? '', 'response.completed')!;
-      expect(completed.response.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          content: [{ type: 'output_text', text: '{}', annotations: [] }],
-        }),
-      ]);
     });
 
     it('emits no item events and an empty output for usage-only streams', () => {

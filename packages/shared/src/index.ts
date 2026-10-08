@@ -76,6 +76,29 @@ export type { ResponseMode } from './response-mode';
 export { DEFAULT_OUTPUT_MODALITY, OUTPUT_MODALITIES, isOutputModality } from './output-modality';
 export type { OutputModality } from './output-modality';
 export {
+  MEDIA_OUTPUT_MODALITIES,
+  IMAGE_RESPONSE_FORMATS,
+  VIDEO_STATUSES,
+  AGNES_MEDIA_PRICES,
+  FAL_MEDIA_PRICES,
+  IMAGE_GENERATION_ENDPOINT,
+  VIDEO_GENERATION_ENDPOINT,
+  isMediaOutputModality,
+  mediaEndpointsForOutputModalities,
+} from './media';
+export type {
+  MediaOutputModality,
+  ImageResponseFormat,
+  ImageGenerationRequest,
+  GeneratedImage,
+  ImageGenerationResponse,
+  VideoStatus,
+  VideoGenerationRequest,
+  VideoObject,
+  MediaPriceTable,
+  MediaRate,
+} from './media';
+export {
   routeEquals,
   isModelRoute,
   isModelRouteArray,
@@ -154,9 +177,24 @@ export {
   META_MODEL_API_CONTEXT_WINDOW,
   META_MODEL_API_MODELS,
   META_MODEL_API_MODEL_BY_ID,
+  AGNES_MODELS,
+  AGNES_MODEL_BY_ID,
+  AGNES_BASE_URL,
+  AGNES_TASK_ORIGIN,
+  FAL_MODELS,
+  FAL_MODEL_BY_ID,
+  FAL_BASE_URL,
+  FAL_QUEUE_BASE_URL,
+  FAL_PLATFORM_MODELS_URL,
   normalizeProviderName,
 } from './providers';
-export type { SharedProviderEntry, LocalServerHint, MetaModelApiModel } from './providers';
+export type {
+  SharedProviderEntry,
+  LocalServerHint,
+  MetaModelApiModel,
+  AgnesModelEntry,
+  FalModelEntry,
+} from './providers';
 export type { ResolveResponse } from './resolve-response';
 export {
   SUBSCRIPTION_PROVIDER_CONFIGS,
@@ -168,8 +206,14 @@ export {
   getSubscriptionCapabilities,
 } from './subscription';
 export type { SubscriptionCapabilities, SubscriptionProviderConfig } from './subscription';
+export { PLAYGROUND_OUTPUT_KINDS, isPlaygroundOutputKind } from './playground';
 export type {
+  PlaygroundOutputKind,
   PlaygroundMetrics,
+  PlaygroundResolvedRoute,
+  PlaygroundImageOutput,
+  PlaygroundVideoOutput,
+  PlaygroundMediaOutput,
   PlaygroundRunResult,
   PlaygroundStreamEvent,
   PlaygroundHistoryColumn,

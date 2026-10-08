@@ -31,7 +31,9 @@ const Upgrade: Component = () => {
   const [billingBusy, setBillingBusy] = createSignal(false);
 
   const status = () => billing();
-  const isRequestLimitEntry = () => searchParams.reason === 'requests';
+  // `?reason=requests` comes from links on old blocked requests and emails, so
+  // it can outlive the Free plan. Only a Free tenant has a limit to report.
+  const isRequestLimitEntry = () => searchParams.reason === 'requests' && status()?.plan === 'free';
   const proPrice = () => formatBillingPrice(status()?.priceMonthly);
 
   createEffect(() => {

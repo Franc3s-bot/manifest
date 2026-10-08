@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RouteModelParamsModule } from './model-params/route-model-params.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ModelPricesModule } from '../model-prices/model-prices.module';
 import { ModelDiscoveryModule } from '../model-discovery/model-discovery.module';
@@ -11,6 +12,7 @@ import { ResolveModule } from './resolve/resolve.module';
 import { HeaderTiersModule } from './header-tiers/header-tiers.module';
 import { AutofixModule } from './autofix/autofix.module';
 import { CommandCodeModule } from './command-code/command-code.module';
+import { MediaModule } from './media/media.module';
 import { ProviderController } from './provider.controller';
 import { TierController } from './tier.controller';
 import { ModelController } from './model.controller';
@@ -59,6 +61,8 @@ import { InstallMetadata } from '../entities/install-metadata.entity';
     HeaderTiersModule,
     AutofixModule,
     CommandCodeModule,
+    RouteModelParamsModule,
+    MediaModule,
   ],
   controllers: [
     ProviderController,

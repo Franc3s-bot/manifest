@@ -16,7 +16,7 @@ export class ManifestApi implements ICredentialType {
 		dark: 'file:../nodes/Manifest/manifest-logo.dark.svg',
 	} as const;
 
-	documentationUrl = 'https://manifest.build/docs';
+	documentationUrl = 'https://manifest.build/llm-gateway/docs/introduction/';
 
 	properties: INodeProperties[] = [
 		{

@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import request from 'supertest';
 import {
   API_BODY_LIMIT,
+  PLAYGROUND_BODY_LIMIT,
   PROXY_BODY_LIMIT,
   PROXY_BODY_LIMIT_BYTES,
   bodyParserErrorHandler,
@@ -61,6 +62,22 @@ describe('body parser limits', () => {
       error: 'Bad Request',
       statusCode: 400,
     });
+  });
+
+  it('allows the Playground run endpoint to exceed the regular API body limit', async () => {
+    const app = express();
+    app.use('/api/v1/playground/run', express.json({ limit: PLAYGROUND_BODY_LIMIT }));
+    app.use(express.json({ limit: API_BODY_LIMIT }));
+    app.use(bodyParserErrorHandler);
+    app.post('/api/v1/playground/run', (_req: Request, res: Response) => {
+      res.json({ ok: true });
+    });
+
+    // 2 MB of inline prompt/attachment data — well over the 1 MB API limit.
+    await request(app)
+      .post('/api/v1/playground/run')
+      .send({ prompt: 'x'.repeat(2 * 1024 * 1024) })
+      .expect(200);
   });
 
   it('limits the total Content-Length of proxy request bodies in flight', () => {

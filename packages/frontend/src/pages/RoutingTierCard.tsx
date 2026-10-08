@@ -158,6 +158,9 @@ const RoutingTierCard: Component<RoutingTierCardProps> = (props) => {
   // chip (mirrors the desktop dragover highlight above).
   const [chipTouchDropTarget, setChipTouchDropTarget] = createSignal(false);
   const [swappingFbIndex, setSwappingFbIndex] = createSignal<number | null>(null);
+  // Set while FallbackList persists a reorder. The primary chip is a drag
+  // source into that same list, so it stays locked until the write lands.
+  const [fallbackReordering, setFallbackReordering] = createSignal(false);
 
   const handlePrimaryDragStart = (e: DragEvent) => {
     setPrimaryDragging(true);
@@ -525,7 +528,7 @@ const RoutingTierCard: Component<RoutingTierCardProps> = (props) => {
                         'routing-card__model-chip--skipped': primarySkipped(),
                       }}
                       title={primarySkipped() ? 'Skipped while Stream mode is active' : undefined}
-                      draggable={true}
+                      draggable={!fallbackReordering()}
                       onDragStart={handlePrimaryDragStart}
                       onDragEnd={handlePrimaryDragEnd}
                       onDragOver={handlePrimaryDragOver}
@@ -719,6 +722,7 @@ const RoutingTierCard: Component<RoutingTierCardProps> = (props) => {
               getModelParams={props.getModelParams}
               setModelParams={props.setModelParams}
               swappingIndex={swappingFbIndex()}
+              onReorderingChange={setFallbackReordering}
               modelParamsScope={modelParamsScopeForTier(props.stage.id)}
               responseMode={props.tier()?.response_mode ?? 'buffered'}
             />

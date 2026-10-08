@@ -384,7 +384,13 @@ describe('ProxyController', () => {
     await expect(controller.models(mockRequest({}) as never, 'true')).resolves.toEqual({
       object: 'list',
       data: [
-        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'auto',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: { synthetic: true, features: ['router'] },
+        },
         {
           id: 'openai/gpt-5.4-mini-subscription',
           object: 'model',
@@ -483,7 +489,7 @@ describe('ProxyController', () => {
     expect(withoutCosts.data.every((model) => !('cost' in model))).toBe(true);
   });
 
-  it('should omit the capabilities field for models with unknown metadata and for auto', async () => {
+  it('should omit the capabilities field for models with unknown metadata while marking the auto router', async () => {
     modelDiscovery.getModelsForAgent.mockResolvedValue([
       makeDiscoveredModel({ id: 'mystery-model', provider: 'kiro' }),
       // No discovery-time modalities: the curated known-modalities fallback
@@ -498,7 +504,13 @@ describe('ProxyController', () => {
     await expect(controller.models(mockRequest({}) as never, 'true')).resolves.toEqual({
       object: 'list',
       data: [
-        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'auto',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: { synthetic: true, features: ['router'] },
+        },
         { id: 'kiro/mystery-model', object: 'model', created: 0, owned_by: 'kiro' },
         {
           id: 'openai/gpt-5.3-codex-spark-subscription',
@@ -520,9 +532,30 @@ describe('ProxyController', () => {
 
   it('should expose auto-tier synthetic models with aggregated context window when ?capabilities=true', async () => {
     modelDiscovery.getModelsForAgent.mockResolvedValue([
-      makeDiscoveredModel({ id: 'zz-model-a', provider: 'openai', contextWindow: 200_000 }),
-      makeDiscoveredModel({ id: 'zz-model-b', provider: 'anthropic', contextWindow: 200_000 }),
-      makeDiscoveredModel({ id: 'zz-model-c', provider: 'gemini', contextWindow: 1_000_000 }),
+      makeDiscoveredModel({
+        id: 'zz-model-a',
+        provider: 'openai',
+        contextWindow: 200_000,
+        contextWindowSource: 'provider',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      }),
+      makeDiscoveredModel({
+        id: 'zz-model-b',
+        provider: 'anthropic',
+        contextWindow: 200_000,
+        contextWindowSource: 'provider',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      }),
+      makeDiscoveredModel({
+        id: 'zz-model-c',
+        provider: 'gemini',
+        contextWindow: 1_000_000,
+        contextWindowSource: 'provider',
+        inputModalities: ['text'],
+        outputModalities: ['text'],
+      }),
     ]);
     headerTierService.list.mockResolvedValue([
       {
@@ -550,14 +583,23 @@ describe('ProxyController', () => {
     await expect(controller.models(mockRequest({}) as never, 'true')).resolves.toEqual({
       object: 'list',
       data: [
-        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'auto',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: { synthetic: true, features: ['router'] },
+        },
         {
           id: 'openai/zz-model-a',
           object: 'model',
           created: 0,
           owned_by: 'openai',
           capabilities: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
             features: ['stream'],
+            context_window: 200_000,
           },
         },
         {
@@ -566,7 +608,10 @@ describe('ProxyController', () => {
           created: 0,
           owned_by: 'anthropic',
           capabilities: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
             features: ['stream'],
+            context_window: 200_000,
           },
         },
         {
@@ -575,7 +620,10 @@ describe('ProxyController', () => {
           created: 0,
           owned_by: 'gemini',
           capabilities: {
+            input_modalities: ['text'],
+            output_modalities: ['text'],
             features: ['stream'],
+            context_window: 1_000_000,
           },
         },
         {
@@ -587,6 +635,9 @@ describe('ProxyController', () => {
             input_modalities: ['text'],
             output_modalities: ['text'],
             context_window: 200_000,
+            synthetic: true,
+            capabilities_coverage: 'complete',
+            unresolved_chain_members: 0,
           },
         },
       ],
@@ -645,7 +696,13 @@ describe('ProxyController', () => {
     await expect(controller.models(mockRequest({}) as never, 'true')).resolves.toEqual({
       object: 'list',
       data: [
-        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'auto',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: { synthetic: true, features: ['router'] },
+        },
         {
           id: 'openai/gpt-4o',
           object: 'model',
@@ -679,7 +736,13 @@ describe('ProxyController', () => {
     await expect(controller.models(mockRequest({}) as never, 'true', 'true')).resolves.toEqual({
       object: 'list',
       data: [
-        { id: 'auto', object: 'model', created: 0, owned_by: 'manifest' },
+        {
+          id: 'auto',
+          object: 'model',
+          created: 0,
+          owned_by: 'manifest',
+          capabilities: { synthetic: true, features: ['router'] },
+        },
         {
           id: 'openai/gpt-4o',
           object: 'model',
@@ -693,6 +756,186 @@ describe('ProxyController', () => {
           cost: { input: 2.5, output: 10 },
         },
       ],
+    });
+  });
+
+  describe('media projection and single-model lookup', () => {
+    const imageModel = makeDiscoveredModel({
+      id: 'agnes-image-2.1-flash',
+      provider: 'agnes',
+      inputModalities: ['text', 'image'],
+      outputModalities: ['image'],
+      contextWindow: 128_000,
+      contextWindowSource: 'provider_default',
+    });
+
+    it('exposes supported_endpoints and a media price for an image model', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([imageModel]);
+
+      const result = await controller.models(mockRequest({}) as never, 'true', 'true');
+      const entry = result.data.find((model) => model.id === 'agnes/agnes-image-2.1-flash');
+
+      expect(entry?.capabilities).toEqual({
+        input_modalities: ['text', 'image'],
+        output_modalities: ['image'],
+        supported_endpoints: ['/v1/images/generations'],
+      });
+      expect(entry?.media_cost).toEqual({
+        unit: 'image',
+        rates: { default: 0.01, '1K': 0.01, '2K': 0.018, '3K': 0.021, '4K': 0.024 },
+      });
+      // Token pricing does not apply to media generation.
+      expect(entry?.cost).toBeUndefined();
+    });
+
+    it('filters the list by output modality in one call', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        imageModel,
+        makeDiscoveredModel({ id: 'gpt-4o', provider: 'openai', outputModalities: ['text'] }),
+      ]);
+
+      const result = await controller.models(
+        mockRequest({}) as never,
+        'true',
+        undefined,
+        undefined,
+        'image',
+      );
+
+      expect(result.data.map((model) => model.id)).toEqual(['agnes/agnes-image-2.1-flash']);
+    });
+
+    it('keeps unknown-output entries only under the text filter', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        imageModel,
+        makeDiscoveredModel({ id: 'gpt-4o', provider: 'openai' }),
+      ]);
+
+      const text = await controller.models(
+        mockRequest({}) as never,
+        undefined,
+        undefined,
+        undefined,
+        'text',
+      );
+      expect(text.data.map((model) => model.id)).toEqual(['auto', 'openai/gpt-4o']);
+
+      const video = await controller.models(
+        mockRequest({}) as never,
+        undefined,
+        undefined,
+        undefined,
+        'video',
+      );
+      expect(video.data).toEqual([]);
+    });
+
+    it('filters a media tier by output modality without publishing capabilities', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([imageModel]);
+      headerTierService.list.mockResolvedValue([
+        {
+          id: 'tier-image',
+          agent_id: 'agent-1',
+          tenant_id: 'tenant-1',
+          name: 'image',
+          header_key: 'x-manifest-complexity',
+          header_value: 'image',
+          badge_color: 'blue',
+          sort_order: 0,
+          enabled: true,
+          override_route: {
+            provider: 'agnes',
+            authType: 'api_key',
+            model: 'agnes-image-2.1-flash',
+          },
+          fallback_routes: null,
+          output_modality: 'image',
+          response_mode: 'buffered',
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        },
+      ]);
+
+      const result = await controller.models(
+        mockRequest({}) as never,
+        undefined,
+        undefined,
+        undefined,
+        'image',
+      );
+
+      expect(result.data.map((model) => model.id)).toEqual([
+        'agnes/agnes-image-2.1-flash',
+        'auto-image',
+      ]);
+      // The filter must not leak capabilities into the default payload.
+      expect(result.data.every((model) => model.capabilities === undefined)).toBe(true);
+    });
+
+    it('rejects an unknown output filter', async () => {
+      await expect(
+        controller.models(mockRequest({}) as never, undefined, undefined, undefined, 'audio'),
+      ).rejects.toThrow('"output" must be one of: text, image, video.');
+    });
+
+    it('omits the chat context window for a pure media auto tier', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([imageModel]);
+      headerTierService.list.mockResolvedValue([
+        {
+          id: 'tier-image',
+          agent_id: 'agent-1',
+          tenant_id: 'tenant-1',
+          name: 'Image',
+          header_key: 'x-manifest-complexity',
+          header_value: 'image',
+          badge_color: 'blue',
+          sort_order: 0,
+          enabled: true,
+          override_route: {
+            provider: 'agnes',
+            authType: 'api_key',
+            model: 'agnes-image-2.1-flash',
+          },
+          fallback_routes: null,
+          output_modality: 'image',
+          response_mode: 'buffered',
+          created_at: '2026-01-01T00:00:00.000Z',
+          updated_at: '2026-01-01T00:00:00.000Z',
+        },
+      ]);
+
+      const result = await controller.models(mockRequest({}) as never, 'true');
+      const entry = result.data.find((model) => model.id === 'auto-image');
+
+      expect(entry?.capabilities?.context_window).toBeUndefined();
+      expect(entry?.capabilities?.max_output_tokens).toBeUndefined();
+      expect(entry?.capabilities?.supported_endpoints).toEqual(['/v1/images/generations']);
+      expect(entry?.capabilities?.synthetic).toBe(true);
+      expect(entry?.capabilities?.capabilities_coverage).toBe('complete');
+    });
+
+    it('serves a single model by the published id, including slashed ids', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        makeDiscoveredModel({
+          id: 'gpt-4o',
+          provider: 'openai',
+          contextWindow: 200_000,
+          contextWindowSource: 'provider',
+        }),
+      ]);
+
+      const entry = await controller.model(mockRequest({}) as never, 'openai/gpt-4o', 'true');
+
+      expect(entry.id).toBe('openai/gpt-4o');
+      expect(entry.capabilities?.context_window).toBe(200_000);
+    });
+
+    it('404s an unknown single-model id', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([]);
+
+      await expect(
+        controller.model(mockRequest({}) as never, 'openai/ghost', undefined),
+      ).rejects.toThrow('is not available for this agent');
     });
   });
 
@@ -1617,6 +1860,94 @@ describe('ProxyController', () => {
         provider: 'openai',
         model: 'gpt-5.3-codex',
       }),
+    });
+  });
+
+  describe('post-routing M500 rows', () => {
+    const failAfterRouting = (meta: Record<string, unknown>) => {
+      proxyService.proxyRequest.mockResolvedValue({
+        forward: {
+          response: new Response('data: {}\n\n', {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: true,
+        },
+        meta,
+      });
+      (providerClient as Record<string, jest.Mock>).collectChatGptSseResponse = jest
+        .fn()
+        .mockImplementation(() => {
+          throw new Error('adapter bug');
+        });
+    };
+
+    it('keeps the tier and header tier the request was routed through', async () => {
+      failAfterRouting({
+        tier: 'standard',
+        model: 'gpt-5.3-codex',
+        provider: 'openai',
+        confidence: 0.8,
+        reason: 'header-match',
+        specificity_category: 'coding',
+        header_tier_id: 'header-tier-1',
+        header_tier_name: 'Program Weeks',
+        header_tier_color: 'indigo',
+      });
+      const manifestSpy = jest.spyOn(recorder, 'recordManifestBlockedRequest');
+
+      const req = mockRequest({ messages: [{ role: 'user', content: 'test' }] });
+      const { res } = mockResponse();
+      await controller.chatCompletions(req as never, res as never);
+      await flushRecorderMicrotasks();
+
+      expect(manifestSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          errorCode: 'M500',
+          routing: {
+            tier: 'standard',
+            specificityCategory: 'coding',
+            headerTierId: 'header-tier-1',
+            headerTierName: 'Program Weeks',
+            headerTierColor: 'indigo',
+          },
+        }),
+      );
+      expect(mockMessageRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error_code: 'M500',
+          provider: null,
+          routing_tier: 'standard',
+          specificity_category: 'coding',
+          header_tier_id: 'header-tier-1',
+          header_tier_name: 'Program Weeks',
+          header_tier_color: 'indigo',
+        }),
+      );
+    });
+
+    it("does not stamp a friendly stub's placeholder tier", async () => {
+      failAfterRouting({
+        tier: 'simple',
+        model: 'manifest',
+        provider: 'manifest',
+        confidence: 1,
+        reason: 'manifest_internal_error',
+      });
+      const manifestSpy = jest.spyOn(recorder, 'recordManifestBlockedRequest');
+
+      const req = mockRequest({ messages: [{ role: 'user', content: 'test' }] });
+      const { res } = mockResponse();
+      await controller.chatCompletions(req as never, res as never);
+      await flushRecorderMicrotasks();
+
+      expect(manifestSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.not.objectContaining({ routing: expect.anything() }),
+      );
     });
   });
 
@@ -3255,6 +3586,93 @@ describe('ProxyController', () => {
 
       expect(successSpy).not.toHaveBeenCalled();
       expect(cancelledSpy).toHaveBeenCalled();
+    });
+
+    it('cancels earlier pending attempts when the caller closes mid fallback chain', async () => {
+      let closeListener: (() => void) | undefined;
+      const cancelledSpy = jest.spyOn(recorder, 'recordCancelledRequest');
+      const attemptIds: string[] = [];
+      proxyService.proxyRequest.mockImplementation(
+        async (options: { startProviderAttempt: StartProviderAttempt }) => {
+          const primary = options.startProviderAttempt({ provider: 'openai', model: 'gpt-4o' });
+          const cooldown = options.startProviderAttempt({
+            provider: 'anthropic',
+            model: 'claude-opus-5',
+            providerCallStarted: false,
+          });
+          const fallback = options.startProviderAttempt({
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+          });
+          attemptIds.push(primary.id, cooldown.id, fallback.id);
+          // The primary failed, the chain moved on, then the caller hung up and
+          // the fallback call rejected with the aborted signal.
+          closeListener?.();
+          throw new DOMException('This operation was aborted', 'AbortError');
+        },
+      );
+      const { res } = mockResponse();
+      (res.once as jest.Mock).mockImplementation((event: string, cb: () => void) => {
+        if (event === 'close') closeListener = cb;
+      });
+
+      await controller.chatCompletions(
+        mockRequest({ messages: [{ role: 'user', content: 'hi' }] }) as never,
+        res as never,
+      );
+      await flushRecorderMicrotasks();
+
+      const [primaryId, cooldownId, fallbackId] = attemptIds;
+      expect(cancelledSpy).toHaveBeenCalledTimes(1);
+      // recordCancelledRequest completes the last attempt; the sweep's
+      // pending-guarded update on it is then a no-op.
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: fallbackId },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
+      // The primary row must not stay pending, and only a still-pending row
+      // is touched so a terminal write that already landed wins.
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: primaryId, status: 'pending' },
+        expect.objectContaining({ status: 'cancelled', error_message: null }),
+      );
+      // A cooldown skip never inserted a row, so there is nothing to cancel.
+      const touched = mockMessageRepo.update.mock.calls.map(
+        ([criteria]) => (criteria as { id: string }).id,
+      );
+      expect(touched).not.toContain(cooldownId);
+    });
+
+    it('cancels the last attempt when recordCancelledRequest fails to write it', async () => {
+      let closeListener: (() => void) | undefined;
+      jest.spyOn(recorder, 'recordCancelledRequest').mockRejectedValue(new Error('db down'));
+      let lastId: string | undefined;
+      proxyService.proxyRequest.mockImplementation(
+        async (options: { startProviderAttempt: StartProviderAttempt }) => {
+          options.startProviderAttempt({ provider: 'openai', model: 'gpt-4o' });
+          lastId = options.startProviderAttempt({
+            provider: 'deepseek',
+            model: 'deepseek-v4-flash',
+          }).id;
+          closeListener?.();
+          throw new DOMException('This operation was aborted', 'AbortError');
+        },
+      );
+      const { res } = mockResponse();
+      (res.once as jest.Mock).mockImplementation((event: string, cb: () => void) => {
+        if (event === 'close') closeListener = cb;
+      });
+
+      await controller.chatCompletions(
+        mockRequest({ messages: [{ role: 'user', content: 'hi' }] }) as never,
+        res as never,
+      );
+
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        { id: lastId, status: 'pending' },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
+      expect(rateLimiter.releaseSlot).toHaveBeenCalled();
     });
 
     it('should emit a terminal SSE error when the upstream dies after the first chunk', async () => {

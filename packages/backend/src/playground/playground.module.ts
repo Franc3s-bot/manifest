@@ -13,6 +13,9 @@ import { ProxyModule } from '../routing/proxy/proxy.module';
 import { OAuthModule } from '../routing/oauth/oauth.module';
 import { ModelDiscoveryModule } from '../model-discovery/model-discovery.module';
 import { CustomProviderModule } from '../routing/custom-provider/custom-provider.module';
+import { ResolveModule } from '../routing/resolve/resolve.module';
+import { HeaderTiersModule } from '../routing/header-tiers/header-tiers.module';
+import { MediaModule } from '../routing/media/media.module';
 import { PlaygroundController } from './playground.controller';
 import { PlaygroundService } from './playground.service';
 import { PlaygroundHistoryService } from './playground-history.service';
@@ -35,6 +38,9 @@ import { PlaygroundAgentService } from './playground-agent.service';
     OAuthModule,
     ModelDiscoveryModule,
     CustomProviderModule,
+    ResolveModule,
+    HeaderTiersModule,
+    MediaModule,
   ],
   controllers: [PlaygroundController],
   providers: [PlaygroundService, PlaygroundHistoryService, PlaygroundAgentService],

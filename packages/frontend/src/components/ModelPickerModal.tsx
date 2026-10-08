@@ -209,6 +209,8 @@ const ModelPickerModal: Component<Props> = (props) => {
   const handleRefreshGroup = async (provId: string, displayName: string) => {
     if (!props.agentName) return;
     if (provId.startsWith('custom:')) return;
+    // Synthetic `auto-*` entries are not a real provider; nothing to refresh.
+    if (provId === 'manifest') return;
     setRefreshingProvId(provId);
     try {
       const result = await refreshProviderModels(props.agentName, provId, activeTab());
@@ -276,7 +278,7 @@ const ModelPickerModal: Component<Props> = (props) => {
       // from leaking into the API Keys tab and vice versa (e.g. when the
       // same provider is connected with both auth types and they have
       // different model access levels).
-      if (showTabs() && m.auth_type && m.auth_type !== tab) continue;
+      if (showTabs() && m.auth_type && m.auth_type !== tab && !m.synthetic) continue;
       if (freeOnly && !isFreeModel(m)) continue;
       const required = requiredCapabilities();
       if (required.size > 0) {
@@ -299,20 +301,26 @@ const ModelPickerModal: Component<Props> = (props) => {
       // `qwen/qwen3-32b` is being served BY Groq, so it must group under
       // Groq (and use Groq's pricing) regardless of the model-id prefix.
       // Mirrors the precedence rule in RoutingTierCard.providerIdForModel.
-      const provId =
-        dbProvId && dbProvId !== 'openrouter' && PROVIDERS.find((p) => p.id === dbProvId)
+      const provId = m.synthetic
+        ? 'manifest'
+        : dbProvId && dbProvId !== 'openrouter' && PROVIDERS.find((p) => p.id === dbProvId)
           ? dbProvId
           : prefixProvId && PROVIDERS.find((p) => p.id === prefixProvId)
             ? prefixProvId
             : (dbProvId ?? prefixProvId);
       if (!provId) continue;
-      if (allowedProviders && !allowedProviders.has(provId)) continue;
+      // Synthetic `auto-*` models have no connected provider of their own; they
+      // execute through the routing tier resolver, so they are never filtered
+      // out by the connected-provider gate.
+      if (allowedProviders && !allowedProviders.has(provId) && !m.synthetic) continue;
       if (!groupMap.has(provId)) {
         const isCustom = provId.startsWith('custom:');
         const provDef = PROVIDERS.find((p) => p.id === provId);
-        const name = isCustom
-          ? (m.provider_display_name ?? cpNames.get(provId) ?? m.provider)
-          : (provDef?.name ?? m.provider);
+        const name = m.synthetic
+          ? 'Synthetic (auto)'
+          : isCustom
+            ? (m.provider_display_name ?? cpNames.get(provId) ?? m.provider)
+            : (provDef?.name ?? m.provider);
         groupMap.set(provId, { provId, name, models: [] });
       }
       const label =
@@ -717,7 +725,13 @@ const ModelPickerModal: Component<Props> = (props) => {
                       : providerIcon(item.provId, 16)}
                   </span>
                   <span class="routing-modal__group-name">{item.name}</span>
-                  <Show when={props.agentName && !item.provId.startsWith('custom:')}>
+                  <Show
+                    when={
+                      props.agentName &&
+                      !item.provId.startsWith('custom:') &&
+                      item.provId !== 'manifest'
+                    }
+                  >
                     <button
                       class="routing-modal__group-refresh"
                       disabled={refreshingProvId() !== null}

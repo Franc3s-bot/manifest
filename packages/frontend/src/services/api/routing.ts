@@ -1,5 +1,6 @@
 import type {
   AuthType,
+  MediaRate,
   ModelCapability,
   ModelModality,
   ModelRoute,
@@ -110,6 +111,39 @@ export function renameProviderKey(
       body: JSON.stringify({ newLabel, ...(authType && { authType }) }),
     },
   );
+}
+
+/* -- Tenant-level connection management (no harness required) -- */
+
+export function disconnectConnection(provider: string, authType?: AuthType, label?: string) {
+  const params = new URLSearchParams();
+  if (authType) params.set('authType', authType);
+  if (label) params.set('label', label);
+  const qs = params.toString();
+  const base = `/providers/${encodeURIComponent(provider)}`;
+  return fetchMutate<{ ok: boolean; notifications: string[] }>(qs ? `${base}?${qs}` : base, {
+    method: 'DELETE',
+  });
+}
+
+export function renameConnection(
+  provider: string,
+  currentLabel: string,
+  newLabel: string,
+  authType?: AuthType,
+) {
+  return fetchMutate<{ id: string; label: string; priority: number }>(
+    `/providers/${encodeURIComponent(provider)}/keys/${encodeURIComponent(currentLabel)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newLabel, ...(authType && { authType }) }),
+    },
+  );
+}
+
+export function refreshConnectionModels() {
+  return fetchMutate<{ ok: boolean }>('/providers/refresh-models', { method: 'POST' });
 }
 
 export function reorderProviderKeys(
@@ -331,7 +365,20 @@ export interface AvailableModel {
   output_price_per_token: number | null;
   /** Per-request USD cost for per-request subscriptions (e.g. OpenCode Go). */
   cost_per_request?: number | null;
-  context_window: number;
+  /** Absent for a pure media model or media tier (no chat context window). */
+  context_window?: number;
+  /**
+   * Where `context_window` came from. `provider_default` (or absent) means it
+   * may be the discovery fallback rather than a measured value; the API's
+   * `/v1/models?capabilities=true` omits the window entirely in that case.
+   */
+  context_window_source?:
+    'provider' | 'provider_default' | 'subscription_config' | 'catalog' | null;
+  max_output_tokens?: number;
+  /** Manifest endpoints this model serves, e.g. `/v1/images/generations`. */
+  supported_endpoints?: readonly string[];
+  /** Per-image / per-second pricing for media models (token costs do not apply). */
+  media_cost?: { unit: 'image' | 'second'; rates: MediaRate };
   capability_reasoning: boolean;
   capability_code: boolean;
   capabilities?: ModelCapability[];
@@ -340,6 +387,14 @@ export interface AvailableModel {
   quality_score: number;
   display_name?: string | null;
   provider_display_name?: string | null;
+  /** True for a synthetic `auto-{tier}` model listed only by the Playground. */
+  synthetic?: boolean;
+  /** Header-tier name for a synthetic model. */
+  tier_name?: string | null;
+  /** Header-tier badge color for a synthetic model. */
+  tier_color?: string | null;
+  /** Harness (agent) that owns the tier behind a synthetic model. */
+  harness?: string | null;
 }
 
 export function getAvailableModels(agentName: string) {
@@ -530,12 +585,15 @@ export async function probeCustomProvider(
   apiKey?: string,
   api_kind?: CustomProviderApiKind,
   provider_name?: string,
+  // Edit-mode: forwarding the id lets the backend probe with the stored
+  // key (the form never has plaintext). See ProbeCustomProviderDto.
+  provider_id?: string,
 ) {
   const res = await fetch(`${BASE_URL}${routingPath(agentName, 'custom-providers/probe')}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name }),
+    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name, provider_id }),
   });
   if (!res.ok) {
     const message = await parseErrorMessage(res);

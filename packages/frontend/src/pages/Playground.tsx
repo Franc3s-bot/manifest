@@ -14,19 +14,24 @@ import { Meta, Title } from '@solidjs/meta';
 import {
   type AuthType,
   type CustomProviderData,
+  type PlaygroundContentPart,
   type PlaygroundHistoryRunSummary,
   type RoutingProvider,
-  getAvailableModels,
+  deletePlaygroundRun,
+  getPlaygroundModels,
   getPlaygroundAgent,
   getPlaygroundRun,
   getCustomProviders,
   getProviders,
   listPlaygroundRuns,
+  renamePlaygroundRun,
 } from '../services/api.js';
 import {
   getOrCreatePlaygroundStore,
+  outputKindForModel,
   MAX_COLUMNS,
   type PlaygroundColumn as ColumnData,
+  type PlaygroundMediaOptions,
 } from '../services/playground-store.js';
 import { toast } from '../services/toast-store.js';
 import PlaygroundColumn from '../components/playground/PlaygroundColumn.jsx';
@@ -34,6 +39,11 @@ import PlaygroundPrompt from '../components/playground/PlaygroundPrompt.jsx';
 import PlaygroundSummaryTable from '../components/playground/PlaygroundSummaryTable.jsx';
 import PlaygroundModelPicker from '../components/playground/PlaygroundModelPicker.jsx';
 import PlaygroundEmptyState from '../components/playground/PlaygroundEmptyState.jsx';
+import PlaygroundRunOptions, {
+  addAttachmentFiles,
+  attachmentToContentPart,
+  type PlaygroundAttachment,
+} from '../components/playground/PlaygroundRunOptions.jsx';
 import PlaygroundRecentSidebar from '../components/playground/PlaygroundHistoryDrawer.jsx';
 import KeyPickerModal from '../components/KeyPickerModal.jsx';
 import { activeRouteKeys } from '../services/routing-utils.js';
@@ -145,6 +155,8 @@ interface PendingKeyPick {
   provider: string;
   authType: AuthType;
   displayName: string;
+  kind: import('manifest-shared').PlaygroundOutputKind;
+  harness?: string;
   keys: RoutingProvider[];
 }
 
@@ -172,7 +184,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
 
   const [available, { refetch: refetchAvailable }] = createResource(
     resolvedAgentName,
-    getAvailableModels,
+    getPlaygroundModels,
   );
   const [providers, { refetch: refetchProviders }] = createResource(
     resolvedAgentName,
@@ -212,6 +224,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   >(null);
   const [headerEntries, setHeaderEntries] = createSignal<HeaderEntry[]>(loadStoredHeaders());
   const [headersOpen, setHeadersOpen] = createSignal(false);
+  const [attachments, setAttachments] = createSignal<PlaygroundAttachment[]>([]);
+  const [mediaOptions, setMediaOptions] = createSignal<PlaygroundMediaOptions>({});
   // Best pick for a run shown read-only as an overlay (store isn't loaded in
   // that path, so its best state is tracked separately).
   const [overlayBestId, setOverlayBestId] = createSignal<string | null>(null);
@@ -308,11 +322,28 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
     setHeadersOpen(true);
   };
 
+  const attachmentParts = (): PlaygroundContentPart[] => attachments().map(attachmentToContentPart);
+
+  /** Run-level options shared by every column of a submit. */
+  const runOptions = () => ({
+    requestHeaders: toHeaderRecord(headerEntries()),
+    attachments: attachmentParts(),
+    media: mediaOptions(),
+  });
+
+  /** Output kinds present in the rendered column set (live or history). */
+  const mediaKinds = (): import('manifest-shared').PlaygroundOutputKind[] => {
+    const cols = viewingHistory() ?? store().columns;
+    const kinds = new Set<import('manifest-shared').PlaygroundOutputKind>();
+    for (const c of cols) kinds.add(c.kind);
+    return [...kinds];
+  };
+
   const handleSubmit = () => {
     const promptText = store().prompt().trim();
     const models = store().columns.map((c) => c.displayName ?? c.model);
     setCompletedResults(null);
-    const runId = store().runAll({ requestHeaders: toHeaderRecord(headerEntries()) });
+    const runId = store().runAll(runOptions());
     if (!runId) return;
 
     // Add to history immediately so user sees the running playground
@@ -336,7 +367,7 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   };
 
   const handleRetry = (id: string) => {
-    void store().retryColumn(id, { requestHeaders: toHeaderRecord(headerEntries()) });
+    void store().retryColumn(id, runOptions());
   };
 
   const refreshHistory = async () => {
@@ -407,6 +438,9 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   ) => {
     const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
+    const entry = (available() ?? []).find((m) => m.model_name === model);
+    const kind = outputKindForModel(entry);
+    const harness = entry?.harness ?? undefined;
     setPickerForColumn(null);
     const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
     if (keys.length > 1) {
@@ -417,6 +451,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         provider,
         authType: resolvedAuth,
         displayName,
+        kind,
+        harness,
         keys,
       });
     } else {
@@ -427,6 +463,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         resolvedAuth,
         displayName,
         keys[0]?.label,
+        kind,
+        harness,
       );
     }
   };
@@ -439,6 +477,9 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
   ) => {
     const resolvedAuth = authType ?? 'api_key';
     const displayName = findDisplayName(available() ?? [], model);
+    const entry = (available() ?? []).find((m) => m.model_name === model);
+    const kind = outputKindForModel(entry);
+    const harness = entry?.harness ?? undefined;
     setShowAddPicker(false);
     const keys = activeRouteKeys(providers() ?? [], provider, resolvedAuth);
     if (keys.length > 1) {
@@ -448,10 +489,12 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         provider,
         authType: resolvedAuth,
         displayName,
+        kind,
+        harness,
         keys,
       });
     } else {
-      store().addColumn(model, provider, resolvedAuth, displayName, keys[0]?.label);
+      store().addColumn(model, provider, resolvedAuth, displayName, keys[0]?.label, kind, harness);
     }
   };
 
@@ -467,6 +510,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
       provider: col.provider,
       authType: col.authType,
       displayName: col.displayName,
+      kind: col.kind,
+      harness: col.harness,
       keys,
     });
   };
@@ -481,6 +526,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         pending.authType,
         pending.displayName,
         label ?? undefined,
+        pending.kind,
+        pending.harness,
       );
     } else if (pending.mode === 'replace' && pending.columnId) {
       store().replaceColumnModel(
@@ -490,6 +537,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         pending.authType,
         pending.displayName,
         label ?? undefined,
+        pending.kind,
+        pending.harness,
       );
     } else if (pending.mode === 'changeKey' && pending.columnId) {
       store().setColumnKeyLabel(pending.columnId, label ?? undefined);
@@ -515,8 +564,11 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
           provider: c.provider,
           authType: (c.authType ?? 'api_key') as AuthType,
           displayName: c.displayName ?? c.model,
+          kind: c.kind ?? 'text',
           status: c.status === 'success' ? ('success' as const) : ('error' as const),
           response: c.content ?? undefined,
+          media: c.media ?? undefined,
+          route: c.route ?? undefined,
           metrics: c.metrics ?? undefined,
           headers: c.headers ?? undefined,
           error: c.errorMessage ?? undefined,
@@ -546,6 +598,32 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
     setHistoryRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, starred } : r)));
   };
 
+  const handleRenameRun = async (runId: string, prompt: string) => {
+    try {
+      const next = await renamePlaygroundRun(runId, prompt);
+      setHistoryRuns((prev) => prev.map((r) => (r.id === runId ? { ...r, prompt: next } : r)));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to rename run');
+    }
+  };
+
+  const handleDeleteRun = async (runId: string) => {
+    try {
+      await deletePlaygroundRun(runId);
+      setHistoryRuns((prev) => prev.filter((r) => r.id !== runId));
+      if (activeRunId() === runId) {
+        setActiveRunId(null);
+        setViewingHistory(null);
+        setCompletedResults(null);
+        setSearchParams({ run: undefined });
+        sessionStorage.removeItem('manifest.playground.lastRun');
+        if (!store().isAnyRunning()) store().reset();
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete run');
+    }
+  };
+
   createEffect(() => {
     if (props.embedded) return;
     setRightSidebar(
@@ -557,6 +635,8 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
         onToggle={toggleRecent}
         onSelect={handlePickHistory}
         onStarToggle={handleStarToggle}
+        onRename={handleRenameRun}
+        onDelete={handleDeleteRun}
         onNewPlayground={handleNewPlayground}
       />,
     );
@@ -676,6 +756,22 @@ const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (pro
             running={store().isAnyRunning()}
             historyOpen={historyOpen()}
             onHeightChange={setPromptHeight}
+            optionsSlot={
+              <PlaygroundRunOptions
+                attachments={attachments()}
+                onAttachmentsChange={setAttachments}
+                mediaKinds={mediaKinds()}
+                media={mediaOptions()}
+                onMediaChange={setMediaOptions}
+                disabled={store().isAnyRunning()}
+                onError={(message) => toast.error(message)}
+              />
+            }
+            onPasteFiles={(files) => {
+              void addAttachmentFiles(attachments(), files, (message) => toast.error(message)).then(
+                setAttachments,
+              );
+            }}
             headersSlot={
               <div class="playground-prompt__headers-slot">
                 <button

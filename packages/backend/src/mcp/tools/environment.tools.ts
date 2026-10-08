@@ -129,6 +129,7 @@ export function registerGuideTool(server: McpServer): void {
           'Harnesses: manifest_agent_list, then manifest_agent_get. Create with manifest_agent_create; the returned key is shown once.',
           'Providers: manifest_provider_catalog lists what is connectable; manifest_provider_connect stores a tenant-wide connection and discovers its models.',
           'Routing: manifest_routing_status tells you whether a harness can route. Configure the default chain with the newer agent configure surface, or per-agent fallbacks with manifest_routing_fallbacks_set.',
+          'Model params (reasoning effort, temperature, …): manifest_routing_params_get lists what a tier route accepts and what is saved; manifest_routing_params_set saves values that override what the harness sends on routed requests (model "auto" or a matching custom-tier header). Address the route by tier ("default" or a custom tier name) and model.',
           'Verify end-to-end with manifest_routing_test — it sends one real request through the selected platform surface.',
           'A connection that is active with zero cached models is unusable; run manifest_provider_refresh.',
         ],

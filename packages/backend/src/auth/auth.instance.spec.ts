@@ -81,6 +81,19 @@ describe('auth.instance', () => {
     expect(config.telemetry).toEqual({ enabled: false });
   });
 
+  it('caches the session in a signed cookie so validation skips the database', () => {
+    // Every authenticated request validates the session. In production the
+    // database round trip behind that costs ~0.5 s per call on the Railway
+    // path even though the statements themselves take 0.3 ms, and it is paid
+    // by the browser's get-session probe and by every SessionGuard cache miss.
+    // The cookie cache answers from the signed cookie until maxAge, so a
+    // revoked session can linger for at most that long.
+    loadModule();
+
+    const config = mockBetterAuth.mock.calls[0][0];
+    expect(config.session).toEqual({ cookieCache: { enabled: true, maxAge: 5 * 60 } });
+  });
+
   it('does not set skipStateCookieCheck in account config', () => {
     loadModule();
 
@@ -604,6 +617,63 @@ describe('auth.instance', () => {
     beforeEach(() => {
       mockStripePlugin.mockClear();
       (jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock }).mcp.mockClear();
+      (jest.requireMock('@better-auth/cimd') as { cimd: jest.Mock }).cimd.mockClear();
+      // These tests assert the exact plugin list, so the developer's shell must
+      // not be able to flip a branch (MCP_ENABLED=false while testing the
+      // switch, or Stripe keys turning billing on).
+      for (const key of [
+        'MCP_ENABLED',
+        'STRIPE_SECRET_KEY',
+        'STRIPE_WEBHOOK_SECRET',
+        'STRIPE_PRO_PRICE_ID',
+      ]) {
+        delete process.env[key];
+      }
+    });
+
+    // `mcp()` validates its resource URL as it is constructed and throws for a
+    // non-loopback HTTP origin. Constructing it anyway would take the whole
+    // process down at import time, so a self-hosted install on a plain-HTTP
+    // LAN or tailnet hostname must never reach it (issue #2939).
+    it('omits the MCP and CIMD plugins on a plain-HTTP non-loopback origin', () => {
+      process.env['BETTER_AUTH_URL'] = 'http://manifest.example.internal';
+      const mod = loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      const { cimd } = jest.requireMock('@better-auth/cimd') as { cimd: jest.Mock };
+      expect(mcp).not.toHaveBeenCalled();
+      expect(cimd).not.toHaveBeenCalled();
+      expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([{ id: 'jwt' }]);
+      expect(mod.mcpEnabled).toBe(false);
+      expect(mod.mcpDisabledReason).toContain('HTTPS');
+    });
+
+    it('omits the MCP and CIMD plugins when MCP_ENABLED opts out', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://manifest.example.com';
+      process.env['MCP_ENABLED'] = 'false';
+      const mod = loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      const { cimd } = jest.requireMock('@better-auth/cimd') as { cimd: jest.Mock };
+      expect(mcp).not.toHaveBeenCalled();
+      expect(cimd).not.toHaveBeenCalled();
+      expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([{ id: 'jwt' }]);
+      expect(mod.mcpEnabled).toBe(false);
+      expect(mod.mcpDisabledReason).toBe('disabled by MCP_ENABLED');
+    });
+
+    it('keeps the MCP plugins on a loopback development origin', () => {
+      delete process.env['BETTER_AUTH_URL'];
+      process.env['PORT'] = '3001';
+      const mod = loadModule();
+
+      expect(mod.mcpEnabled).toBe(true);
+      expect(mod.mcpDisabledReason).toBeNull();
+      expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([
+        { id: 'jwt' },
+        { id: 'mcp' },
+        { id: 'cimd' },
+      ]);
     });
 
     it('configures the MCP plugin for the /api/v1/mcp resource with login and consent pages', () => {
@@ -671,17 +741,18 @@ describe('auth.instance', () => {
       delete process.env['STRIPE_SECRET_KEY'];
       delete process.env['STRIPE_WEBHOOK_SECRET'];
       delete process.env['STRIPE_PRO_PRICE_ID'];
-      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-      loadModule();
+      const mod = loadModule();
 
       const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
       const { cimd } = jest.requireMock('@better-auth/cimd') as { cimd: jest.Mock };
       expect(mcp).not.toHaveBeenCalled();
       expect(cimd).not.toHaveBeenCalled();
       expect(mockBetterAuth.mock.calls[0][0].plugins).toEqual([{ id: 'jwt' }]);
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Remote MCP disabled'));
-      warn.mockRestore();
+      // The warning moved to main.ts when the MCP plugin is skipped; the auth
+      // module now exposes the reason instead of logging it here.
+      expect(mod.mcpEnabled).toBe(false);
+      expect(mod.mcpDisabledReason).toContain('HTTPS');
     });
 
     it('keeps the MCP plugins on a loopback HTTP origin', () => {

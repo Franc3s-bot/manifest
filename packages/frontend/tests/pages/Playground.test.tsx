@@ -11,9 +11,13 @@ const mockGetPlaygroundRun = vi.fn();
 const mockListPlaygroundRuns = vi.fn();
 const mockStreamPlayground = vi.fn();
 const mockSetPlaygroundRunBest = vi.fn();
+const mockRenamePlaygroundRun = vi.fn();
+const mockDeletePlaygroundRun = vi.fn();
+const mockGetPlaygroundVideoStatus = vi.fn();
 
 vi.mock('../../src/services/api.js', () => ({
   getAvailableModels: (...a: unknown[]) => mockGetAvailableModels(...a),
+  getPlaygroundModels: (...a: unknown[]) => mockGetAvailableModels(...a),
   getProviders: (...a: unknown[]) => mockGetProviders(...a),
   getCustomProviders: (...a: unknown[]) => mockGetCustomProviders(...a),
   getPlaygroundAgent: (...a: unknown[]) => mockGetPlaygroundAgent(...a),
@@ -21,6 +25,10 @@ vi.mock('../../src/services/api.js', () => ({
   listPlaygroundRuns: (...a: unknown[]) => mockListPlaygroundRuns(...a),
   streamPlayground: (...a: unknown[]) => mockStreamPlayground(...a),
   setPlaygroundRunBest: (...a: unknown[]) => mockSetPlaygroundRunBest(...a),
+  renamePlaygroundRun: (...a: unknown[]) => mockRenamePlaygroundRun(...a),
+  deletePlaygroundRun: (...a: unknown[]) => mockDeletePlaygroundRun(...a),
+  getPlaygroundVideoStatus: (...a: unknown[]) => mockGetPlaygroundVideoStatus(...a),
+  deletePlaygroundColumn: vi.fn().mockResolvedValue(undefined),
 }));
 
 const mockToastError = vi.fn();

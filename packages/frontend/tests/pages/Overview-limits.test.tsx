@@ -19,8 +19,10 @@ vi.mock('@solidjs/meta', () => ({
 }));
 
 const mockGetOverview = vi.fn();
+const mockGetOverviewDetails = vi.fn();
 vi.mock('../../src/services/api.js', () => ({
   getOverview: (...args: unknown[]) => mockGetOverview(...args),
+  getOverviewDetails: (...args: unknown[]) => mockGetOverviewDetails(...args),
   getCustomProviders: vi.fn().mockResolvedValue([]),
 }));
 
@@ -88,7 +90,8 @@ vi.mock('../../src/services/api/analytics.js', () => ({
       fallbacked_attempts: { value: 0, previous: 0 },
     }),
   getAttemptTimeseries: () => Promise.resolve({ range: '7d', by: 'metric', keys: [], buckets: [] }),
-  getWorkspaceAutofixStatus: () => Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
+  getWorkspaceAutofixStatus: () =>
+    Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
   getAutofixStats: () => Promise.resolve(null),
   getAutofixTimeseries: () =>
     Promise.resolve({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
@@ -167,6 +170,7 @@ describe('Overview - trend badges and status display', () => {
     localStorage.clear();
     localStorage.setItem('manifest_global_group', 'provider');
     mockAgentName = 'test-agent';
+    mockGetOverviewDetails.mockResolvedValue({});
   });
 
   it('does not render trend badge when trend_pct is 0', async () => {
@@ -206,6 +210,10 @@ describe('Overview - trend badges and status display', () => {
       ],
     };
     mockGetOverview.mockResolvedValue(rateLimitedData);
+    mockGetOverviewDetails.mockResolvedValue({
+      recent_activity: rateLimitedData.recent_activity,
+      cost_by_model: [],
+    });
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       // Binary status: a provider rate limit is just a "Failed" pill now.
@@ -230,6 +238,10 @@ describe('Overview - trend badges and status display', () => {
       ],
     };
     mockGetOverview.mockResolvedValue(routedData);
+    mockGetOverviewDetails.mockResolvedValue({
+      recent_activity: routedData.recent_activity,
+      cost_by_model: [],
+    });
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       const tierBadge = container.querySelector('.tier-badge--complex');
@@ -260,6 +272,10 @@ describe('Overview - trend badges and status display', () => {
 
   it('renders status-specific class on status badge', async () => {
     mockGetOverview.mockResolvedValue(overviewData);
+    mockGetOverviewDetails.mockResolvedValue({
+      recent_activity: overviewData.recent_activity,
+      cost_by_model: [],
+    });
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       expect(container.querySelector('.status-badge--ok')).not.toBeNull();

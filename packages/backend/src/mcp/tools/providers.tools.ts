@@ -27,6 +27,24 @@ const AUTH_TYPES = ['api_key', 'subscription', 'local'] as const;
  * manifest-shared — the same registry the CLI and dashboard use — so "what can
  * I connect?" cannot drift between surfaces.
  */
+/**
+ * Model count per connection. A custom provider keeps its models on its own
+ * row (entered by hand) and never fills the connection's discovery cache, so
+ * its count comes from there instead of reading as an empty catalog.
+ */
+async function modelCounter(
+  deps: McpToolDeps,
+  tenantId: string,
+): Promise<(p: { provider: string; cached_models?: unknown[] | null }) => number> {
+  const custom = new Map(
+    (await deps.customProviders.list(tenantId)).map((c) => [
+      `custom:${c.id}`,
+      Array.isArray(c.models) ? c.models.length : 0,
+    ]),
+  );
+  return (p) => custom.get(p.provider) ?? p.cached_models?.length ?? 0;
+}
+
 export function registerProviderTools(
   server: McpServer,
   deps: McpToolDeps,
@@ -42,26 +60,30 @@ export function registerProviderTools(
     },
     async () =>
       result(
-        (async () => ({
-          connections: (await deps.providers.getProviders(operator.tenantId)).map((p) => ({
-            id: p.id,
-            provider: p.provider,
-            auth_type: p.auth_type,
-            label: p.label,
-            region: p.region,
-            is_active: p.is_active,
-            key_prefix: p.key_prefix,
-            cached_model_count: p.cached_models?.length ?? 0,
-            models_fetched_at: p.models_fetched_at,
-            connected_at: p.connected_at,
-          })),
-          custom_providers: (await deps.customProviders.list(operator.tenantId)).map((c) => ({
-            id: c.id,
-            name: c.name,
-            alias: c.alias,
-            base_url: c.base_url,
-          })),
-        }))(),
+        (async () => {
+          const modelCount = await modelCounter(deps, operator.tenantId);
+          return {
+            connections: (await deps.providers.getProviders(operator.tenantId)).map((p) => ({
+              id: p.id,
+              provider: p.provider,
+              auth_type: p.auth_type,
+              label: p.label,
+              region: p.region,
+              is_active: p.is_active,
+              key_prefix: p.key_prefix,
+              cached_model_count: modelCount(p),
+              models_fetched_at: p.models_fetched_at,
+              connected_at: p.connected_at,
+            })),
+            custom_providers: (await deps.customProviders.list(operator.tenantId)).map((c) => ({
+              id: c.id,
+              name: c.name,
+              alias: c.alias,
+              base_url: c.base_url,
+              model_count: Array.isArray(c.models) ? c.models.length : 0,
+            })),
+          };
+        })(),
       ),
   );
 
@@ -233,12 +255,13 @@ export function registerProviderTools(
           }
           await deps.modelDiscovery.discoverAllForAgent(resolved.tenant_id, { forceRefresh: true });
           const connections = await deps.providers.getProviders(resolved.tenant_id);
+          const modelCount = await modelCounter(deps, resolved.tenant_id);
           return {
             connections: connections.map((p) => ({
               provider: p.provider,
               auth_type: p.auth_type,
               label: p.label,
-              cached_model_count: p.cached_models?.length ?? 0,
+              cached_model_count: modelCount(p),
             })),
           };
         })(),

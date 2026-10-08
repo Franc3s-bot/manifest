@@ -103,6 +103,8 @@ describe('underlyingGatewayModel', () => {
     expect(underlyingGatewayModel('opencode-go/deepseek-v4-pro')).toBe('deepseek-v4-pro');
     expect(underlyingGatewayModel('opencode-go/kimi-k2.6')).toBe('kimi-k2.6');
     expect(underlyingGatewayModel('opencode-zen/qwen3.6-plus')).toBe('qwen3.6-plus');
+    expect(underlyingGatewayModel('commandcode/claude-sonnet-4-6')).toBe('claude-sonnet-4-6');
+    expect(underlyingGatewayModel('commandcode/moonshotai/Kimi-K3')).toBe('moonshotai/Kimi-K3');
   });
 
   it('returns null for non-gateway model ids', () => {
@@ -155,6 +157,39 @@ describe('resolveUnderlyingModelIdentity', () => {
       model: 'deepseek-v4-pro',
     });
   });
+
+  it('resolves bare Command Code ids to the vendor inferred from the model name', () => {
+    expect(resolveUnderlyingModelIdentity('commandcode', 'commandcode/claude-sonnet-4-6')).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+    });
+    expect(resolveUnderlyingModelIdentity('commandcode', 'commandcode/gpt-5.6-sol')).toEqual({
+      provider: 'openai',
+      model: 'gpt-5.6-sol',
+    });
+  });
+
+  it('resolves vendor-namespaced Command Code ids and lower-cases the catalog key', () => {
+    expect(resolveUnderlyingModelIdentity('commandcode', 'commandcode/moonshotai/Kimi-K3')).toEqual(
+      { provider: 'moonshot', model: 'kimi-k3' },
+    );
+    expect(
+      resolveUnderlyingModelIdentity('commandcode', 'commandcode/deepseek/deepseek-v4-flash'),
+    ).toEqual({ provider: 'deepseek', model: 'deepseek-v4-flash' });
+    expect(resolveUnderlyingModelIdentity('commandcode', 'commandcode/z-ai/glm-5.3-flash')).toEqual(
+      { provider: 'zai', model: 'glm-5.3-flash' },
+    );
+    expect(resolveUnderlyingModelIdentity('commandcode', 'commandcode/zai-org/GLM-5.3')).toEqual({
+      provider: 'zai',
+      model: 'glm-5.3',
+    });
+    expect(
+      resolveUnderlyingModelIdentity('commandcode', 'commandcode/MiniMaxAI/MiniMax-M3'),
+    ).toEqual({ provider: 'minimax', model: 'minimax-m3' });
+    expect(
+      resolveUnderlyingModelIdentity('commandcode', 'commandcode/google/gemini-3.8-flash'),
+    ).toEqual({ provider: 'gemini', model: 'gemini-3.8-flash' });
+  });
 });
 
 describe('resolveProviderMetadataIdentity', () => {
@@ -206,5 +241,14 @@ describe('resolveProviderMetadataIdentity', () => {
       provider: 'zai',
       model: 'glm-5.1',
     });
+  });
+
+  it('unwraps Command Code models to the vendor that owns their metadata', () => {
+    expect(resolveProviderMetadataIdentity('commandcode', 'commandcode/claude-sonnet-4-6')).toEqual(
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    );
+    expect(
+      resolveProviderMetadataIdentity('commandcode', 'commandcode/moonshotai/Kimi-K3'),
+    ).toEqual({ provider: 'moonshot', model: 'kimi-k3' });
   });
 });

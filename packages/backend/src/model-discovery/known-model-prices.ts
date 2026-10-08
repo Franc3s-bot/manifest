@@ -19,6 +19,7 @@
  * Sources:
  *  - Moonshot v1: https://platform.moonshot.cn/docs/pricing (¥12/1M ≈ $1.66/1M at 2025 rates)
  *  - gemma-3-1b-it: Free on Google AI Studio
+ *  - Agnes AI: https://www.agnes-ai.com/en/docs/pricing (current, i.e. billed, prices)
  */
 
 interface KnownPrice {
@@ -38,6 +39,16 @@ const KNOWN_PRICES: ReadonlyArray<{ prefix: string; price: KnownPrice }> = [
   { prefix: 'gemma-3-1b-it', price: { input: 0, output: 0 } },
   // gemini-pro-latest is Google's alias for the current Gemini Pro (2.5 Pro)
   { prefix: 'gemini-pro-latest', price: { input: 1.25 / PER_MILLION, output: 10.0 / PER_MILLION } },
+  // Agnes AI publishes prices only on its docs page, not in /v1/models, and
+  // models.dev covers just a subset. These are the CURRENT (billed) prices:
+  // the flash tiers are free during the promotional window, the pro tiers bill
+  // at list ($0.45 / $0.90 per M). The pro prefix also covers
+  // agnes-2.5-pro-alpha / -beta.
+  { prefix: 'agnes-2.0-flash', price: { input: 0, output: 0 } },
+  { prefix: 'agnes-2.5-flash', price: { input: 0, output: 0 } },
+  { prefix: 'agnes-3.0-flash', price: { input: 0, output: 0 } },
+  { prefix: 'agnes-2.5-pro', price: { input: 0.45 / PER_MILLION, output: 0.9 / PER_MILLION } },
+  { prefix: 'agnes-3.0-pro', price: { input: 0.45 / PER_MILLION, output: 0.9 / PER_MILLION } },
 ];
 
 export function lookupKnownPrice(modelId: string): KnownPrice | null {

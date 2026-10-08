@@ -17,11 +17,13 @@ describe('response-mode', () => {
 });
 
 describe('output-modality', () => {
-  it('defines text as the only supported output modality today', () => {
+  it('accepts text, image, and video output modalities', () => {
     expect(DEFAULT_OUTPUT_MODALITY).toBe('text');
-    expect(OUTPUT_MODALITIES).toEqual(['text']);
+    expect(OUTPUT_MODALITIES).toEqual(['text', 'image', 'video']);
     expect(isOutputModality('text')).toBe(true);
-    expect(isOutputModality('image')).toBe(false);
+    expect(isOutputModality('image')).toBe(true);
+    expect(isOutputModality('video')).toBe(true);
+    expect(isOutputModality('audio')).toBe(false);
     expect(isOutputModality(undefined)).toBe(false);
   });
 });

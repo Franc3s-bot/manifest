@@ -205,6 +205,7 @@ describe('MessagesQueryService', () => {
     expect(result.header_tiers).toEqual([{ name: 'Premium', ids: ['ht-a'] }]);
     const agentScope = mockHeaderTierQb.andWhere.mock.calls[0];
     expect(String(agentScope[0])).toContain('ht.agent_id = (');
+    expect(String(agentScope[0])).toContain('WHERE tenant_id = :headerTierTenant');
     expect(agentScope[1]).toEqual({ headerTierAgent: 'agent-alpha' });
   });
 

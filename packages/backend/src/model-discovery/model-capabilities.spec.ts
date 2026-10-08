@@ -1,5 +1,6 @@
 import {
   inputModalitiesFromCapabilities,
+  parseModalities,
   resolveModelCapabilityMetadata,
 } from './model-capabilities';
 import type { DiscoveredModel } from './model-fetcher';
@@ -32,6 +33,18 @@ function makeModelsDevEntry(overrides: Partial<ModelsDevModelEntry> = {}): Model
     ...overrides,
   };
 }
+
+describe('parseModalities', () => {
+  it('returns known modalities in canonical order, ignoring case and unknown values', () => {
+    expect(parseModalities(['Video', 'pdf', 'TEXT', 42, 'text'])).toEqual(['text', 'video']);
+  });
+
+  it('returns undefined when nothing is recognised', () => {
+    expect(parseModalities(undefined)).toBeUndefined();
+    expect(parseModalities('text')).toBeUndefined();
+    expect(parseModalities(['embedding'])).toBeUndefined();
+  });
+});
 
 describe('inputModalitiesFromCapabilities', () => {
   it('keeps text first and appends each novel capability once', () => {
@@ -75,6 +88,19 @@ describe('resolveModelCapabilityMetadata', () => {
     expect(resolved.inputModalities).toEqual(['text', 'image']);
     expect(resolved.outputModalities).toEqual(['text']);
     expect(resolved.modelsDevEntry).not.toBeNull();
+  });
+
+  it('prefers modalities the provider stated over models.dev', async () => {
+    modelsDevSync.lookupModelCapabilities.mockReturnValue(makeModelsDevEntry());
+
+    const resolved = await resolveModelCapabilityMetadata(
+      makeModel({ inputModalities: ['text'], outputModalities: ['text', 'audio'] }),
+      paramSpecs,
+      modelsDevSync,
+    );
+
+    expect(resolved.inputModalities).toEqual(['text']);
+    expect(resolved.outputModalities).toEqual(['text', 'audio']);
   });
 
   it('leaves everything undefined when no source knows the model', async () => {

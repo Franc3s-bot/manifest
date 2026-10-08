@@ -513,6 +513,31 @@
         "routing-providers.css"
       ]
     },
+    "api-bot-banner": {
+      "classes": [
+        "api-bot-banner",
+        "api-bot-banner__text"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
+    "api-bot-btn": {
+      "classes": [
+        "api-bot-btn"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
+    "api-bot-close": {
+      "classes": [
+        "api-bot-close"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
     "api-key-display": {
       "classes": [
         "api-key-display__code",
@@ -1084,7 +1109,8 @@
         "connection-detail.css",
         "custom-select.css",
         "discovery.css",
-        "routing-providers.css"
+        "routing-providers.css",
+        "theme.css"
       ]
     },
     "dark": {
@@ -1101,7 +1127,6 @@
         "modals.css",
         "model-filter.css",
         "overview.css",
-        "pivot.css",
         "platform-icons.css",
         "request-drawer.css",
         "routing-deprecation.css",
@@ -1175,6 +1200,24 @@
       ],
       "files": [
         "discovery.css"
+      ]
+    },
+    "dither-ground": {
+      "classes": [
+        "dither-ground"
+      ],
+      "files": [
+        "api-bot.css"
+      ]
+    },
+    "drag-ghost": {
+      "classes": [
+        "drag-ghost",
+        "drag-ghost__icon",
+        "drag-ghost__label"
+      ],
+      "files": [
+        "routing.css"
       ]
     },
     "drawer": {
@@ -1633,6 +1676,7 @@
         "header-tier-modal__swatches"
       ],
       "files": [
+        "modals.css",
         "routing-header-tiers.css"
       ]
     },
@@ -1816,6 +1860,15 @@
         "syntax-highlight.css"
       ]
     },
+    "info-card": {
+      "classes": [
+        "info-card__content",
+        "info-card__text"
+      ],
+      "files": [
+        "cards.css"
+      ]
+    },
     "info-tooltip": {
       "classes": [
         "info-tooltip",
@@ -1844,6 +1897,14 @@
         "wizard.css"
       ]
     },
+    "is-selected": {
+      "classes": [
+        "is-selected"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
     "json-block": {
       "classes": [
         "json-block",
@@ -1859,6 +1920,120 @@
       ],
       "files": [
         "request-drawer.css"
+      ]
+    },
+    "key-order-card": {
+      "classes": [
+        "key-order-card",
+        "key-order-card__action",
+        "key-order-card__action--danger",
+        "key-order-card__actions",
+        "key-order-card__glyph",
+        "key-order-card__head",
+        "key-order-card__letter",
+        "key-order-card__model",
+        "key-order-card__provider",
+        "key-order-card__titles"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-chip": {
+      "classes": [
+        "key-order-chip",
+        "key-order-chip__btn",
+        "key-order-chip__btn--remove",
+        "key-order-chip__hint",
+        "key-order-chip__label",
+        "key-order-chip__ordinal"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-empty": {
+      "classes": [
+        "key-order-empty",
+        "key-order-empty__desc",
+        "key-order-empty__error",
+        "key-order-empty__title"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-list": {
+      "classes": [
+        "key-order-list"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-modal": {
+      "classes": [
+        "key-order-modal",
+        "key-order-modal__add",
+        "key-order-modal__error",
+        "key-order-modal__footer",
+        "key-order-modal__helper",
+        "key-order-modal__keys",
+        "key-order-modal__scope",
+        "key-order-modal__scope-desc",
+        "key-order-modal__scope-option",
+        "key-order-modal__scope-options",
+        "key-order-modal__scope-title"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-section": {
+      "classes": [
+        "key-order-section__header",
+        "key-order-section__hint"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-skeleton": {
+      "classes": [
+        "key-order-skeleton",
+        "key-order-skeleton__bar"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-tier": {
+      "classes": [
+        "key-order-tier",
+        "key-order-tier__count",
+        "key-order-tier__empty",
+        "key-order-tier__head",
+        "key-order-tier__hint",
+        "key-order-tier__title"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-order-tiers": {
+      "classes": [
+        "key-order-tiers"
+      ],
+      "files": [
+        "routing-key-order.css"
+      ]
+    },
+    "key-rotation-icon": {
+      "classes": [
+        "key-rotation-icon"
+      ],
+      "files": [
+        "data.css"
       ]
     },
     "language-json": {
@@ -2025,9 +2200,9 @@
         "modals.css",
         "notifications.css",
         "overview.css",
-        "pivot.css",
         "routing-header-tiers.css",
-        "routing.css"
+        "routing.css",
+        "theme.css"
       ]
     },
     "modal-key-box": {
@@ -2186,6 +2361,7 @@
         "model-params__number--slider",
         "model-params__param-key",
         "model-params__request-link",
+        "model-params__reset",
         "model-params__row",
         "model-params__row--disabled",
         "model-params__row-control",
@@ -2539,6 +2715,10 @@
         "playground-column__headers-list",
         "playground-column__headers-toggle",
         "playground-column__icon",
+        "playground-column__key-badge",
+        "playground-column__key-badge--readonly",
+        "playground-column__key-icon",
+        "playground-column__key-label",
         "playground-column__metric",
         "playground-column__metric-label",
         "playground-column__metric-value",
@@ -2548,6 +2728,7 @@
         "playground-column__placeholder",
         "playground-column__remove",
         "playground-column__response",
+        "playground-column__route",
         "playground-column__skeleton",
         "playground-column__title",
         "playground-column__title--readonly",
@@ -2588,6 +2769,43 @@
         "playground-headers__rows",
         "playground-headers__title",
         "playground-headers__warning"
+      ],
+      "files": [
+        "playground.css"
+      ]
+    },
+    "playground-media": {
+      "classes": [
+        "playground-media",
+        "playground-media--images",
+        "playground-media__image",
+        "playground-media__spinner",
+        "playground-media__status",
+        "playground-media__video"
+      ],
+      "files": [
+        "playground.css"
+      ]
+    },
+    "playground-options": {
+      "classes": [
+        "playground-options",
+        "playground-options__attach",
+        "playground-options__caret",
+        "playground-options__caret--open",
+        "playground-options__field",
+        "playground-options__field--wide",
+        "playground-options__file-input",
+        "playground-options__item",
+        "playground-options__kind",
+        "playground-options__list",
+        "playground-options__name",
+        "playground-options__panel",
+        "playground-options__remove",
+        "playground-options__row",
+        "playground-options__thumb",
+        "playground-options__toggle",
+        "playground-options__url"
       ],
       "files": [
         "playground.css"
@@ -2637,6 +2855,7 @@
         "playground-recent__menu-anchor",
         "playground-recent__menu-backdrop",
         "playground-recent__menu-item",
+        "playground-recent__menu-item--danger",
         "playground-recent__more",
         "playground-recent__new",
         "playground-recent__new-icon",
@@ -2644,6 +2863,7 @@
         "playground-recent__new-left",
         "playground-recent__new-shortcut",
         "playground-recent__prompt",
+        "playground-recent__rename",
         "playground-recent__title",
         "playground-recent__toggle"
       ],
@@ -2758,7 +2978,8 @@
         "provider-detail__title-group"
       ],
       "files": [
-        "routing-providers.css"
+        "routing-providers.css",
+        "theme.css"
       ]
     },
     "provider-icon": {
@@ -3004,7 +3225,8 @@
         "routing-action--danger"
       ],
       "files": [
-        "routing.css"
+        "routing.css",
+        "theme.css"
       ]
     },
     "routing-card": {
@@ -3368,6 +3590,7 @@
       ],
       "files": [
         "controls.css",
+        "routing-key-order.css",
         "theme.css"
       ]
     },
@@ -3378,6 +3601,7 @@
         "settings-card--disabled",
         "settings-card--flush",
         "settings-card--highlight",
+        "settings-card--info",
         "settings-card__body",
         "settings-card__control",
         "settings-card__control--end",
@@ -3399,9 +3623,11 @@
       ],
       "files": [
         "agents.css",
+        "cards.css",
         "controls.css",
         "modals.css",
-        "notifications.css"
+        "notifications.css",
+        "theme.css"
       ]
     },
     "settings-section": {
@@ -3606,31 +3832,16 @@
         "theme.css"
       ]
     },
-    "sidebar-pivot": {
+    "sidebar-api-bot": {
       "classes": [
-        "sidebar-pivot",
-        "sidebar-pivot__bottom",
-        "sidebar-pivot__btn",
-        "sidebar-pivot__canvas",
-        "sidebar-pivot__desc",
-        "sidebar-pivot__dismiss",
-        "sidebar-pivot__header",
-        "sidebar-pivot__joined",
-        "sidebar-pivot__title",
-        "sidebar-pivot__top"
+        "sidebar-api-bot",
+        "sidebar-api-bot__close",
+        "sidebar-api-bot__image",
+        "sidebar-api-bot__text",
+        "sidebar-api-bot__title"
       ],
       "files": [
-        "pivot.css"
-      ]
-    },
-    "sidebar-pivot-modal": {
-      "classes": [
-        "sidebar-pivot-modal",
-        "sidebar-pivot-modal__features",
-        "sidebar-pivot-modal__logo"
-      ],
-      "files": [
-        "pivot.css"
+        "api-bot.css"
       ]
     },
     "sidebar-upgrade": {
@@ -4112,7 +4323,8 @@
         "upgrade-success-modal__title"
       ],
       "files": [
-        "modals.css"
+        "modals.css",
+        "theme.css"
       ]
     },
     "upgrade-terms": {
@@ -4131,7 +4343,16 @@
         "usage-limit-banner__text"
       ],
       "files": [
-        "modals.css"
+        "modals.css",
+        "theme.css"
+      ]
+    },
+    "user-discovery-modal": {
+      "classes": [
+        "user-discovery-modal"
+      ],
+      "files": [
+        "theme.css"
       ]
     },
     "version-indicator": {
@@ -4317,11 +4538,43 @@
   "migrationMap": {},
   "canonicalRules": [
     {
+      "selector": ".settings-card__row",
+      "media": "(max-width: 768px)",
+      "prop": "align-items",
+      "value": "flex-start",
+      "file": "agents.css",
+      "line": 423
+    },
+    {
       "selector": ".view-more-link",
       "prop": "color",
       "value": "hsl(var(--foreground))",
       "file": "analytics-overview.css",
       "line": 213
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 768px)",
+      "prop": "grid-template-columns",
+      "value": "repeat(2, 1fr) !important",
+      "file": "analytics-overview.css",
+      "line": 311
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 768px)",
+      "prop": "gap",
+      "value": "var(--gap-md)",
+      "file": "analytics-overview.css",
+      "line": 312
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 480px)",
+      "prop": "grid-template-columns",
+      "value": "1fr !important",
+      "file": "analytics-overview.css",
+      "line": 322
     },
     {
       "selector": ".custom-select__option--top > svg",
@@ -4641,6 +4894,42 @@
   ],
   "ghostRules": [
     {
+      "selector": ".settings-card__row",
+      "media": "(max-width: 768px)",
+      "prop": "align-items",
+      "value": "stretch",
+      "file": "agents.css",
+      "line": 297,
+      "losesTo": "agents.css:423"
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 768px)",
+      "prop": "grid-template-columns",
+      "value": "repeat(2, minmax(0, 1fr))",
+      "file": "analytics-overview.css",
+      "line": 58,
+      "losesTo": "analytics-overview.css:311"
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 768px)",
+      "prop": "gap",
+      "value": "12px",
+      "file": "analytics-overview.css",
+      "line": 59,
+      "losesTo": "analytics-overview.css:312"
+    },
+    {
+      "selector": ".overview-stats",
+      "media": "(max-width: 480px)",
+      "prop": "grid-template-columns",
+      "value": "1fr",
+      "file": "analytics-overview.css",
+      "line": 73,
+      "losesTo": "analytics-overview.css:322"
+    },
+    {
       "selector": ".summary-card",
       "prop": "box-shadow",
       "value": "var(--card-shadow)",
@@ -4821,7 +5110,7 @@
       "prop": "background",
       "value": "hsl(var(--muted-foreground) / 0.1)",
       "file": "data.css",
-      "line": 299,
+      "line": 321,
       "losesTo": "overview.css:105"
     },
     {
@@ -4829,7 +5118,7 @@
       "prop": "color",
       "value": "hsl(var(--muted-foreground))",
       "file": "data.css",
-      "line": 300,
+      "line": 322,
       "losesTo": "overview.css:106"
     },
     {
@@ -4837,7 +5126,7 @@
       "prop": "align-items",
       "value": "flex-start",
       "file": "data.css",
-      "line": 507,
+      "line": 529,
       "losesTo": "theme.css:587"
     },
     {
@@ -4845,7 +5134,7 @@
       "prop": "gap",
       "value": "12px",
       "file": "data.css",
-      "line": 508,
+      "line": 530,
       "losesTo": "theme.css:588"
     },
     {
@@ -4853,7 +5142,7 @@
       "prop": "padding",
       "value": "12px 0",
       "file": "data.css",
-      "line": 509,
+      "line": 531,
       "losesTo": "theme.css:589"
     },
     {
@@ -4965,7 +5254,7 @@
       "prop": "color",
       "value": "hsl(187 60% 38%)",
       "file": "request-drawer.css",
-      "line": 1098,
+      "line": 1103,
       "losesTo": "syntax-highlight.css:41"
     },
     {
@@ -5055,6 +5344,9 @@
     "routing-header-tiers.css": [
       "pages/RoutingHeaderTiersSection.tsx"
     ],
+    "routing-key-order.css": [
+      "pages/RoutingKeyOrderSection.tsx"
+    ],
     "routing-modal.css": [
       "pages/Welcome.tsx"
     ],
@@ -5090,9 +5382,9 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 314,
-    "classes": 1699,
-    "canonicalRules": 46,
-    "ghostRules": 46
+    "blocks": 333,
+    "classes": 1779,
+    "canonicalRules": 50,
+    "ghostRules": 50
   }
 }

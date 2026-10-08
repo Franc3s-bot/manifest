@@ -34,10 +34,28 @@ export { MODEL_PREFIX_MAP };
 
 /**
  * Gateway model-id prefixes. A gateway transparently proxies another
- * provider's API, so the id after the prefix is the underlying provider's
- * own model id (e.g. `opencode-go/deepseek-v4-pro` -> `deepseek-v4-pro`).
+ * provider's API, so the id after the prefix names the underlying model.
+ * OpenCode uses the vendor's own model id (`opencode-go/deepseek-v4-pro` ->
+ * `deepseek-v4-pro`); Command Code may keep the vendor namespace
+ * (`commandcode/moonshotai/Kimi-K3`).
  */
-const GATEWAY_MODEL_PREFIXES = ['opencode-go/', 'opencode-zen/'] as const;
+const GATEWAY_MODEL_PREFIXES = ['commandcode/', 'opencode-go/', 'opencode-zen/'] as const;
+
+/**
+ * Gateways whose ids may namespace the vendor (`<gateway>/<vendor>/<model>`).
+ * Only these get the vendor-namespace unwrap in
+ * {@link resolveUnderlyingModelIdentity}; other gateways use the bare id.
+ */
+const VENDOR_NAMESPACED_GATEWAY_PREFIXES = ['commandcode/'] as const;
+
+/**
+ * Vendor tokens that are neither a provider id, an alias, nor an OpenRouter
+ * prefix, so {@link resolveProviderToken} cannot map them to a provider.
+ */
+const GATEWAY_VENDOR_ALIASES: Readonly<Record<string, string>> = {
+  'zai-org': 'zai',
+  minimaxai: 'minimax',
+};
 
 const BEDROCK_PROVIDER_TOKENS = new Map<string, string>();
 for (const provider of SHARED_PROVIDERS) {
@@ -49,6 +67,24 @@ for (const provider of SHARED_PROVIDERS) {
 
 export function resolveProviderToken(token: string): string | undefined {
   return BEDROCK_PROVIDER_TOKENS.get(token.toLowerCase());
+}
+
+/**
+ * Resolve a `<vendor>/<model>` gateway id to the vendor's own provider/model,
+ * so metadata lookups read the vendor's catalog instead of the gateway's.
+ * The model segment is lower-cased because catalog keys are lower-case while
+ * gateway ids often are not (`moonshotai/Kimi-K3` -> `moonshot`/`kimi-k3`).
+ * Returns null when the leading token names no known provider.
+ */
+function resolveVendorNamespacedIdentity(
+  model: string,
+): { provider: string; model: string } | null {
+  const slash = model.indexOf('/');
+  if (slash <= 0 || slash === model.length - 1) return null;
+  const vendor = model.slice(0, slash).toLowerCase();
+  const provider = resolveProviderToken(vendor) ?? GATEWAY_VENDOR_ALIASES[vendor];
+  if (!provider) return null;
+  return { provider, model: model.slice(slash + 1).toLowerCase() };
 }
 
 /**
@@ -79,10 +115,12 @@ export function inferProviderFromModel(model: string): string | undefined {
  * model id (e.g. `opencode-go/glm-5.1`) this returns the provenance provider
  * inferred from the underlying id and that bare id
  * (`{ provider: 'zai', model: 'glm-5.1' }`); non-gateway pairs are returned
- * unchanged. The provider is `undefined` when the underlying id matches no
- * known provider, so callers decide whether to fall back. Capability and
- * parameter lookups route through this so any gateway model inherits the
- * underlying model's metadata, not just OpenCode Go's.
+ * unchanged. Gateways that namespace the vendor (`commandcode/moonshotai/Kimi-K3`)
+ * resolve through the vendor token instead of the model-name heuristics. The
+ * provider is `undefined` when the underlying id matches no known provider, so
+ * callers decide whether to fall back. Capability and parameter lookups route
+ * through this so any gateway model inherits the underlying model's metadata,
+ * not just OpenCode Go's.
  */
 export function resolveUnderlyingModelIdentity(
   provider: string | undefined,
@@ -90,6 +128,10 @@ export function resolveUnderlyingModelIdentity(
 ): { provider: string | undefined; model: string } {
   const underlying = underlyingGatewayModel(model);
   if (underlying === null) return { provider, model };
+  if (VENDOR_NAMESPACED_GATEWAY_PREFIXES.some((prefix) => model.startsWith(prefix))) {
+    const namespaced = resolveVendorNamespacedIdentity(underlying);
+    if (namespaced) return namespaced;
+  }
   return { provider: inferProviderFromModel(underlying), model: underlying };
 }
 

@@ -1,0 +1,308 @@
+# Media Generation Routing (Images & Video)
+
+Manifest routes **text** today: `POST /v1/chat/completions`, `/v1/responses`,
+`/v1/messages` reach a provider chain resolved from a tier. Image and video
+generation models (Agnes Image 2.1 Flash, Agnes Video 2.5, and later DALL·E,
+Imagen, Veo, Sora, …) are excluded from discovery and have no proxy surface.
+
+This document defines how media generation joins the same routing model:
+synthetic tiers, fallback chains, per-tenant provider keys, recorded Manifest
+Requests / Provider Attempts, and cost accounting.
+
+> **Terminology** follows [`docs/glossary.md`](glossary.md): a **Manifest
+> Request** is one logical request from an agent to Manifest (`requests`); a
+> **Provider Attempt** is one request from Manifest to an AI provider
+> (`agent_messages`).
+
+## Decisions
+
+These are the defaults this design is built on. Each is a user decision; change
+one and the phases below shift.
+
+| #   | Decision        | Choice                                                                                                                                                                                                                                     |
+| --- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Integration     | A media adapter abstraction in the backend, with **Agnes as the first provider**. Provider-specific quirks live in the adapter; the routing/credential/recording layers are shared.                                                        |
+| 2   | Public API      | **OpenAI-compatible**: `POST /v1/images/generations`, `POST /v1/videos`, `GET /v1/videos/{id}`. Clients keep using OpenAI-style SDKs; Agnes-specific fields (`ratio`, `size` tiers, `extra_body.image`) are accepted as extensions.        |
+| 3   | Synthetic tiers | **Reuse header tiers.** `header_tiers.output_modality` becomes `text \| image \| video`; a tier with a media modality is exposed as `auto-{name}` in `GET /v1/models` with matching `output_modalities`, and routes to the media endpoint. |
+| 4   | Cost            | **Per-image / per-second USD.** Media pricing is stored as a price table and written to `agent_messages.cost_usd`; token columns stay `0`. No fake token-equivalents.                                                                      |
+
+## What already exists
+
+- `output_modality` columns on `header_tiers`, `tier_assignments`,
+  `specificity_assignments` (migration `1789300000000-AddRoutingOutputControls`),
+  defaulting to `text`. The column is wired through resolution and the
+  `X-Manifest-Output-Modality` response header, but `OUTPUT_MODALITIES` only
+  contained `text` — **extended to `text | image | video`** as the first step.
+- Header tiers exposed as `auto-{name}` models in `GET /v1/models`
+  (`proxy.controller.ts`), with an aggregated profile
+  (`synthetic-model-profile.ts`) and resolution (`resolve.service.ts`).
+- `resolveRouteCredentials()` (`route-credentials.ts`) — provider key selection,
+  OAuth unwrap, `tenant_provider_id` / label attribution. Reusable as-is.
+- `ProxyMessageRecorder` — Manifest Request + Provider Attempt rows, fallback
+  failures, cooldown. Reusable with a media `api_mode`.
+- `SPECIFICITY_CATEGORIES` already has `image_generation` / `video_generation`.
+- The standalone Agnes client (`/root/.pi/agent/extensions/agnes-media/client.ts`)
+  documents the verified API:
+  - `POST {base}/images/generations` — synchronous, returns `data[].url | b64_json`.
+  - `POST {base}/videos` — asynchronous, returns `video_id`.
+  - `GET {origin}/agnesapi?video_id=&model_name=` — task status (host root, not `/v1`).
+  - Base `https://apihub.agnes-ai.com/v1`; video billed per second of output.
+
+## Agnes AI is a full provider, not media-only
+
+The public [Agnes AI Model Catalog](https://github.com/AgnesAI-Labs/AgnesAI-Models)
+lists an OpenAI-compatible surface at `https://apihub.agnes-ai.com/v1`:
+
+| Kind  | Models                                                                           | Endpoint                      |
+| ----- | -------------------------------------------------------------------------------- | ----------------------------- |
+| Text  | `agnes-2.5-flash` (512K ctx), `agnes-2.0-flash` (256K), `agnes-1.5-flash` (256K) | `POST /v1/chat/completions`   |
+| Image | `agnes-image-2.1-flash`, `agnes-image-2.0-flash`                                 | `POST /v1/images/generations` |
+| Video | `agnes-video-v2.0`                                                               | `POST /v1/videos` (async)     |
+
+Video task status: `GET https://apihub.agnes-ai.com/agnesapi?video_id=<ID>`.
+Auth: `Authorization: Bearer <key>`.
+
+So Agnes is added as a **normal OpenAI-compatible provider** (text routes through
+the existing chat proxy) plus a **media-capable** one (image/video route through
+the media adapter). This is why the shared provider entry carries a `media`
+descriptor rather than the whole provider being special-cased.
+
+## fal.ai is a media-only provider
+
+[fal.ai](https://fal.ai) serves image and video models (MiniMax H3 Max, FLUX,
+…) and has no chat surface. Model ids are fal endpoint ids and contain slashes
+(`minimax/h3-max/text-to-video`), which routing matches as-is; the published
+`/v1/models` id is `fal/<endpoint_id>`.
+
+| Kind         | Endpoint                                                               | Wire                                                                 |
+| ------------ | ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Image        | `POST https://fal.run/{endpoint_id}`                                   | synchronous, returns the model's output object (`{ images: [...] }`) |
+| Video submit | `POST https://queue.fal.run/{endpoint_id}`                             | returns `{ request_id, status_url, response_url, cancel_url }`       |
+| Video status | `GET https://queue.fal.run/{endpoint_id}/requests/{request_id}/status` | `IN_QUEUE` / `IN_PROGRESS` / `COMPLETED` (+ `error` on failure)      |
+| Video result | `GET https://queue.fal.run/{endpoint_id}/requests/{request_id}`        | model output (`{ video: { url } }`)                                  |
+
+Auth: `Authorization: Key <key>` (not a bearer token). Failure bodies carry
+`{ detail, error_type }` rather than `error.message`.
+
+The adapter (`forwardFalImage` / `forwardFalVideo` / `falVideoStatus` in
+`media-provider-client.ts`) translates the OpenAI-shaped surface onto fal's
+input schema: `seconds` → `duration`, `size`/`resolution` → `resolution`
+(`480P`/`768P`/`1080P`), `ratio` → `aspect_ratio`, `first_frame`/`last_frame` →
+`image_url`/`end_image_url`, `n` → `num_images`, `size`+`ratio` → `image_size`,
+and `response_format: "b64_json"` → `sync_mode` (the returned data URI is split
+back into `b64_json`). Unknown caller fields are dropped because fal rejects
+them with a 422.
+
+fal's platform listing (`api.fal.ai/v1/models`) needs an API-scope key, is
+paginated, and carries a `metadata.category` rather than an output modality, so
+`parseFal` keeps only image/video categories, annotates entries from the curated
+`FAL_MODELS` catalog, and appends catalog models the listing omits — falling
+back to the curated catalog when the live fetch yields nothing. Because fal is
+media-only, it has **no `PROVIDER_ENDPOINTS` entry**; `PROVIDER_CONFIGS`
+(`fal`) drives its discovery and the media adapter builds its URLs directly.
+
+## Architecture
+
+```
+POST /v1/images/generations            POST /v1/videos
+        │                                     │
+        └──────────► MediaController ◄────────┘   (AgentKeyAuthGuard, plan + rate limits)
+                          │
+                    MediaRoutingService
+        ┌─────────────────┼──────────────────────────────┐
+        │                 │                              │
+  ResolveService     resolveRouteCredentials      ProxyMessageRecorder
+  (header tier /     (provider key, label,        (Request + Attempt rows,
+   auto-{name} /      tenant_provider_id)          cost_usd, api_mode)
+   direct model)
+                          │
+                    MediaProviderClient
+        ┌─────────────────┼──────────────────────────────┐
+        │                 │                              │
+   AgnesAdapter      OpenAiImagesAdapter       falAdapter (media-only)
+   image + video     /v1/images/generations    fal.run (image) +
+                                               queue.fal.run (video)
+```
+
+Key points:
+
+- **Modality gate.** `POST /v1/images/generations` requires the resolved chain's
+  `output_modality === 'image'`; `/v1/videos` requires `'video'`. A mismatch is
+  M301 — a request error, not a provider call.
+- **Request validation.** The media body is validated before any credential or
+  provider work: a missing `prompt`, an out-of-range `n` / `seconds`, malformed
+  references, or an Agnes video `mode` that contradicts the supplied media is
+  rejected locally with M304 instead of becoming a provider 400 that would
+  count against provider reliability.
+- **Same chain semantics as text.** Primary route + fallbacks, key rotation,
+  cooldown, `superseded` rows, `fallback_from_model` attribution.
+- **Video is async.** `POST /v1/videos` forwards to the provider, persists the
+  provider task id on the Manifest Request, and returns the provider's
+  OpenAI-shaped video object. `GET /v1/videos/{id}` polls upstream and, on
+  completion, writes the final `cost_usd` (per-second billing needs the output
+  duration, unknown at submit time).
+- **Recording.** A media request writes one `requests` row and one or more
+  `agent_messages` rows. `api_mode` is extended with `images` / `videos` so
+  analytics can filter media traffic without touching token metrics.
+
+## Accepted request shapes
+
+The media endpoints accept the OpenAI-shaped top level and the provider-native
+`extra_body` wrapper (`normalizeMediaBody`,
+`packages/backend/src/routing/media/media-request-body.ts`). Agnes accepts
+`response_format` and reference images only inside `extra_body`, so an existing
+Agnes client pointed at the gateway must keep working:
+
+```jsonc
+// Both of these produce the same upstream request.
+{ "model": "agnes/agnes-image-2.1-flash", "prompt": "a cat",
+  "response_format": "b64_json", "image": "https://example.com/ref.png" }
+
+{ "model": "agnes/agnes-image-2.1-flash", "prompt": "a cat",
+  "extra_body": { "response_format": "b64_json", "image": "https://example.com/ref.png" } }
+```
+
+The top level wins when both shapes carry the same field, and the `extra_body`
+wrapper is removed after normalization so nothing is forwarded twice.
+Normalization happens once, before validation and translation, so validation
+(M304) and the recorded upstream body see the same shape.
+
+## Model projection
+
+`GET /v1/models?capabilities=true` publishes what a media client needs without
+fetching the whole catalog:
+
+- `supported_endpoints` is `/v1/images/generations` for image output and
+  `/v1/videos` for video output. Agnes media models get it at discovery time
+  (`buildAgnesModel`); any other media model derives it from its output
+  modality.
+- `?cost=true` adds `media_cost: { unit: "image" | "second", rates }` from
+  the provider's price table (`AGNES_MEDIA_PRICES`, `FAL_MEDIA_PRICES` — the
+  same table that bills the request), instead of the per-token `cost` block.
+- `?output=image|video|text` filters the list in one call, and
+  `GET /v1/models/{id}` returns a single entry with the same projection.
+- Pure media models carry no `context_window` / `max_output_tokens`, and the
+  `auto-image` / `auto-video` tiers omit them too.
+
+A model id published by `/v1/models` is accepted verbatim by the media
+endpoints, including the provider-qualified form
+(`agnes/agnes-image-2.1-flash`): resolution goes through the same
+`routeForOpenAiModelId` the chat proxy uses.
+
+## Phases
+
+### Phase 1 — Contracts and provider catalog
+
+- `OUTPUT_MODALITIES = ['text', 'image', 'video']` (**done**).
+- `SharedProviderEntry.media` descriptor; `agnes` and `fal` registered with
+  `media: { image: true, video: true }` (**done**).
+- `AGNES_MODELS` curated catalog (ids, display names, output modality, context
+  windows) + `AGNES_BASE_URL` / `AGNES_TASK_ORIGIN`, and `FAL_MODELS` +
+  `FAL_BASE_URL` / `FAL_QUEUE_BASE_URL` / `FAL_PLATFORM_MODELS_URL` (**done**).
+- Discovery: `parseAgnes` / `parseFal` annotate the live listing from the
+  catalog, append curated media models the listing omits, and media-capable
+  providers bypass `filterNonChatModels` (**done**).
+- `agnes` OpenAI-compatible chat endpoint in `PROVIDER_ENDPOINTS` (**done**).
+- Synthetic tier profile already aggregates the chain's `outputModalities`, so
+  an `auto-{name}` tier over an image model advertises `output_modalities:
+['image']` today (**done**).
+- Not yet: a media endpoint to actually call. That is Phase 2.
+
+### Phase 2 — Image endpoint (vertical slice)
+
+- `ProxyApiMode` gains `images` (**done**).
+- `MediaController` + `MediaService` + `MediaProviderClient` (Agnes adapter) for
+  `POST /v1/images/generations` (**done**).
+- Recording with `cost_usd` from the image price table (**done**).
+- Tests: adapter translation, modality gate, credential failure, provider
+  error, recording shape (**done**).
+
+### Phase 3 — Synthetic media tiers and UI
+
+- Header-tier `output_modality` is settable through
+  `PATCH .../header-tiers/:id/output-modality`, validated against the chain
+  (**done**).
+- `auto-{name}` models advertise the tier's media modality
+  (**done** — `synthetic-model-profile.ts` prefers the tier modality).
+- Frontend: modality selector on the tier modal (**done**); provider tile and
+  model picker for Agnes (**done**).
+
+### Phase 4 — Video endpoint (async)
+
+- `ProxyApiMode` gains `videos` (**done**).
+- `POST /v1/videos`, `GET /v1/videos/{id}`; the task id is persisted on the
+  Request (`requests.media_task_id`, migration
+  `1803200000000-AddRequestMediaTaskId`) (**done**).
+- Completion finalizes `cost_usd` from `VIDEO_PRICE_PER_SECOND × seconds` and
+  maps the provider status onto the canonical success/failed vocabulary
+  (**done**).
+
+### Phase 5 — Cost accounting and analytics
+
+- Media pricing tables (image per-image, video per-second) resolved by
+  `(provider, model, size, seconds)` in `media-pricing.ts` (**done**).
+- Media rows carry zero tokens and their USD cost in `agent_messages.cost_usd`,
+  so token metrics are untouched and cost is included (**done**).
+
+## Verification
+
+- Unit: `media-provider-client.spec.ts`, `media.service.spec.ts`,
+  `media.controller.spec.ts`, `media-request-body.spec.ts`,
+  `synthetic-model-profile.spec.ts`, `openai-model-capabilities.spec.ts`,
+  `header-tier.service.spec.ts`.
+- E2E: `test/model-capabilities.e2e-spec.ts` — context window on a concrete
+  chat model, `supported_endpoints` + `media_cost` on an image model, the
+  router marker on `auto`, no `context_window` on `auto-image`, `?output=image`
+  filtering, single-model lookup, a listed media model routing without M302 for
+  the same agent key, and identical upstream bodies for `extra_body.image` and
+  top-level `image`.
+- Integration (compiled app + real Postgres + mock Agnes upstream): image
+  generation, modality gate (M301), video create, video status, cost
+  finalization (10s → $0.40), `requests.media_task_id`, `api_mode`, and the
+  `auto-image` / `auto-video` `/v1/models` capabilities.
+- Migration verified against a real database (column + index created).
+- Live video generation against the real Agnes API is **not** verifiable until
+  API credit is loaded; the video path is covered end-to-end against a mock
+  upstream instead.
+
+## Open questions
+
+- Does Agnes expose `/v1/models`? Discovery tries it and falls back to the
+  curated `AGNES_MODELS` catalog when it is missing or empty. Update the
+  catalog on new releases.
+- fal's platform listing is paginated and only its first page (`limit=100`) is
+  fetched; the curated `FAL_MODELS` catalog guarantees the H3 Max video target.
+  Widen pagination if a deployment needs more of fal's catalog.
+- fal image models are billed per megapixel by the provider; Manifest's table
+  is per image, so `fal-ai/flux/*` rates are the 1-megapixel list price and
+  over-report larger images rather than fabricating a tier fal does not expose.
+- OpenAI's `size` is `1024x1024`; Agnes uses `1K`/`2K` tiers plus `ratio`.
+  The Agnes adapter passes `size`/`ratio` through unchanged; a generic
+  OpenAI-images adapter exists for providers that take the exact-size form.
+- Media requests count against the same plan request limit and rate limits as
+  text (they are Manifest Requests like any other).
+- Provider-attempt payload recording (`attempt_recording`) is not yet wired for
+  media: image base64 can be large. The media Request/Attempt rows, cost, and
+  attribution are recorded; the raw payload is not.
+
+## Playground
+
+The dashboard Playground (`packages/backend/src/playground`) reuses this
+surface for its media columns instead of calling providers directly:
+
+- `POST /api/v1/playground/run` branches on the selected model's output
+  modality. Text runs keep the chat-completions path; image / video runs
+  delegate to `MediaService.handle`, so routing (synthetic `auto-*` tiers,
+  header tiers, direct), credentials, recording, and pricing are identical to
+  the public `/v1/images/generations` and `/v1/videos` endpoints. The result
+  reaches the client over the same SSE stream, with a terminal `done` event
+  carrying `kind`, `media`, and the resolved `route`.
+- `GET /api/v1/playground/models` lists discovered models plus one synthetic
+  `auto-{tier}` entry per enabled header tier, so a harness's tier behaviour can
+  be exercised without a harness. A synthetic run reports the concrete
+  provider/model that served it.
+- `GET /api/v1/playground/videos/{taskId}` polls an asynchronous video task and
+  finalizes the persisted playground column on a terminal status.
+- Media runs count against the same plan request limit and rate limits as text
+  (they are Manifest Requests like any other), and `MediaService` owns their
+  recording — the Playground does not double-record them.

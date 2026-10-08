@@ -164,6 +164,10 @@ function errorForward(status: number, bodyText: string) {
 interface Mocks {
   customProviders: { canonicalizeAgentMessageKeys: jest.Mock };
   opencodeGoCatalog: { resolveCostPerRequest: jest.Mock };
+  resolveService: { resolveAutoTierModel: jest.Mock };
+  headerTiers: { list: jest.Mock; listForTenant: jest.Mock };
+  modelDiscovery: { getModelsForAgent: jest.Mock };
+  mediaService: { handle: jest.Mock; videoStatus: jest.Mock };
   playgroundAgent: { resolve: jest.Mock };
   providerKeyService: {
     hasActiveProvider: jest.Mock;
@@ -186,11 +190,16 @@ interface Mocks {
   xaiOauth: { unwrapToken: jest.Mock };
   pricingCache: { getByModel: jest.Mock };
   eventBus: { emit: jest.Mock };
-  history: { saveColumn: jest.Mock };
+  history: {
+    saveColumn: jest.Mock;
+    columnBelongsToAgent: jest.Mock;
+    updateColumnMedia: jest.Mock;
+  };
   messageRepo: {
     insert: jest.Mock;
     manager?: { getRepository: jest.Mock };
   };
+  agentRepo: { find: jest.Mock; findOne: jest.Mock };
   customProviderRepo: { findOne: jest.Mock };
 }
 
@@ -225,8 +234,16 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
       }),
     },
     eventBus: { emit: jest.fn() },
-    history: { saveColumn: jest.fn().mockResolvedValue('col-1') },
+    history: {
+      saveColumn: jest.fn().mockResolvedValue('col-1'),
+      columnBelongsToAgent: jest.fn().mockResolvedValue(false),
+      updateColumnMedia: jest.fn().mockResolvedValue(undefined),
+    },
     messageRepo: { insert: jest.fn().mockResolvedValue(undefined) },
+    agentRepo: {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn().mockResolvedValue(null),
+    },
     customProviderRepo: { findOne: jest.fn().mockResolvedValue(null) },
     customProviders: {
       canonicalizeAgentMessageKeys: jest
@@ -236,6 +253,16 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
         ),
     },
     opencodeGoCatalog: { resolveCostPerRequest: jest.fn().mockResolvedValue(null) },
+    resolveService: { resolveAutoTierModel: jest.fn().mockResolvedValue(null) },
+    headerTiers: {
+      list: jest.fn().mockResolvedValue([]),
+      listForTenant: jest.fn().mockResolvedValue([]),
+    },
+    modelDiscovery: { getModelsForAgent: jest.fn().mockResolvedValue([]) },
+    mediaService: {
+      handle: jest.fn(),
+      videoStatus: jest.fn(),
+    },
     ...mocks,
   };
   const service = new PlaygroundService(
@@ -252,9 +279,14 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     full.eventBus as unknown as IngestEventBusService,
     full.history as unknown as PlaygroundHistoryService,
     full.messageRepo as unknown as Repository<AgentMessage>,
+    full.agentRepo as never,
     full.customProviderRepo as unknown as Repository<CustomProvider>,
     full.customProviders as unknown as CustomProviderService,
     full.opencodeGoCatalog as unknown as OpencodeGoCatalogService,
+    full.resolveService as never,
+    full.headerTiers as never,
+    full.modelDiscovery as never,
+    full.mediaService as never,
   );
   return { service, mocks: full };
 }
@@ -1378,5 +1410,449 @@ describe('PlaygroundService.runStream', () => {
 
     // writableEnded was true before send({type:'done'}) — nothing extra written.
     expect(res._written).toEqual([]);
+  });
+});
+
+describe('PlaygroundService media + synthetic routes', () => {
+  it('routes an image model through MediaService and emits a done event with media + route', async () => {
+    const { service, mocks } = buildService();
+    mocks.modelDiscovery.getModelsForAgent.mockResolvedValue([
+      { id: 'agnes-image-2.1-flash', provider: 'agnes', outputModalities: ['image'] },
+    ]);
+    mocks.mediaService.handle.mockResolvedValue({
+      status: 200,
+      body: { created: 1, data: [{ url: 'https://cdn/img.png' }] },
+      resolvedRoute: {
+        provider: 'agnes',
+        model: 'agnes-image-2.1-flash',
+        tier: 'direct',
+        reason: 'direct',
+      },
+      costUsd: 0.02,
+    });
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({
+        model: 'agnes-image-2.1-flash',
+        provider: 'agnes',
+        messages: undefined,
+        prompt: 'a red cube',
+        outputKind: 'image',
+        n: 1,
+        size: '1K',
+      }),
+      asRes(res),
+    );
+
+    expect(mocks.mediaService.handle).toHaveBeenCalledTimes(1);
+    const call = mocks.mediaService.handle.mock.calls[0][0];
+    expect(call.apiMode).toBe('images');
+    expect(call.body).toMatchObject({
+      model: 'agnes-image-2.1-flash',
+      prompt: 'a red cube',
+      size: '1K',
+    });
+
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.kind).toBe('image');
+    expect(done.media).toMatchObject({ kind: 'image', images: [{ url: 'https://cdn/img.png' }] });
+    expect((done.route as Record<string, unknown>).model).toBe('agnes-image-2.1-flash');
+    expect((done.metrics as Record<string, unknown>).cost).toBe(0.02);
+    expect((done.metrics as Record<string, unknown>).imageCount).toBe(1);
+
+    expect(mocks.history.saveColumn.mock.calls[0][0]).toMatchObject({
+      kind: 'image',
+      status: 'success',
+      prompt: 'a red cube',
+    });
+    // MediaService owns recording for media runs; the playground must not double-record.
+    expect(mocks.messageRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it('routes an explicit video run through MediaService with video options', async () => {
+    const { service, mocks } = buildService();
+    mocks.mediaService.handle.mockResolvedValue({
+      status: 200,
+      body: { id: 'task-1', object: 'video', status: 'queued', seconds: 5 },
+      resolvedRoute: {
+        provider: 'agnes',
+        model: 'agnes-video-v2.0',
+        tier: 'direct',
+        reason: 'direct',
+      },
+      costUsd: null,
+    });
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({
+        model: 'agnes-video-v2.0',
+        provider: 'agnes',
+        messages: undefined,
+        prompt: 'a cat surfing',
+        outputKind: 'video',
+        seconds: 5,
+        size: '720P',
+        mode: 'keyframe',
+        firstFrame: 'https://cdn/first.png',
+      }),
+      asRes(res),
+    );
+
+    const call = mocks.mediaService.handle.mock.calls[0][0];
+    expect(call.apiMode).toBe('videos');
+    expect(call.body).toMatchObject({
+      model: 'agnes-video-v2.0',
+      prompt: 'a cat surfing',
+      seconds: 5,
+      size: '720P',
+      mode: 'keyframe',
+      first_frame: 'https://cdn/first.png',
+    });
+
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.kind).toBe('video');
+    expect(done.media).toMatchObject({ kind: 'video', taskId: 'task-1', status: 'queued' });
+  });
+
+  it('records an error column when MediaService rejects the request', async () => {
+    const { service, mocks } = buildService();
+    mocks.mediaService.handle.mockResolvedValue({
+      status: 400,
+      body: { error: { message: 'Modality mismatch', type: 'invalid_request_error' } },
+      resolvedRoute: null,
+      costUsd: null,
+    });
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({
+        model: 'gpt-4o',
+        provider: 'openai',
+        messages: undefined,
+        prompt: 'x',
+        outputKind: 'image',
+      }),
+      asRes(res),
+    );
+
+    expect(res._status).toBe(400);
+    expect(mocks.history.saveColumn.mock.calls[0][0]).toMatchObject({
+      kind: 'image',
+      status: 'error',
+      errorMessage: 'Modality mismatch',
+    });
+  });
+
+  it('resolves a synthetic auto-* text model to the concrete route and records it', async () => {
+    const { service, mocks } = buildService();
+    mocks.resolveService.resolveAutoTierModel.mockResolvedValue({
+      tier: 'standard',
+      route: { provider: 'anthropic', authType: 'api_key', model: 'claude-sonnet-4' },
+      fallback_routes: null,
+      output_modality: 'text',
+      response_mode: 'streamed',
+      confidence: 1,
+      score: 0,
+      reason: 'header-match',
+      header_tier_name: 'Standard',
+      header_tier_color: '#fff',
+    });
+    mocks.providerClient.forward.mockResolvedValue(
+      okStream(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({ model: 'auto-standard', provider: 'manifest' }),
+      asRes(res),
+    );
+
+    // Forwarded to the resolved provider/model, not the synthetic one.
+    expect(mocks.providerKeyService.hasActiveProvider).toHaveBeenCalledWith(
+      'tenant-1',
+      'anthropic',
+      'agent-1',
+    );
+    const forwardArgs = mocks.providerClient.forward.mock.calls[0][0];
+    expect(forwardArgs.provider).toBe('anthropic');
+    expect(forwardArgs.model).toBe('claude-sonnet-4');
+
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.route).toMatchObject({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
+      tier: 'Standard',
+      synthetic: true,
+      requestedModel: 'auto-standard',
+    });
+
+    // The recorded attempt carries the resolved provider/model for cost parity.
+    const row = mocks.messageRepo.insert.mock.calls[0][0];
+    expect(row).toMatchObject({ provider: 'anthropic', model: 'claude-sonnet-4' });
+    // History keeps the requested model so retry re-resolves the tier.
+    expect(mocks.history.saveColumn.mock.calls[0][0]).toMatchObject({
+      model: 'auto-standard',
+      provider: 'manifest',
+      route: { synthetic: true, model: 'claude-sonnet-4' },
+    });
+  });
+
+  it('resolves a synthetic tier from the harness that defines it when the Playground agent owns none', async () => {
+    const { service, mocks } = buildService();
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-1', name: 'hermes' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
+      {
+        id: 't1',
+        agent_id: 'harness-1',
+        name: 'Standard',
+        enabled: true,
+        badge_color: '#fff',
+        override_route: { provider: 'anthropic', authType: 'api_key', model: 'claude-sonnet-4' },
+      },
+    ]);
+    mocks.resolveService.resolveAutoTierModel.mockImplementation((agentId: string) =>
+      Promise.resolve(
+        agentId === 'harness-1'
+          ? {
+              tier: 'standard',
+              route: { provider: 'anthropic', authType: 'api_key', model: 'claude-sonnet-4' },
+              fallback_routes: null,
+              output_modality: 'text',
+              response_mode: 'streamed',
+              confidence: 1,
+              score: 0,
+              reason: 'header-match',
+              header_tier_name: 'Standard',
+              header_tier_color: '#fff',
+            }
+          : null,
+      ),
+    );
+    mocks.providerClient.forward.mockResolvedValue(
+      okStream(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({ model: 'auto-standard', provider: 'manifest', harness: 'hermes' }),
+      asRes(res),
+    );
+
+    const forwardArgs = mocks.providerClient.forward.mock.calls[0][0];
+    expect(forwardArgs.provider).toBe('anthropic');
+    expect(forwardArgs.model).toBe('claude-sonnet-4');
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.route).toMatchObject({
+      model: 'claude-sonnet-4',
+      harness: 'hermes',
+      synthetic: true,
+      requestedModel: 'auto-standard',
+    });
+  });
+
+  it('passes the harness agent id to MediaService for a synthetic media run', async () => {
+    const { service, mocks } = buildService();
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-2', name: 'coding' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
+      {
+        id: 't1',
+        agent_id: 'harness-2',
+        name: 'Image',
+        enabled: true,
+        badge_color: '#fff',
+        override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+      },
+    ]);
+    mocks.resolveService.resolveAutoTierModel.mockImplementation((agentId: string) =>
+      Promise.resolve(
+        agentId === 'harness-2'
+          ? {
+              tier: 'standard',
+              route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+              fallback_routes: null,
+              output_modality: 'image',
+              response_mode: 'buffered',
+              confidence: 1,
+              score: 0,
+              reason: 'header-match',
+              header_tier_name: 'Image',
+              header_tier_color: '#fff',
+            }
+          : null,
+      ),
+    );
+    mocks.mediaService.handle.mockResolvedValue({
+      status: 200,
+      body: { created: 1, data: [{ url: 'https://cdn/x.png' }] },
+      resolvedRoute: {
+        provider: 'agnes',
+        model: 'agnes-image-2.1-flash',
+        tier: 'standard',
+        reason: 'header-match',
+        headerTierName: 'Image',
+      },
+      costUsd: 0.02,
+    });
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({
+        model: 'auto-image',
+        provider: 'manifest',
+        messages: undefined,
+        prompt: 'a red cube',
+        harness: 'coding',
+      }),
+      asRes(res),
+    );
+
+    const call = mocks.mediaService.handle.mock.calls[0][0];
+    expect(call.apiMode).toBe('images');
+    expect(call.routingAgentId).toBe('harness-2');
+    const done = parseSse(res).find((e) => e.type === 'done') as Record<string, unknown>;
+    expect(done.route).toMatchObject({ model: 'agnes-image-2.1-flash', harness: 'coding' });
+  });
+
+  it('reports a clear error when a synthetic auto-* model resolves to no route', async () => {
+    const { service, mocks } = buildService();
+    mocks.resolveService.resolveAutoTierModel.mockResolvedValue(null);
+    const res = mockRes();
+
+    await service.runStream(
+      CTX,
+      makeDto({ model: 'auto-ghost', provider: 'manifest' }),
+      asRes(res),
+    );
+
+    expect(res._status).toBe(404);
+    expect(res._json).toMatchObject({
+      message: expect.stringContaining('auto-ghost'),
+    });
+    expect(mocks.providerClient.forward).not.toHaveBeenCalled();
+  });
+
+  it('videoStatus finalizes a terminal task on the persisted column when owned', async () => {
+    const { service, mocks } = buildService();
+    mocks.mediaService.videoStatus.mockResolvedValue({
+      status: 200,
+      body: {
+        id: 'task-9',
+        object: 'video',
+        status: 'completed',
+        url: 'https://cdn/v.mp4',
+        seconds: 5,
+      },
+      costUsd: 0.3,
+    });
+    mocks.history.columnBelongsToAgent = jest.fn().mockResolvedValue(true);
+    mocks.history.updateColumnMedia = jest.fn().mockResolvedValue(undefined);
+
+    const out = await service.videoStatus(CTX, 'task-9', 'col-9');
+
+    expect(out.media).toMatchObject({ kind: 'video', taskId: 'task-9', status: 'completed' });
+    expect(out.costUsd).toBe(0.3);
+    expect(mocks.history.updateColumnMedia).toHaveBeenCalledWith(
+      'col-9',
+      expect.objectContaining({ status: 'success', costUsd: 0.3 }),
+    );
+  });
+
+  it('videoStatus does not touch a column owned by another agent', async () => {
+    const { service, mocks } = buildService();
+    mocks.mediaService.videoStatus.mockResolvedValue({
+      status: 200,
+      body: { id: 'task-9', object: 'video', status: 'completed' },
+      costUsd: 0.3,
+    });
+    mocks.history.columnBelongsToAgent = jest.fn().mockResolvedValue(false);
+    mocks.history.updateColumnMedia = jest.fn().mockResolvedValue(undefined);
+
+    await service.videoStatus(CTX, 'task-9', 'col-foreign');
+
+    expect(mocks.history.updateColumnMedia).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlaygroundService.listModels', () => {
+  it('lists discovered models plus one synthetic auto-* entry per enabled tier', async () => {
+    const { service, mocks } = buildService();
+    mocks.modelDiscovery.getModelsForAgent.mockResolvedValue([
+      {
+        id: 'gpt-4o',
+        provider: 'openai',
+        authType: 'api_key',
+        contextWindow: 128000,
+        capabilityReasoning: true,
+        capabilityCode: false,
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        qualityScore: 80,
+        inputPricePerToken: 0.000001,
+        outputPricePerToken: 0.000002,
+      },
+    ]);
+    mocks.agentRepo.find.mockResolvedValue([
+      { id: 'agent-1', name: 'Playground' },
+      { id: 'harness-1', name: 'hermes' },
+      { id: 'harness-2', name: 'coding' },
+    ]);
+    mocks.headerTiers.listForTenant.mockResolvedValue([
+      {
+        id: 't1',
+        agent_id: 'harness-1',
+        name: 'Standard',
+        enabled: true,
+        badge_color: '#123456',
+        override_route: { provider: 'openai', authType: 'api_key', model: 'gpt-4o' },
+      },
+      {
+        id: 't2',
+        agent_id: 'harness-1',
+        name: 'Off',
+        enabled: true,
+        badge_color: '#000000',
+        override_route: null,
+      },
+      {
+        id: 't3',
+        agent_id: 'harness-2',
+        name: 'Standard',
+        enabled: true,
+        badge_color: '#ffffff',
+        override_route: { provider: 'openai', authType: 'api_key', model: 'gpt-4o' },
+      },
+    ]);
+
+    const rows = await service.listModels(CTX);
+
+    expect(rows.find((r) => r.model_name === 'gpt-4o')).toMatchObject({
+      synthetic: false,
+      output_modalities: ['text'],
+    });
+    const synthetic = rows.filter((r) => r.model_name === 'auto-standard');
+    // Deduped across harnesses: one entry, tagged with the owning harness.
+    expect(synthetic).toHaveLength(1);
+    expect(synthetic[0]).toMatchObject({
+      synthetic: true,
+      provider: 'manifest',
+      tier_name: 'Standard',
+      harness: 'hermes',
+      display_name: 'Auto · Standard · hermes',
+    });
+    expect(rows.some((r) => r.model_name === 'auto-off')).toBe(false);
   });
 });

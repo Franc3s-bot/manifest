@@ -40,6 +40,22 @@ describe('Google Adapter', () => {
       expect(result.contents).toEqual([{ role: 'user', parts: [{ text: 'Hi' }] }]);
     });
 
+    it('extracts developer messages into the system instruction', () => {
+      const body = {
+        messages: [
+          { role: 'system', content: 'You are helpful.' },
+          { role: 'developer', content: 'Answer in French.' },
+          { role: 'user', content: 'Hi' },
+        ],
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.systemInstruction).toEqual({
+        parts: [{ text: 'You are helpful.\nAnswer in French.' }],
+      });
+      expect(result.contents).toEqual([{ role: 'user', parts: [{ text: 'Hi' }] }]);
+    });
+
     it('maps assistant role to model', () => {
       const body = {
         messages: [
@@ -276,6 +292,52 @@ describe('Google Adapter', () => {
           ],
         },
       ]);
+    });
+
+    describe('tool_choice', () => {
+      const tools = [
+        {
+          type: 'function',
+          function: { name: 'web_search', parameters: { type: 'object' } },
+        },
+      ];
+      const messages = [{ role: 'user', content: 'Search for cats' }];
+
+      it.each([
+        ['auto', { mode: 'AUTO' }],
+        ['none', { mode: 'NONE' }],
+        ['required', { mode: 'ANY' }],
+        [
+          { type: 'function', function: { name: 'web_search' } },
+          { mode: 'ANY', allowedFunctionNames: ['web_search'] },
+        ],
+      ])('maps %j to toolConfig', (toolChoice, functionCallingConfig) => {
+        const result = toGoogleRequest(
+          { messages, tools, tool_choice: toolChoice },
+          'gemini-2.5-flash',
+        );
+
+        expect(result.toolConfig).toEqual({ functionCallingConfig });
+      });
+
+      it.each([
+        [{ type: 'allowed_tools' }],
+        [{ type: 'function' }],
+        [{ type: 'function', function: {} }],
+      ])('omits toolConfig for an unknown tool_choice %j', (toolChoice) => {
+        const result = toGoogleRequest(
+          { messages, tools, tool_choice: toolChoice },
+          'gemini-2.5-flash',
+        );
+
+        expect(result.toolConfig).toBeUndefined();
+      });
+
+      it('omits toolConfig when no tools are sent', () => {
+        const result = toGoogleRequest({ messages, tool_choice: 'required' }, 'gemini-2.5-flash');
+
+        expect(result.toolConfig).toBeUndefined();
+      });
     });
 
     it('strips unsupported JSON Schema fields from tool parameters', () => {
@@ -909,6 +971,27 @@ describe('Google Adapter', () => {
       expect(result.systemInstruction).toBeUndefined();
     });
 
+    it('extracts system instruction from content-part arrays', () => {
+      const body = {
+        messages: [
+          {
+            role: 'system',
+            content: [
+              { type: 'text', text: 'You are helpful.' },
+              { type: 'input_text', text: 'Be concise.' },
+            ],
+          },
+          { role: 'user', content: 'Hi' },
+        ],
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.systemInstruction).toEqual({
+        parts: [{ text: 'You are helpful.\nBe concise.' }],
+      });
+      expect(result.contents).toEqual([{ role: 'user', parts: [{ text: 'Hi' }] }]);
+    });
+
     it('joins multiple system messages into one instruction', () => {
       const body = {
         messages: [
@@ -1420,6 +1503,30 @@ describe('Google Adapter', () => {
 
       const details = usage.prompt_tokens_details as { cached_tokens: number };
       expect(details.cached_tokens).toBe(45000);
+    });
+
+    it('counts thinking tokens as completion tokens', () => {
+      const google = {
+        candidates: [
+          {
+            content: { parts: [{ text: 'Hello!' }] },
+            finishReason: 'STOP',
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 5,
+          thoughtsTokenCount: 120,
+          totalTokenCount: 135,
+        },
+      };
+
+      const result = fromGoogleResponse(google, 'gemini-2.5-flash');
+      const usage = result.usage as Record<string, unknown>;
+      expect(usage.prompt_tokens).toBe(10);
+      expect(usage.completion_tokens).toBe(125);
+      expect(usage.total_tokens).toBe(135);
+      expect(usage.completion_tokens_details).toEqual({ reasoning_tokens: 120 });
     });
 
     it('handles function call response', () => {
@@ -1959,6 +2066,22 @@ describe('Google Adapter', () => {
       expect(result).toContain('"cached_tokens":80');
     });
 
+    it('counts thinking tokens as completion tokens in stream usage', () => {
+      const chunk = JSON.stringify({
+        candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }],
+        usageMetadata: {
+          promptTokenCount: 100,
+          candidatesTokenCount: 50,
+          thoughtsTokenCount: 300,
+          totalTokenCount: 450,
+        },
+      });
+      const result = transformGoogleStreamChunk(chunk, 'gemini-2.5-flash');
+      expect(result).toContain('"completion_tokens":350');
+      expect(result).toContain('"total_tokens":450');
+      expect(result).toContain('"reasoning_tokens":300');
+    });
+
     it('emits finish_reason stop for STOP without tool calls in stream with usage', () => {
       const chunk = JSON.stringify({
         candidates: [{ content: { parts: [{ text: 'done' }] }, finishReason: 'STOP' }],
@@ -2283,5 +2406,67 @@ describe('Google Adapter', () => {
         response: { result: 'ok' },
       });
     });
+  });
+});
+
+describe('Google Adapter — multimodal attachments', () => {
+  it('converts an inline image data URI to inlineData', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'what is this?' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } },
+            ],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([
+      { text: 'what is this?' },
+      { inlineData: { mimeType: 'image/png', data: 'AA' } },
+    ]);
+  });
+
+  it('converts an inline audio part to inlineData with the audio mime type', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'input_audio', input_audio: { data: 'QUJD', format: 'wav' } }],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([{ inlineData: { mimeType: 'audio/wav', data: 'QUJD' } }]);
+  });
+
+  it('converts a document data URI and a remote file URL', () => {
+    const result = toGoogleRequest(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'file', file: { file_data: 'data:application/pdf;base64,QUJD' } },
+              { type: 'file', file: { url: 'https://cdn.example/doc.pdf' } },
+            ],
+          },
+        ],
+      },
+      'gemini-2.0-flash',
+    );
+    const contents = result.contents as Array<{ parts: unknown[] }>;
+    expect(contents[0].parts).toEqual([
+      { inlineData: { mimeType: 'application/pdf', data: 'QUJD' } },
+      { fileData: { fileUri: 'https://cdn.example/doc.pdf' } },
+    ]);
   });
 });

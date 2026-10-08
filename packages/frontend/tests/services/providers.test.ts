@@ -5,6 +5,7 @@ import {
   getModelLabel,
   getProvider,
   buildProviderDef,
+  subscriptionCatalog,
 } from '../../src/services/providers';
 import { validateApiKey, validateSubscriptionKey } from '../../src/services/provider-utils';
 import {
@@ -1064,6 +1065,25 @@ describe('PROVIDERS', () => {
 });
 
 /* ── STAGES constant ───────────────────────────── */
+
+describe('subscriptionCatalog', () => {
+  const open = PROVIDERS.find((p) => p.id === 'openai')!;
+  const google = PROVIDERS.find((p) => p.id === 'gemini')!;
+
+  it('marks the Google subscription closed to new connections', () => {
+    expect(google.subscriptionClosedNote).toMatch(/Gemini API key/);
+  });
+
+  it('lists a closed provider only where the workspace already has it', () => {
+    expect(subscriptionCatalog([open, google], () => false)).toEqual([open]);
+    expect(subscriptionCatalog([open, google], (id) => id === 'gemini')).toEqual([open, google]);
+  });
+
+  it('never lists providers without subscription support', () => {
+    const groq = PROVIDERS.find((p) => p.id === 'groq')!;
+    expect(subscriptionCatalog([groq], () => true)).toEqual([]);
+  });
+});
 
 describe('STAGES', () => {
   it('has 4 stages', () => {

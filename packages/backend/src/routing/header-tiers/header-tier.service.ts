@@ -2,22 +2,24 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import type { AuthType, ModelRoute, ResponseMode } from 'manifest-shared';
+import type { AuthType, ModelRoute, OutputModality, ResponseMode } from 'manifest-shared';
 import {
   DEFAULT_RESPONSE_MODE,
   DEFAULT_OUTPUT_MODALITY,
+  OUTPUT_MODALITIES,
   TIER_COLORS,
   type TierColor,
 } from 'manifest-shared';
 import { HeaderTier } from '../../entities/header-tier.entity';
+import type { DiscoveredModel } from '../../model-discovery/model-fetcher';
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
+import { explicitRoute, readFallbackRoutes } from '../routing-core/route-helpers';
 import {
-  explicitRoute,
-  readFallbackRoutes,
-  unambiguousRoute,
-  routeMatches,
-} from '../routing-core/route-helpers';
+  describeUnresolvedFallback,
+  resolveFallbackRoutes,
+  resolveModelRoute,
+} from '../routing-core/resolve-model-route';
 import { assertStreamableResponseMode } from '../routing-core/response-mode-guard';
 
 export const RESERVED_HEADER_KEYS = new Set<string>([
@@ -37,6 +39,20 @@ export interface CreateHeaderTierInput {
   header_key: string;
   header_value: string;
   badge_color: TierColor;
+  /**
+   * Modality the tier produces. `image`/`video` are accepted at creation time
+   * even before a model is configured: the chain is empty, so there is nothing
+   * to contradict. The matching model is enforced when one is assigned.
+   * Defaults to `text`.
+   */
+  output_modality?: OutputModality;
+}
+
+/** Every route in a tier's chain: primary override plus fallbacks. */
+function tierChainRoutes(row: HeaderTier): ModelRoute[] {
+  return [row.override_route, ...(readFallbackRoutes(row) ?? [])].filter(
+    (route): route is ModelRoute => route !== null,
+  );
 }
 
 export interface UpdateHeaderTierInput {
@@ -64,6 +80,23 @@ export class HeaderTierService {
     });
     this.routingCache.setHeaderTiers(agentId, rows);
     return rows;
+  }
+
+  /**
+   * Every enabled header tier of the tenant that has an override route — i.e.
+   * the tiers a client can reach as a synthetic `auto-{name}` model. Unlike
+   * `list(agentId)`, this spans all of the tenant's harnesses: the reserved
+   * Playground agent owns no tiers of its own, so it surfaces (and resolves)
+   * the harnesses' synthetic models.
+   *
+   * Ordered by name then agent so listing and resolution pick the same tier
+   * when several harnesses share a tier name.
+   */
+  async listForTenant(tenantId: string): Promise<HeaderTier[]> {
+    return this.repo.find({
+      where: { tenant_id: tenantId, enabled: true },
+      order: { name: 'ASC', agent_id: 'ASC' },
+    });
   }
 
   async create(
@@ -96,7 +129,7 @@ export class HeaderTierService {
       enabled: true,
       override_route: null,
       fallback_routes: null,
-      output_modality: DEFAULT_OUTPUT_MODALITY,
+      output_modality: this.validateOutputModality(input.output_modality),
       response_mode: DEFAULT_RESPONSE_MODE,
       created_at: now,
       updated_at: now,
@@ -160,6 +193,100 @@ export class HeaderTierService {
     return row;
   }
 
+  /**
+   * Set the modality this tier produces. A media modality is validated against
+   * the configured chain so an image tier cannot point at a text-only model.
+   */
+  async setOutputModality(
+    agentId: string,
+    tenantId: string,
+    id: string,
+    outputModality: OutputModality,
+  ): Promise<HeaderTier> {
+    const row = await this.findOrThrow(agentId, id);
+    await this.assertChainSupportsModality(row, tenantId, outputModality);
+    await this.assertRoutesMatchModality(row, outputModality, tierChainRoutes(row), tenantId);
+    row.output_modality = outputModality;
+    row.updated_at = new Date().toISOString();
+    await this.repo.save(row);
+    this.routingCache.invalidateAgent(agentId);
+    return row;
+  }
+
+  private async assertChainSupportsModality(
+    row: HeaderTier,
+    tenantId: string,
+    modality: OutputModality,
+  ): Promise<void> {
+    if (modality === 'text') return;
+    const routes = tierChainRoutes(row);
+    // An empty tier has no model to contradict the choice. This is what lets an
+    // operator create an image/video tier up front and pick its model after —
+    // `assertRoutesMatchModality` enforces the invariant on assignment instead.
+    if (routes.length === 0) return;
+    const available = await this.discoveryService.getModelsForAgent(tenantId, row.agent_id);
+    const supports = routes.some(
+      (route) => this.routeModalitySupport(route, modality, available) === true,
+    );
+    if (!supports) {
+      throw new BadRequestException(
+        `Cannot set ${modality} output for custom tier "${row.name}": ` +
+          `none of its models generate ${modality}. Point the tier at an ${modality} model first.`,
+      );
+    }
+  }
+
+  /**
+   * Does the route's discovered model produce this modality?
+   *
+   * Returns `undefined` when the model is absent from the catalog — the route is
+   * real but its metadata is unknown, so it abstains instead of voting "no"
+   * (same rule the synthetic-tier aggregation uses).
+   */
+  private routeModalitySupport(
+    route: ModelRoute,
+    modality: OutputModality,
+    available: readonly DiscoveredModel[],
+  ): boolean | undefined {
+    const model =
+      available.find(
+        (m) => m.id === route.model && m.provider.toLowerCase() === route.provider.toLowerCase(),
+      ) ?? available.find((m) => m.id === route.model);
+    if (!model) return undefined;
+    const modalities = model.outputModalities;
+    // A catalog entry with no modality metadata is unknown, not a "no".
+    if (!modalities || modalities.length === 0) return undefined;
+    return modalities.includes(modality);
+  }
+
+  /**
+   * A media tier must point at models that actually produce that modality.
+   *
+   * `assertChainSupportsModality` only proves ONE route qualifies, so a mixed
+   * chain (image model + text fallback) would slip through. This rejects any
+   * route the catalog knows cannot produce the modality, which turns a
+   * request-time M301 into an immediate, actionable configuration error.
+   */
+  private async assertRoutesMatchModality(
+    row: HeaderTier,
+    modality: OutputModality,
+    routes: readonly ModelRoute[],
+    tenantId: string,
+  ): Promise<void> {
+    if (modality !== 'image' && modality !== 'video') return;
+    if (routes.length === 0) return;
+    const available = await this.discoveryService.getModelsForAgent(tenantId, row.agent_id);
+    const offender = routes.find(
+      (route) => this.routeModalitySupport(route, modality, available) === false,
+    );
+    if (offender) {
+      throw new BadRequestException(
+        `Cannot use model "${offender.model}" on ${modality} tier "${row.name}": ` +
+          `it does not generate ${modality}. Pick a model that does.`,
+      );
+    }
+  }
+
   async delete(agentId: string, id: string): Promise<void> {
     const row = await this.findOrThrow(agentId, id);
     await this.repo.delete({ id: row.id });
@@ -207,16 +334,18 @@ export class HeaderTierService {
     providerKeyLabel?: string | null,
   ): Promise<HeaderTier> {
     const row = await this.findOrThrow(agentId, id);
-    // When the caller passes an explicit (provider, authType) the route is
-    // already unambiguous — skip the discovery fetch.
-    const explicit = explicitRoute(model, provider, authType, providerKeyLabel);
-    const route =
-      explicit ??
-      unambiguousRoute(
-        model,
-        await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
-        providerKeyLabel,
-      );
+    // Store the canonical route whichever published name the caller used. An
+    // explicit (provider, authType) the discovery list does not know is kept
+    // as given, as before.
+    const resolution = resolveModelRoute(
+      model,
+      await this.discoveryService.getModelsForAgent(tenantId, row.agent_id),
+      { provider, authType, keyLabel: providerKeyLabel },
+    );
+    const route = resolution.ok
+      ? resolution.route
+      : explicitRoute(model, provider, authType, providerKeyLabel);
+    await this.assertRoutesMatchModality(row, row.output_modality, route ? [route] : [], tenantId);
     assertStreamableResponseMode(
       row.response_mode,
       `custom tier "${row.name}"`,
@@ -255,6 +384,7 @@ export class HeaderTierService {
       routes,
       readFallbackRoutes(row),
     );
+    await this.assertRoutesMatchModality(row, row.output_modality, fallbackRoutes ?? [], tenantId);
     assertStreamableResponseMode(
       row.response_mode,
       `custom tier "${row.name}"`,
@@ -295,45 +425,11 @@ export class HeaderTierService {
   ): Promise<ModelRoute[] | null> {
     if (models.length === 0) return null;
     const available = await this.discoveryService.getModelsForAgent(tenantId, agentId);
-    if (routes && routes.length === models.length) {
-      const aligned = routes.every((r, i) => r.model === models[i]);
-      const pool = [...(storedRoutes ?? [])];
-      const validated =
-        aligned &&
-        routes.every((r) => {
-          const kept = pool.findIndex((s) => routeMatches(s, r));
-          if (kept >= 0) {
-            pool.splice(kept, 1);
-            return true;
-          }
-          return available.some(
-            (m) =>
-              m.id === r.model &&
-              m.provider.toLowerCase() === r.provider.toLowerCase() &&
-              m.authType === r.authType,
-          );
-        });
-      if (validated) return routes;
+    const resolution = resolveFallbackRoutes(models, available, routes, storedRoutes);
+    if (!resolution.ok) {
+      throw new BadRequestException(describeUnresolvedFallback(resolution.model));
     }
-    const pool = [...(storedRoutes ?? [])];
-    const resolved: ModelRoute[] = [];
-    for (const m of models) {
-      const kept = pool.findIndex((s) => s.model === m);
-      if (kept >= 0) {
-        resolved.push(pool[kept]);
-        pool.splice(kept, 1);
-        continue;
-      }
-      const route = unambiguousRoute(m, available);
-      if (!route) {
-        throw new BadRequestException(
-          `Cannot resolve fallback model "${m}" to a single connected provider. ` +
-            `Pass an explicit (provider, authType, model) route, or connect exactly one provider that offers this model.`,
-        );
-      }
-      resolved.push(route);
-    }
-    return resolved;
+    return resolution.routes;
   }
 
   private async findOrThrow(agentId: string, id: string): Promise<HeaderTier> {
@@ -376,6 +472,16 @@ export class HeaderTierService {
       );
     }
     return val;
+  }
+
+  private validateOutputModality(raw?: OutputModality): OutputModality {
+    if (raw === undefined) return DEFAULT_OUTPUT_MODALITY;
+    if (!OUTPUT_MODALITIES.includes(raw)) {
+      throw new BadRequestException(
+        `Invalid output modality — pick one of ${OUTPUT_MODALITIES.join(', ')}`,
+      );
+    }
+    return raw;
   }
 
   private validateColor(raw: TierColor): TierColor {

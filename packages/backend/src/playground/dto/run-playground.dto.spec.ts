@@ -42,7 +42,9 @@ describe('RunPlaygroundDto', () => {
       const errors = await validate(dto);
       expect(errors.length).toBeGreaterThan(0);
       const flat = JSON.stringify(errors);
-      expect(flat).toContain('exactly one of `messages` or `rawRequestBody` must be provided');
+      expect(flat).toContain(
+        'exactly one of `messages`, `prompt`, or `rawRequestBody` must be provided',
+      );
     });
 
     // The XOR constraint is attached to `model` (a non-optional field)
@@ -210,5 +212,62 @@ describe('PlaygroundPayloadShapeConstraint (unit)', () => {
 
   it('exposes a default error message', () => {
     expect(constraint.defaultMessage()).toContain('exactly one of');
+  });
+});
+
+describe('RunPlaygroundDto — multimodal parts & harness', () => {
+  it('accepts image, audio and file content parts', async () => {
+    const dto = toDto({
+      ...VALID_BASE,
+      harness: 'hermes',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'describe these' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AA' } },
+            { type: 'input_audio', input_audio: { data: 'QUJD', format: 'wav' } },
+            {
+              type: 'file',
+              file: { file_data: 'data:application/pdf;base64,QUJD', filename: 'a.pdf' },
+            },
+          ],
+        },
+      ],
+    });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('rejects an input_audio part missing its data or format', async () => {
+    const dto = toDto({
+      ...VALID_BASE,
+      messages: [
+        { role: 'user', content: [{ type: 'input_audio', input_audio: { data: 'QUJD' } }] },
+      ],
+    });
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('rejects a file part with neither a URL nor file_data', async () => {
+    const dto = toDto({
+      ...VALID_BASE,
+      messages: [{ role: 'user', content: [{ type: 'file', file: { filename: 'a.pdf' } }] }],
+    });
+    const errors = await validate(dto);
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it('accepts a prompt payload with a harness', async () => {
+    const dto = toDto({
+      ...VALID_BASE,
+      model: 'auto-image',
+      provider: 'manifest',
+      harness: 'coding',
+      prompt: 'a red cube',
+    });
+    const errors = await validate(dto, { whitelist: true });
+    expect(errors).toHaveLength(0);
   });
 });

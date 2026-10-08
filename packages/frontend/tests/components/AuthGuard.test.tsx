@@ -116,6 +116,20 @@ describe('AuthGuard', () => {
     });
   });
 
+  it('marks the plan chosen and renders children for a pro user after onboarding', async () => {
+    localStorage.setItem('manifest_onboarding_done_u1', '1');
+    mockGetBillingPlan.mockResolvedValue({ enabled: true, plan: 'pro' });
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+
+    expect(await screen.findByText('Protected content')).toBeDefined();
+    expect(localStorage.getItem('manifest_plan_chosen_u1')).toBe('1');
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
   it('skips the upgrade redirect and renders children when onboarding is not done', async () => {
     mockGetBillingPlan.mockResolvedValue({ enabled: true, plan: 'free' });
     render(() => (
@@ -153,6 +167,19 @@ describe('AuthGuard', () => {
     ));
 
     expect(await screen.findByText('Protected content')).toBeDefined();
+  });
+
+  it('starts resolving the plan while the session is still pending', async () => {
+    // The plan lookup only needs the cookie jar, not the resolved session, so
+    // it must not wait behind the session probe: in production that probe is
+    // ~0.5 s and the plan another 0.3–0.9 s, paid serially before any page.
+    mockSessionData = { data: null, isPending: true };
+    render(() => (
+      <AuthGuard>
+        <span>Protected content</span>
+      </AuthGuard>
+    ));
+    await vi.waitFor(() => expect(mockGetBillingPlan).toHaveBeenCalledTimes(1));
   });
 
   it('shows loading state when session is pending', () => {

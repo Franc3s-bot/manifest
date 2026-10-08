@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-white.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" />
-    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-white.svg" />
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/logo-dark.svg" />
+    <img src=".github/assets/logo-dark.svg" alt="Manifest LLM Gateway" height="53" title="Manifest LLM Gateway"/>
   </picture>
 </p>
 <p align="center">
@@ -10,6 +10,8 @@ AI Agents that don't break
 </p>
 
 ![manifest-gh](https://github.com/user-attachments/assets/7dd74fc2-f7d6-4558-a95a-014ed754a125)
+
+---
 
 <p align="center">
   <a href="https://render.com/deploy?repo=https://github.com/mnfst/llm-gateway" target="_blank" rel="nofollow"><img src="https://img.shields.io/badge/Deploy%20on-Render-46E3B7?style=for-the-badge&amp;logo=render&amp;logoColor=white" alt="Deploy on Render" /></a>
@@ -38,24 +40,18 @@ AI Agents that don't break
 <a href="https://trendshift.io/repositories/12890" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12890" alt="mnfst%2Fllm-gateway | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
 
-<p align="center">
-  <a href="https://manifest.build/blog/manifest-is-taking-a-new-direction/">
-    <img
-      src=".github/assets/new-direction-banner.png"
-      alt="Manifest is becoming the self-healing layer for APIs. We're building a new product that fixes failed API requests on the fly, independently of the gateway. The open-source gateway stays available and maintained."
-      width="100%"
-    />
-  </a>
-</p>
+## What is Manifest LLM Gateway?
 
-## What is Manifest?
-
-Manifest is an open-source LLM gateway for AI agents and apps. Connect your API keys, subscriptions, and local models to one OpenAI-compatible endpoint, and each query goes to the right model. No single-provider lock-in.
+Manifest LLM Gateway is an open-source LLM gateway for AI agents and apps. Connect your API keys, subscriptions, and local models to one OpenAI-compatible endpoint, and each query goes to the right model. No single-provider lock-in.
 
 - 🔀 Custom Routing: API keys, Subscriptions, Local models, Custom providers
 - 💾 Full Body Logs for Success and Error Messages
 - 📊 Track every single dollar, setup notifications and limits
 - 🚑 Fallback on different models when queries fail, Self-heals your bad requests
+
+<p align="center">
+  <a href="https://manifest.build/api-bot/"><img src=".github/assets/api-bot-readme-banner.png" alt="Meet API Bot: API changes won't take your app down anymore. Discover" width="100%" /></a>
+</p>
 
 ## Quick start
 
@@ -85,7 +81,7 @@ Open [http://localhost:2099](http://localhost:2099) and sign up — the first ac
 
 > Every deployment path now uses durable request-recording storage. Railway, AWS, GCP, and Fly.io provision it natively; Render, Coolify, Easypanel, Docker, and Apple Containers mount persistent storage. DigitalOcean, Heroku, and Koyeb collect external S3-compatible settings during setup. Volume-backed templates are single-instance; use S3-compatible storage before scaling horizontally.
 
-Full deployment guides: [Railway](https://manifest.build/docs/deploy/railway), [Render](https://manifest.build/docs/deploy/render), [DigitalOcean](https://manifest.build/docs/deploy/digitalocean), [AWS](https://manifest.build/docs/deploy/aws), [GCP](https://manifest.build/docs/deploy/gcp), [Fly.io](https://manifest.build/docs/deploy/fly), [Coolify](https://manifest.build/docs/deploy/coolify), [Easypanel](https://manifest.build/docs/deploy/easypanel), [Heroku](https://manifest.build/docs/deploy/heroku), [Koyeb](https://manifest.build/docs/deploy/koyeb), and [Apple Containers](deploy/apple-containers/TUTORIAL.md).
+Full deployment guides: [Railway](https://manifest.build/llm-gateway/docs/deploy/railway/), [Render](https://manifest.build/llm-gateway/docs/deploy/render/), [DigitalOcean](https://manifest.build/llm-gateway/docs/deploy/digitalocean/), [AWS](https://manifest.build/llm-gateway/docs/deploy/aws/), [GCP](https://manifest.build/llm-gateway/docs/deploy/gcp/), [Fly.io](https://manifest.build/llm-gateway/docs/deploy/fly/), [Coolify](https://manifest.build/llm-gateway/docs/deploy/coolify/), [Easypanel](https://manifest.build/llm-gateway/docs/deploy/easypanel/), [Heroku](https://manifest.build/llm-gateway/docs/deploy/heroku/), [Koyeb](https://manifest.build/llm-gateway/docs/deploy/koyeb/), and [Apple Containers](deploy/apple-containers/TUTORIAL.md).
 
 > The old npm-based self-hosting path is no longer supported. Use the Docker image or one of the deployment guides above.
 
@@ -135,7 +131,7 @@ Provider catalogs are discovered dynamically when credentials are connected. The
 
 ## Quick links
 
-- [Docs](https://manifest.build/docs)
+- [Docs](https://manifest.build/llm-gateway/docs/introduction/)
 - [n8n community node](integrations/n8n-nodes-manifest) — `n8n-nodes-manifest` on npm
 - [Discord](https://discord.com/invite/FepAked3W7)
 - [Discussions](https://github.com/mnfst/llm-gateway/discussions)

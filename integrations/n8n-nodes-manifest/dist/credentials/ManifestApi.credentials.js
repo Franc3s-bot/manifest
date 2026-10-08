@@ -10,7 +10,7 @@ class ManifestApi {
             light: 'file:../nodes/Manifest/manifest-logo.svg',
             dark: 'file:../nodes/Manifest/manifest-logo.dark.svg',
         };
-        this.documentationUrl = 'https://manifest.build/docs';
+        this.documentationUrl = 'https://manifest.build/llm-gateway/docs/introduction/';
         this.properties = [
             {
                 displayName: 'Base URL',

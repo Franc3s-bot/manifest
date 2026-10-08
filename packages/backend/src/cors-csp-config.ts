@@ -192,8 +192,9 @@ export interface PivotCorsRequest {
 }
 
 /**
- * Open CORS for the pivot waiting-list claim only. Self-hosted dashboards
- * post the claim straight from the browser, so any origin must be allowed on
+ * Open CORS for the pivot waiting-list claim only. Self-hosted dashboards on
+ * versions that still ship the waiting-list card post the claim straight
+ * from the browser, so any origin must be allowed on
  * this one route. Safe because no credentials ride along (`fetch` sends none
  * cross-origin by default and the allow-list CORS runs with
  * `credentials: false`) and the route only accepts an email. Returns true

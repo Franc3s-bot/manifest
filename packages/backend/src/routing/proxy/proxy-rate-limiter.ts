@@ -3,8 +3,8 @@ import { ManifestError } from '../../common/errors/manifest-error';
 import { optionalPositiveInteger } from '../../config/env.util';
 
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_REQUESTS = 200;
-const IP_RATE_MAX_REQUESTS = 500;
+const DEFAULT_RATE_MAX_REQUESTS = 200;
+const DEFAULT_IP_RATE_MAX_REQUESTS = 500;
 const MAX_RATE_ENTRIES = 50_000;
 const DEFAULT_CONCURRENCY_MAX = 10;
 const CLEANUP_INTERVAL_MS = 60_000;
@@ -21,6 +21,13 @@ export class ProxyRateLimiter implements OnModuleDestroy {
   private readonly concurrency = new Map<string, number>();
   private readonly concurrencyMax =
     optionalPositiveInteger(process.env.MANIFEST_CONCURRENCY_MAX) ?? DEFAULT_CONCURRENCY_MAX;
+  // Operator overrides must be plain positive integers; anything else keeps
+  // the default so a typo in .env can never disable a guardrail.
+  private readonly rateMaxRequests =
+    optionalPositiveInteger(process.env.MANIFEST_RATE_MAX_REQUESTS) ?? DEFAULT_RATE_MAX_REQUESTS;
+  private readonly ipRateMaxRequests =
+    optionalPositiveInteger(process.env.MANIFEST_IP_RATE_MAX_REQUESTS) ??
+    DEFAULT_IP_RATE_MAX_REQUESTS;
   private readonly cleanupTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -46,7 +53,7 @@ export class ProxyRateLimiter implements OnModuleDestroy {
       entry = { count: 0, windowStart: now };
     }
 
-    if (entry.count >= RATE_MAX_REQUESTS) {
+    if (entry.count >= this.rateMaxRequests) {
       throw new ManifestError('M201', HttpStatus.TOO_MANY_REQUESTS);
     }
 
@@ -71,7 +78,7 @@ export class ProxyRateLimiter implements OnModuleDestroy {
       entry = { count: 0, windowStart: now };
     }
 
-    if (entry.count >= IP_RATE_MAX_REQUESTS) {
+    if (entry.count >= this.ipRateMaxRequests) {
       throw new ManifestError('M202', HttpStatus.TOO_MANY_REQUESTS);
     }
 

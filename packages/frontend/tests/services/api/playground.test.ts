@@ -66,20 +66,18 @@ describe('playground API client', () => {
 
   describe('streamPlayground', () => {
     it('POSTs the request body to /playground/run and threads the AbortSignal', async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(
-          streamResponse([
-            sse({ type: 'delta', text: 'hi' }),
-            sse({
-              type: 'done',
-              columnId: 'col-1',
-              content: 'hi there',
-              metrics: { cost: 0.001, inputTokens: 1, outputTokens: 2, durationMs: 10 },
-              headers: { 'x-id': 'a' },
-            }),
-          ]),
-        );
+      const fetchMock = vi.fn().mockResolvedValue(
+        streamResponse([
+          sse({ type: 'delta', text: 'hi' }),
+          sse({
+            type: 'done',
+            columnId: 'col-1',
+            content: 'hi there',
+            metrics: { cost: 0.001, inputTokens: 1, outputTokens: 2, durationMs: 10 },
+            headers: { 'x-id': 'a' },
+          }),
+        ]),
+      );
       vi.stubGlobal('fetch', fetchMock);
 
       const ctrl = new AbortController();
@@ -100,6 +98,9 @@ describe('playground API client', () => {
         content: 'hi there',
         metrics: { cost: 0.001, inputTokens: 1, outputTokens: 2, durationMs: 10 },
         headers: { 'x-id': 'a' },
+        kind: 'text',
+        media: null,
+        route: null,
       });
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toContain('/api/v1/playground/run');
@@ -114,7 +115,10 @@ describe('playground API client', () => {
     });
 
     it('throws the parsed JSON error message when the request fails before the stream opens', async () => {
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'rate limited' }, 429)));
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(jsonResponse({ message: 'rate limited' }, 429)),
+      );
       await expect(
         playground.streamPlayground(
           { agentName: 'demo', model: 'm', provider: 'p' },
@@ -126,9 +130,7 @@ describe('playground API client', () => {
     it('throws when the content-type is not an event stream (HTML/JSON 200)', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(
-          jsonResponse({ message: 'unexpected non-stream body' }, 200),
-        ),
+        vi.fn().mockResolvedValue(jsonResponse({ message: 'unexpected non-stream body' }, 200)),
       );
       await expect(
         playground.streamPlayground(
@@ -213,12 +215,14 @@ describe('playground API client', () => {
     it('throws the message carried by a mid-stream error event', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(
-          streamResponse([
-            sse({ type: 'delta', text: 'partial' }),
-            sse({ type: 'error', message: 'upstream exploded' }),
-          ]),
-        ),
+        vi
+          .fn()
+          .mockResolvedValue(
+            streamResponse([
+              sse({ type: 'delta', text: 'partial' }),
+              sse({ type: 'error', message: 'upstream exploded' }),
+            ]),
+          ),
       );
       await expect(
         playground.streamPlayground(
@@ -317,9 +321,7 @@ describe('playground API client', () => {
     it('throws "Stream ended without a result" when no done event arrives', async () => {
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockResolvedValue(
-          streamResponse([sse({ type: 'delta', text: 'only a delta' })]),
-        ),
+        vi.fn().mockResolvedValue(streamResponse([sse({ type: 'delta', text: 'only a delta' })])),
       );
       await expect(
         playground.streamPlayground(
@@ -454,5 +456,135 @@ describe('playground API client', () => {
         'Failed to toggle star',
       );
     });
+  });
+});
+
+describe('playground API client — media & catalog', () => {
+  beforeEach(() => {
+    vi.stubGlobal('window', { location: { origin: 'http://localhost', pathname: '/' } });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('streams a video progress event and surfaces media + route on done', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        streamResponse([
+          sse({
+            type: 'progress',
+            media: { kind: 'video', taskId: 't1', status: 'processing', progress: 40 },
+          }),
+          sse({
+            type: 'done',
+            columnId: 'col-1',
+            content: '',
+            metrics: { cost: null, inputTokens: 0, outputTokens: 0, durationMs: 10 },
+            headers: {},
+            kind: 'video',
+            media: { kind: 'video', taskId: 't1', status: 'queued' },
+            route: {
+              provider: 'agnes',
+              model: 'agnes-video-v2.0',
+              tier: 'Standard',
+              synthetic: true,
+              requestedModel: 'auto-standard',
+            },
+          }),
+        ]),
+      ),
+    );
+    const progress: unknown[] = [];
+    const result = await playground.streamPlayground(
+      {
+        agentName: 'demo',
+        model: 'auto-standard',
+        provider: 'manifest',
+        prompt: 'a cat',
+        outputKind: 'video',
+      },
+      { onDelta: vi.fn(), onProgress: (m) => progress.push(m) },
+    );
+    expect(progress).toHaveLength(1);
+    expect(result.kind).toBe('video');
+    expect(result.media).toMatchObject({ kind: 'video', taskId: 't1' });
+    expect(result.route).toMatchObject({ synthetic: true, model: 'agnes-video-v2.0' });
+  });
+
+  it('fetches the playground model catalog including synthetic entries', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => [{ model_name: 'auto-standard', provider: 'manifest', synthetic: true }],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await playground.getPlaygroundModels();
+
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost/api/v1/playground/models');
+    expect(out[0]).toMatchObject({ synthetic: true });
+  });
+
+  it('polls a video task with the encoded task id and optional column id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 200, media: { kind: 'video', taskId: 't/1' }, costUsd: 1 }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await playground.getPlaygroundVideoStatus('t/1', 'col 1');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'http://localhost/api/v1/playground/videos/t%2F1?columnId=col%201',
+    );
+  });
+
+  it('renames a run with a PATCH body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ prompt: 'new' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await playground.renamePlaygroundRun('r/1', 'new');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/playground/runs/r%2F1');
+    expect(init.method).toBe('PATCH');
+    expect(init.body).toBe(JSON.stringify({ prompt: 'new' }));
+    expect(out).toBe('new');
+  });
+
+  it('deletes a run', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await playground.deletePlaygroundRun('r1');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/playground/runs/r1');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('deletes a single column of a run', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await playground.deletePlaygroundColumn('r1', 'c/2');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/v1/playground/runs/r1/columns/c%2F2');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('throws when deleting a run fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+    await expect(playground.deletePlaygroundRun('r1')).rejects.toThrow('Failed to delete run');
   });
 });

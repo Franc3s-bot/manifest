@@ -1,4 +1,7 @@
 node_modules/
+# Per-package node_modules can be a symlink in worktree setups; the trailing
+# slash above only matches directories, so ignore the symlink form too.
+packages/*/node_modules
 .turbo/
 dist/
 build/

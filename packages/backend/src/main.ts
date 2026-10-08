@@ -6,19 +6,19 @@ import helmet from 'helmet';
 import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
-import { auth, mcpEnabled } from './auth/auth.instance';
+import { auth, mcpDisabledReason, mcpEnabled } from './auth/auth.instance';
 import { mcpOAuthResponse } from './auth/mcp-oauth-response';
-import { mountMcpDiscovery } from './mcp/mcp-discovery';
+import { mountMcpDiscovery, mountMcpUnavailable } from './mcp/mcp-discovery';
 import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
 import { httpErrorLogger } from './common/middleware/http-error-logger.middleware';
 import {
   API_BODY_LIMIT,
+  PLAYGROUND_BODY_LIMIT,
   PROXY_BODY_LIMIT,
   bodyParserErrorHandler,
   createProxyBodyBudgetMiddleware,
 } from './common/middleware/body-parser-limits';
 import {
-  PIVOT_CLAIM_CLOUD_ORIGIN,
   applyPivotClaimCors,
   applyPrivateNetworkAllow,
   buildCorsOptions,
@@ -61,10 +61,12 @@ export async function bootstrap() {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:'],
-          // The pivot waiting-list claim is posted cross-origin to the cloud
-          // from self-hosted dashboards; the CSP must allow that connection.
-          connectSrc: ["'self'", PIVOT_CLAIM_CLOUD_ORIGIN],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          // Generated videos (Agnes CDN) and audio/video attachments are
+          // loaded from external origins or as inlined blobs; the default
+          // `mediaSrc` falls back to `'self'` and would block them.
+          mediaSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          connectSrc: ["'self'"],
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameSrc,
@@ -229,14 +231,30 @@ export async function bootstrap() {
   expressApp.use('/v1', createProxyBodyBudgetMiddleware());
   expressApp.use('/v1', express.json({ limit: PROXY_BODY_LIMIT }));
   expressApp.use('/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
+  // The classifier proxy carries the same kind of JSON state as a chat request
+  // (a context chunk plus typed questions), so it shares the proxy's larger
+  // parser rather than the small dashboard limit.
+  expressApp.use('/zen/v1', createProxyBodyBudgetMiddleware());
+  expressApp.use('/zen/v1', express.json({ limit: PROXY_BODY_LIMIT }));
+  expressApp.use('/zen/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
+  // The Playground run endpoint carries inline image attachments / reference
+  // images as data URIs, so it gets its own larger parser. express.json skips
+  // a body that is already parsed, so the global parser below is a no-op here.
+  expressApp.use('/api/v1/playground/run', express.json({ limit: PLAYGROUND_BODY_LIMIT }));
   expressApp.use(express.json({ limit: API_BODY_LIMIT }));
   expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
   expressApp.use(bodyParserErrorHandler);
 
-  // Only advertise MCP discovery when the MCP/OAuth plugins are registered:
-  // on a plain-HTTP origin they are skipped, and publishing resource metadata
-  // for an endpoint that cannot verify tokens would mislead clients.
-  if (mcpEnabled) mountMcpDiscovery(app);
+  // Both the OAuth discovery documents and the MCP module go together: with the
+  // Better Auth MCP plugin unloaded there is no authorization server to
+  // advertise, and publishing metadata for an endpoint that does not exist
+  // sends clients into a flow that cannot complete.
+  if (mcpEnabled) {
+    mountMcpDiscovery(app);
+  } else {
+    mountMcpUnavailable(app);
+    logger.warn(`Remote MCP server disabled: ${mcpDisabledReason}`);
+  }
 
   const port = Number(process.env['PORT'] ?? 3001);
   const host = process.env['BIND_ADDRESS'] ?? '127.0.0.1';

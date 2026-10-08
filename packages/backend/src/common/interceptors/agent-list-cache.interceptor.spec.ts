@@ -4,6 +4,7 @@ import type { Cache } from 'cache-manager';
 import { firstValueFrom, ReplaySubject } from 'rxjs';
 import { AgentListCacheInterceptor } from './agent-list-cache.interceptor';
 import { AgentListCacheService } from '../services/agent-list-cache.service';
+import { setAgentUsageDailyAutomaticReadsReady } from '../utils/agent-usage-daily-flags';
 
 function createMockContext(
   tenantContext: { tenantId?: string } | undefined,
@@ -32,8 +33,13 @@ describe('AgentListCacheInterceptor', () => {
   let interceptor: AgentListCacheInterceptor;
   let keys: AgentListCacheService;
   let cacheManager: { get: jest.Mock; set: jest.Mock; del: jest.Mock };
+  const originalReads = process.env['AGENT_USAGE_DAILY_READS'];
+  const originalTenants = process.env['AGENT_USAGE_DAILY_READ_TENANTS'];
 
   beforeEach(() => {
+    setAgentUsageDailyAutomaticReadsReady(false);
+    delete process.env['AGENT_USAGE_DAILY_READS'];
+    delete process.env['AGENT_USAGE_DAILY_READ_TENANTS'];
     cacheManager = {
       get: jest.fn().mockResolvedValue(undefined),
       set: jest.fn().mockResolvedValue(undefined),
@@ -41,6 +47,14 @@ describe('AgentListCacheInterceptor', () => {
     };
     keys = new AgentListCacheService(cacheManager as unknown as Cache);
     interceptor = new AgentListCacheInterceptor(cacheManager as never, new Reflector(), keys);
+  });
+
+  afterAll(() => {
+    setAgentUsageDailyAutomaticReadsReady(false);
+    if (originalReads === undefined) delete process.env['AGENT_USAGE_DAILY_READS'];
+    else process.env['AGENT_USAGE_DAILY_READS'] = originalReads;
+    if (originalTenants === undefined) delete process.env['AGENT_USAGE_DAILY_READ_TENANTS'];
+    else process.env['AGENT_USAGE_DAILY_READ_TENANTS'] = originalTenants;
   });
 
   it('never hands a request that arrives after invalidation the response already in flight', async () => {
@@ -121,6 +135,12 @@ describe('AgentListCacheInterceptor', () => {
 
     it('returns undefined when tenant context has no tenantId', () => {
       const key = interceptor['trackBy'](createMockContext({}, undefined));
+      expect(key).toBeUndefined();
+    });
+
+    it('bypasses the response cache after the automatic rollup cutover', () => {
+      setAgentUsageDailyAutomaticReadsReady(true);
+      const key = interceptor['trackBy'](createMockContext({ tenantId: 't1' }, undefined));
       expect(key).toBeUndefined();
     });
   });

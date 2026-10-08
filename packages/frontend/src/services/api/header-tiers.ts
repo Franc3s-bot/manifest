@@ -31,6 +31,8 @@ export interface CreateHeaderTierInput {
   header_key: string;
   header_value: string;
   badge_color: TierColor;
+  /** Set at creation so a media tier can be created in one step. */
+  output_modality?: OutputModality;
 }
 
 export function listHeaderTiers(agentName: string) {
@@ -84,6 +86,21 @@ export function setHeaderTierResponseMode(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ response_mode: responseMode }),
+    },
+  );
+}
+
+export function setHeaderTierOutputModality(
+  agentName: string,
+  id: string,
+  outputModality: OutputModality,
+) {
+  return fetchMutate<HeaderTier>(
+    routingPath(agentName, `header-tiers/${encodeURIComponent(id)}/output-modality`),
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ output_modality: outputModality }),
     },
   );
 }

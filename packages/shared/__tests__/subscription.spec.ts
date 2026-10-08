@@ -246,7 +246,7 @@ describe('getSubscriptionProviderConfig', () => {
 
   it('publishes the curated xai subscription models', () => {
     const config = getSubscriptionProviderConfig('xai');
-    expect(config?.knownModels).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(config?.knownModels).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns config for gemini', () => {
@@ -335,6 +335,8 @@ describe('getSubscriptionKnownModels', () => {
     expect(models).toContain('claude-sonnet-4');
     // claude-sonnet-5 (launched 2026-06-30) is served on the Claude plan.
     expect(models).toContain('claude-sonnet-5');
+    // Opus 5.5 is a point release addressed directly by callers.
+    expect(models).toContain('claude-opus-5-5');
   });
 
   it('returns the curated ChatGPT plan models for OpenAI', () => {
@@ -439,7 +441,7 @@ describe('getSubscriptionKnownModels', () => {
 
   it('returns known models for xai', () => {
     const models = getSubscriptionKnownModels('xai');
-    expect(models).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(models).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns null for unsupported providers', () => {

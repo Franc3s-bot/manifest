@@ -3,17 +3,15 @@ import { createMcpProtectedRequestHandler } from '@better-auth/mcp';
 import { createDpopReplayStore } from 'better-auth/oauth2';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { fromNodeHeaders } from 'better-auth/node';
+import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
+import { pipeline } from 'node:stream/promises';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 import type { Request, Response } from 'express';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import {
-  auth,
-  authIssuerForHost,
-  mcpResourceForHost,
-  MCP_READ_SCOPE,
-} from '../auth/auth.instance';
+import { auth, authIssuerForHost, mcpResourceForHost, MCP_READ_SCOPE } from '../auth/auth.instance';
 import { Public } from '../common/decorators/public.decorator';
 import { TenantCacheService } from '../common/services/tenant-cache.service';
 import { AgentListCacheService } from '../common/services/agent-list-cache.service';
@@ -40,6 +38,7 @@ import { Agent } from '../entities/agent.entity';
 import { resolveMcpOperator } from './mcp-auth';
 import { buildMcpServer } from './mcp-server.factory';
 import { McpToolDeps } from './tool-deps';
+import { RouteModelParamsService } from '../routing/model-params/route-model-params.service';
 
 /**
  * The remote MCP endpoint.
@@ -78,6 +77,7 @@ export class McpController {
     private readonly headerTiers: HeaderTierService,
     private readonly customProviders: CustomProviderService,
     private readonly autofix: AutofixService,
+    private readonly routeModelParams: RouteModelParamsService,
     private readonly modelDiscovery: ModelDiscoveryService,
     private readonly pricingSync: PricingSyncService,
     private readonly modelPrices: ModelPricesService,
@@ -109,6 +109,7 @@ export class McpController {
       headerTiers: this.headerTiers,
       customProviders: this.customProviders,
       autofix: this.autofix,
+      routeModelParams: this.routeModelParams,
       modelDiscovery: this.modelDiscovery,
       pricingSync: this.pricingSync,
       modelPrices: this.modelPrices,
@@ -128,13 +129,13 @@ export class McpController {
   @Get()
   @Public()
   async rejectGet(@Res() res: Response): Promise<void> {
-    await sendWebResponse(methodNotAllowedResponse(), res);
+    await sendWebResponse(methodNotAllowedResponse(), res, this.logger);
   }
 
   @Delete()
   @Public()
   async rejectDelete(@Res() res: Response): Promise<void> {
-    await sendWebResponse(methodNotAllowedResponse(), res);
+    await sendWebResponse(methodNotAllowedResponse(), res, this.logger);
   }
 
   @Post()
@@ -171,14 +172,14 @@ export class McpController {
         },
       );
       const response = await verify(webRequest);
-      await sendWebResponse(response, res);
+      await sendWebResponse(response, res, this.logger);
     } catch (error) {
       // Log the detail server-side; the OAuth caller gets a constant message so
       // database or infrastructure errors cannot leak through the response.
       this.logger.error(
         `MCP request failed: ${error instanceof Error ? error.stack : String(error)}`,
       );
-      await sendWebResponse(internalErrorResponse(), res);
+      await sendWebResponse(internalErrorResponse(), res, this.logger);
     }
   }
 }
@@ -224,7 +225,60 @@ function unauthorizedResponse(resource: string): globalThis.Response {
   );
 }
 
-async function sendWebResponse(response: globalThis.Response, res: Response): Promise<void> {
+/** Does this response carry an SSE stream rather than one buffered body? */
+function isEventStream(response: globalThis.Response): boolean {
+  return (response.headers.get('content-type') ?? '').includes('text/event-stream');
+}
+
+/** Pipe failures that only mean the client went away mid-stream. */
+const CLIENT_HANGUP_CODES = new Set([
+  'ERR_STREAM_PREMATURE_CLOSE',
+  'ERR_STREAM_DESTROYED',
+  'ECONNRESET',
+  'EPIPE',
+]);
+
+function isClientHangUp(error: unknown): boolean {
+  // `pipeline` always rejects with a value, so reading the property is safe
+  // even when a stream errored with something that is not an Error.
+  const code = (error as NodeJS.ErrnoException).code;
+  return typeof code === 'string' && CLIENT_HANGUP_CODES.has(code);
+}
+
+/**
+ * Write a web Response onto the Express response.
+ *
+ * Nearly every MCP exchange here is a single JSON body, which is buffered.
+ * `subscriptions/listen` is the exception: the MCP server serves listen-class
+ * streams over SSE *regardless* of `responseMode: 'json'`, and the first frame
+ * it writes is the `notifications/subscriptions/acknowledged` the client blocks
+ * on before it considers the connection healthy. Buffering that body with
+ * `response.text()` never resolves — the stream is meant to stay open — so the
+ * ack never reached the client: every listen attempt hung until the client's
+ * ~30s ack timeout, the connect handshake stalled ~25s behind the first one,
+ * and the client retried the listen forever. Stream those responses through
+ * chunk by chunk instead, and let a client hang-up end the pipe quietly.
+ */
+async function sendWebResponse(
+  response: globalThis.Response,
+  res: Response,
+  logger: Logger,
+): Promise<void> {
   response.headers.forEach((value, key) => res.set(key, value));
-  res.status(response.status).send(await response.text());
+  res.status(response.status);
+  if (!isEventStream(response) || !response.body) {
+    res.send(await response.text());
+    return;
+  }
+  res.flushHeaders();
+  try {
+    await pipeline(Readable.fromWeb(response.body as NodeReadableStream), res);
+  } catch (error) {
+    // A client closing a listen stream is how one normally ends, so that is not
+    // worth a line. Anything else is a real failure, and the status and headers
+    // are already committed, so the log is the only place it can surface.
+    if (!isClientHangUp(error)) {
+      logger.error(`MCP stream failed: ${error instanceof Error ? error.stack : String(error)}`);
+    }
+  }
 }

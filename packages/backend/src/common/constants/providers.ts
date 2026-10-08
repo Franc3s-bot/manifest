@@ -10,6 +10,7 @@
  * ║   1. Add an entry to `SHARED_PROVIDERS` in the shared package       ║
  * ║   2. Add a FetcherConfig in provider-model-fetcher.service.ts       ║
  * ║   3. Add a ProviderEndpoint in proxy/provider-endpoints.ts          ║
+ * ║      (media-only providers with `mediaOnly: true` are exempt)       ║
  * ║   4. (Frontend auto-picks up shared fields; add UI-only bits in     ║
  * ║       packages/frontend/src/services/providers.ts if needed)        ║
  * ║                                                                    ║

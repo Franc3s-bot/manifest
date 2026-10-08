@@ -117,6 +117,10 @@ describe('run', () => {
     expect(USAGE).toContain(
       'mnfst routing recording get <agent> | mnfst routing recording set <agent> --enabled true|false',
     );
+    expect(USAGE).toContain('mnfst routing params get <agent> [--tier <t>] [--model <m>]\n');
+    expect(USAGE).toMatch(
+      /routing params set <agent>[^\n]*--set <path>=<value>[^\n]*--unset <path>/,
+    );
   });
 
   it('usage names the persistent anonymous install id in the telemetry notice', () => {

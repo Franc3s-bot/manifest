@@ -26,17 +26,21 @@ import {
   MAX_FALLBACKS,
   MAX_PROVIDER_KEY_LABEL_LENGTH,
   ModelRouteDto,
+  SetOutputModalityDto,
   SetResponseModeDto,
+  outputModalityFromDto,
   responseModeFromDto,
 } from '../dto/routing.dto';
 import { HeaderTierService } from './header-tier.service';
-import { AUTH_TYPES, type TierColor } from 'manifest-shared';
+import { AUTH_TYPES, type OutputModality, type TierColor } from 'manifest-shared';
 
 interface CreateHeaderTierBody {
   name: string;
   header_key: string;
   header_value: string;
   badge_color: TierColor;
+  /** Optional: create the tier directly as an image/video tier. */
+  output_modality?: OutputModality;
 }
 
 interface UpdateHeaderTierBody {
@@ -149,6 +153,19 @@ export class HeaderTierController {
     if (!responseMode) throw new BadRequestException('response_mode is required');
     const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
     return this.headerTierService.setResponseMode(agent.id, id, responseMode);
+  }
+
+  @Patch(':agentName/header-tiers/:id/output-modality')
+  async setOutputModality(
+    @TenantCtx() ctx: TenantContext,
+    @Param('agentName') agentName: string,
+    @Param('id') id: string,
+    @Body() body: SetOutputModalityDto,
+  ) {
+    const outputModality = outputModalityFromDto(body);
+    if (!outputModality) throw new BadRequestException('output_modality is required');
+    const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    return this.headerTierService.setOutputModality(agent.id, agent.tenant_id, id, outputModality);
   }
 
   @Delete(':agentName/header-tiers/:id')

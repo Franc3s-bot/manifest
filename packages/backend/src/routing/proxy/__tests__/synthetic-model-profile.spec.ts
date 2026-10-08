@@ -148,6 +148,123 @@ describe('buildSyntheticTierProfile', () => {
     expect(profile.supportedEndpoints).toEqual(['/responses']);
   });
 
+  it('lets models with unknown metadata abstain instead of voting no', () => {
+    const tier = makeTier({
+      override_route: { provider: 'openai', authType: 'api_key', model: 'known-1' },
+      fallback_routes: [
+        { provider: 'openai', authType: 'api_key', model: 'known-2' },
+        { provider: 'commandcode', authType: 'subscription', model: 'unknown-1' },
+        { provider: 'commandcode', authType: 'subscription', model: 'unknown-2' },
+      ],
+    });
+    const models = [
+      makeModel({
+        id: 'known-1',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        capabilities: ['text', 'image', 'stream', 'tools'],
+      }),
+      makeModel({
+        id: 'known-2',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        capabilities: ['text', 'image', 'stream', 'tools'],
+      }),
+      // Discovered, but no catalog knows their modalities: they must abstain.
+      makeModel({ id: 'unknown-1', provider: 'commandcode', authType: 'subscription' }),
+      makeModel({ id: 'unknown-2', provider: 'commandcode', authType: 'subscription' }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.inputModalities).toEqual(['text', 'image']);
+    expect(profile.features).toContain('tools');
+    // The two members that abstained are reported, so a client can distrust
+    // the aggregate instead of assuming every fallback reads images.
+    expect(profile.capabilitiesCoverage).toBe('partial');
+    expect(profile.unresolvedChainMembers).toBe(2);
+  });
+
+  it('reports complete coverage when every chain member resolved', () => {
+    const tier = makeTier({
+      override_route: { provider: 'openai', authType: 'api_key', model: 'a' },
+      fallback_routes: [{ provider: 'openai', authType: 'api_key', model: 'b' }],
+    });
+    const models = [
+      makeModel({ id: 'a', inputModalities: ['text', 'image'], outputModalities: ['text'] }),
+      makeModel({ id: 'b', inputModalities: ['text', 'image'], outputModalities: ['text'] }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.capabilitiesCoverage).toBe('complete');
+    expect(profile.unresolvedChainMembers).toBe(0);
+  });
+
+  it('distinguishes a known vision primary from an uncatalogued fallback', () => {
+    const tier = makeTier({
+      override_route: { provider: 'openai', authType: 'api_key', model: 'vision-1' },
+      fallback_routes: [{ provider: 'commandcode', authType: 'subscription', model: 'blind-1' }],
+    });
+    const models = [
+      makeModel({
+        id: 'vision-1',
+        inputModalities: ['text', 'image'],
+        outputModalities: ['text'],
+        capabilities: ['text', 'image', 'stream'],
+      }),
+      // Discovered, but nothing knows what it accepts: it must abstain.
+      makeModel({ id: 'blind-1', provider: 'commandcode', authType: 'subscription' }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    // The known primary keeps `image` (abstention is not a no vote), and the
+    // coverage field is what says the fallback might not support it.
+    expect(profile.inputModalities).toEqual(['text', 'image']);
+    expect(profile.capabilitiesCoverage).toBe('partial');
+    expect(profile.unresolvedChainMembers).toBe(1);
+  });
+
+  it('advertises reasoning only when the majority of the chain positively reasons', () => {
+    const tier = makeTier({
+      override_route: { provider: 'openai', authType: 'api_key', model: 'a' },
+      fallback_routes: [
+        { provider: 'openai', authType: 'api_key', model: 'b' },
+        { provider: 'openai', authType: 'api_key', model: 'c' },
+      ],
+    });
+    const models = [
+      makeModel({ id: 'a', capabilityReasoning: true }),
+      makeModel({ id: 'b', capabilityReasoning: true }),
+      // `false` means "not known to reason", not "cannot reason", so it is not
+      // projected as a negative feature either way.
+      makeModel({ id: 'c', capabilityReasoning: false }),
+    ];
+    expect(buildSyntheticTierProfile(tier, models).features).toContain('reasoning');
+
+    const minority = buildSyntheticTierProfile(tier, [
+      makeModel({ id: 'a', capabilityReasoning: true }),
+      makeModel({ id: 'b' }),
+      makeModel({ id: 'c' }),
+    ]);
+    expect(minority.features).not.toContain('reasoning');
+  });
+
+  it('gives a media tier no chat context window and the media endpoint', () => {
+    const tier = makeTier({
+      output_modality: 'image',
+      override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+    });
+    const models = [
+      makeModel({
+        id: 'agnes-image-2.1-flash',
+        provider: 'agnes',
+        authType: 'api_key',
+        outputModalities: ['image'],
+        maxOutputTokens: 4096,
+      }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.contextWindow).toBeUndefined();
+    expect(profile.maxOutputTokens).toBeUndefined();
+    expect(profile.supportedEndpoints).toEqual(['/v1/images/generations']);
+  });
+
   it('falls back to the default window and text-only modalities when the chain is unresolvable', () => {
     const tier = makeTier({
       override_route: { provider: 'openai', authType: 'api_key', model: 'ghost-model' },
@@ -180,5 +297,38 @@ describe('buildSyntheticTierProfile', () => {
     ];
     const profile = buildSyntheticTierProfile(tier, models);
     expect(profile.contextWindow).toBe(200_000);
+  });
+
+  it('advertises the tier modality for an image tier regardless of chain modalities', () => {
+    const tier = makeTier({
+      output_modality: 'image',
+      override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-image-2.1-flash' },
+    });
+    const models = [
+      makeModel({
+        id: 'agnes-image-2.1-flash',
+        provider: 'agnes',
+        authType: 'api_key',
+        outputModalities: ['image'],
+      }),
+    ];
+    const profile = buildSyntheticTierProfile(tier, models);
+    expect(profile.outputModalities).toEqual(['image']);
+  });
+
+  it('advertises video for a video tier', () => {
+    const tier = makeTier({
+      output_modality: 'video',
+      override_route: { provider: 'agnes', authType: 'api_key', model: 'agnes-video-v2.0' },
+    });
+    const models = [
+      makeModel({
+        id: 'agnes-video-v2.0',
+        provider: 'agnes',
+        authType: 'api_key',
+        outputModalities: ['video'],
+      }),
+    ];
+    expect(buildSyntheticTierProfile(tier, models).outputModalities).toEqual(['video']);
   });
 });

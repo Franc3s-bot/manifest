@@ -50,6 +50,63 @@ function providerIdFor(column: ColumnData): string {
   return resolveProviderId(column.provider) ?? column.provider.toLowerCase();
 }
 
+/** Render the generated media for an image / video column. */
+const MediaOutput: Component<{ column: ColumnData }> = (props) => {
+  const imageSrc = (image: { url?: string; b64_json?: string }): string | undefined =>
+    image.url ?? (image.b64_json ? `data:image/png;base64,${image.b64_json}` : undefined);
+
+  return (
+    <Show when={props.column.media}>
+      {(media) => (
+        <Show
+          when={media().kind === 'image'}
+          fallback={
+            <div class="playground-media playground-media--video">
+              <Show
+                when={media().kind === 'video' && (media() as { url?: string }).url}
+                fallback={
+                  <div class="playground-media__status" role="status">
+                    <span class="playground-media__spinner" aria-hidden="true" />
+                    <span>
+                      {(media() as { status?: string }).status === 'failed'
+                        ? 'Video generation failed'
+                        : `Generating video… (${(media() as { status?: string }).status ?? 'queued'})`}
+                    </span>
+                  </div>
+                }
+              >
+                <video
+                  class="playground-media__video"
+                  src={(media() as { url?: string }).url}
+                  controls
+                  playsinline
+                  preload="metadata"
+                />
+              </Show>
+            </div>
+          }
+        >
+          <div class="playground-media playground-media--images">
+            <For each={(media() as { images: { url?: string; b64_json?: string }[] }).images}>
+              {(image) => (
+                <a
+                  class="playground-media__image"
+                  href={imageSrc(image)}
+                  target="_blank"
+                  rel="noreferrer"
+                  download=""
+                >
+                  <img src={imageSrc(image)} alt="Generated output" loading="lazy" />
+                </a>
+              )}
+            </For>
+          </div>
+        </Show>
+      )}
+    </Show>
+  );
+};
+
 const PlaygroundColumn: Component<Props> = (props) => {
   const metricsDash = '—';
 
@@ -122,6 +179,17 @@ const PlaygroundColumn: Component<Props> = (props) => {
             </span>
           </button>
         </Show>
+        <Show when={props.column.route?.synthetic}>
+          <span
+            class="playground-column__route"
+            title={`${props.column.route?.harness ? `${props.column.route.harness} · ` : ''}${props.column.route?.tier ?? ''} → ${props.column.route?.provider}/${props.column.route?.model}`}
+          >
+            {props.column.route?.harness ?? props.column.route?.tier
+              ? `${props.column.route?.harness ?? props.column.route?.tier} · `
+              : ''}
+            {props.column.route?.model}
+          </span>
+        </Show>
         <Show when={props.column.status === 'success' && props.onMarkBest}>
           <button
             type="button"
@@ -173,8 +241,17 @@ const PlaygroundColumn: Component<Props> = (props) => {
         </Show>
         <Show
           when={
-            props.column.status === 'success' ||
-            (props.column.status === 'loading' && props.column.response)
+            (props.column.kind === 'image' || props.column.kind === 'video') &&
+            (props.column.status === 'success' || props.column.status === 'loading')
+          }
+        >
+          <MediaOutput column={props.column} />
+        </Show>
+        <Show
+          when={
+            (props.column.kind ?? 'text') === 'text' &&
+            (props.column.status === 'success' ||
+              (props.column.status === 'loading' && props.column.response))
           }
         >
           <MarkdownContent class="playground-column__response" text={props.column.response ?? ''} />

@@ -36,6 +36,18 @@ export class PlaygroundColumn {
   @Column('text', { nullable: true })
   content!: string | null;
 
+  /** Output modality of the column: `text` | `image` | `video`. */
+  @Column('varchar', { nullable: true, default: 'text' })
+  output_kind!: string | null;
+
+  /** Generated media (image list / video task) for a media column. */
+  @Column('simple-json', { nullable: true })
+  media!: unknown;
+
+  /** Concrete provider route that served the column (synthetic → real model). */
+  @Column('simple-json', { nullable: true })
+  route!: unknown;
+
   @Column('simple-json', { nullable: true })
   headers!: Record<string, string> | null;
 

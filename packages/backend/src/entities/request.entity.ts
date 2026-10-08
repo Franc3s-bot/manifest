@@ -15,6 +15,7 @@ import type { AutofixStatus } from 'manifest-shared';
 @Index(['tenant_id', 'timestamp'])
 @Index(['tenant_id', 'trace_id'])
 @Index(['tenant_id', 'status', 'timestamp'])
+@Index(['tenant_id', 'media_task_id'])
 export class ManifestRequest {
   @PrimaryColumn('varchar')
   id!: string;
@@ -51,6 +52,10 @@ export class ManifestRequest {
   /** The terminal outcome experienced by the caller. */
   @Column('varchar')
   status!: string;
+
+  /** Set after this completed Request has been added to agent_usage_daily. */
+  @Column(timestampType(), { nullable: true })
+  agent_usage_rolled_up_at?: string | null;
 
   /** How Autofix ended for this request. NULL means it was not recorded. */
   @Column('varchar', { nullable: true })
@@ -90,6 +95,14 @@ export class ManifestRequest {
    */
   @Column('varchar', { nullable: true })
   api_mode!: ProxyApiMode | null;
+
+  /**
+   * Provider task id for an asynchronous video generation (`/v1/videos`).
+   * `GET /v1/videos/{id}` resolves the owning request through this column so
+   * the poll can re-select the same provider connection and finalize cost.
+   */
+  @Column('varchar', { nullable: true })
+  media_task_id!: string | null;
 
   @Column('simple-json', { nullable: true })
   caller_attribution!: CallerAttribution | null;

@@ -25,6 +25,7 @@ export function buildForwardBody(dto: RunPlaygroundDto): Record<string, unknown>
  * that needs to grow when a new provider shape is added.
  */
 export function derivePromptForHistory(dto: RunPlaygroundDto): string {
+  if (dto.prompt) return dto.prompt;
   if (dto.messages && dto.messages.length > 0) {
     const fromMessages = lastUserContent(dto.messages);
     if (fromMessages) return fromMessages;
@@ -38,8 +39,20 @@ export function derivePromptForHistory(dto: RunPlaygroundDto): string {
 function lastUserContent(messages: PlaygroundMessageDto[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.role === 'user' && typeof m.content === 'string' && m.content.length > 0) {
-      return m.content;
+    if (m.role !== 'user') continue;
+    if (typeof m.content === 'string' && m.content.length > 0) return m.content;
+    // Multimodal content parts: join the text parts, ignore image payloads so
+    // the history preview stays a readable prompt instead of a base64 blob.
+    if (Array.isArray(m.content)) {
+      const text = m.content
+        .map((part) =>
+          part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string'
+            ? (part as { text: string }).text
+            : '',
+        )
+        .join('')
+        .trim();
+      if (text) return text;
     }
   }
   return '';

@@ -117,6 +117,41 @@ describe('HeaderTierService', () => {
       expect(result.sort_order).toBe(5);
     });
 
+    it('creates an image tier in one step', async () => {
+      repo.find.mockResolvedValue([]);
+      const result = await svc.create(
+        'agent-1',
+        'tenant-1',
+        validInput({ name: 'Images', output_modality: 'image' }),
+      );
+      expect(result.output_modality).toBe('image');
+      // The chain is empty, so creating a media tier needs no discovery lookup.
+      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
+    });
+
+    it('creates a video tier in one step', async () => {
+      repo.find.mockResolvedValue([]);
+      const result = await svc.create(
+        'agent-1',
+        'tenant-1',
+        validInput({ name: 'Videos', output_modality: 'video' }),
+      );
+      expect(result.output_modality).toBe('video');
+    });
+
+    it('defaults the output modality to text', async () => {
+      repo.find.mockResolvedValue([]);
+      const result = await svc.create('agent-1', 'tenant-1', validInput());
+      expect(result.output_modality).toBe('text');
+    });
+
+    it('rejects an unknown output modality', async () => {
+      repo.find.mockResolvedValue([]);
+      await expect(
+        svc.create('agent-1', 'tenant-1', validInput({ output_modality: 'audio' as never })),
+      ).rejects.toThrow(/Invalid output modality/);
+    });
+
     it('rejects empty names', async () => {
       await expect(svc.create('agent-1', 'tenant-1', validInput({ name: '   ' }))).rejects.toThrow(
         BadRequestException,
@@ -381,7 +416,7 @@ describe('HeaderTierService', () => {
   });
 
   describe('setOverride', () => {
-    it('uses the explicit triple when supplied (skipping discovery)', async () => {
+    it('keeps an explicit triple that discovery does not know', async () => {
       const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
       repo.findOne.mockResolvedValue(row);
 
@@ -393,7 +428,6 @@ describe('HeaderTierService', () => {
         'openai',
         'api_key',
       );
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual(route('openai', 'api_key', 'gpt-4o'));
       expect(repo.save).toHaveBeenCalledWith(row);
       expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
@@ -413,13 +447,33 @@ describe('HeaderTierService', () => {
         'Personal',
       );
 
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual({
         provider: 'openai',
         authType: 'subscription',
         model: 'gpt-4o',
         keyLabel: 'Personal',
       });
+    });
+
+    it('stores the canonical route for a public model id', async () => {
+      const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
+      repo.findOne.mockResolvedValue(row);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('deepseek/deepseek-chat-v3.1:free', 'openrouter', 'api_key'),
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'openrouter/deepseek/deepseek-chat-v3.1:free',
+        'openrouter',
+        'api_key',
+      );
+
+      expect(result.override_route).toEqual(
+        route('openrouter', 'api_key', 'deepseek/deepseek-chat-v3.1:free'),
+      );
     });
 
     it('resolves via discovery when only the model is given', async () => {
@@ -700,6 +754,188 @@ describe('HeaderTierService', () => {
         svc.setOverride('agent-1', 'tenant-1', 'h1', 'gpt-image-1', 'openai', 'api_key'),
       ).rejects.toThrow(/add at least one stream-capable model/);
       expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setOutputModality', () => {
+    const tierWithChain = () =>
+      ({
+        id: 'h1',
+        name: 'Images',
+        agent_id: 'agent-1',
+        output_modality: 'text',
+        override_route: route('agnes', 'api_key', 'agnes-image-2.1-flash'),
+        fallback_routes: null,
+      }) as HeaderTier;
+
+    it('accepts an image modality when the chain has an image model', async () => {
+      repo.findOne.mockResolvedValue(tierWithChain());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        {
+          ...discovered('agnes-image-2.1-flash', 'agnes', 'api_key'),
+          outputModalities: ['image'],
+        },
+      ]);
+
+      const result = await svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'image');
+
+      expect(result.output_modality).toBe('image');
+      expect(repo.save).toHaveBeenCalled();
+      expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
+    });
+
+    it('rejects an image modality when no chain model generates images', async () => {
+      repo.findOne.mockResolvedValue(tierWithChain());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        { ...discovered('agnes-image-2.1-flash', 'agnes', 'api_key'), outputModalities: ['text'] },
+      ]);
+
+      await expect(svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'image')).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('allows a media modality before any model is configured', async () => {
+      const row = {
+        ...tierWithChain(),
+        override_route: null,
+        fallback_routes: null,
+      } as HeaderTier;
+      repo.findOne.mockResolvedValue(row);
+
+      const result = await svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'video');
+
+      expect(result.output_modality).toBe('video');
+      expect(repo.save).toHaveBeenCalled();
+    });
+
+    it('rejects a media modality when the chain has a known non-media model', async () => {
+      repo.findOne.mockResolvedValue({
+        ...tierWithChain(),
+        override_route: route('agnes', 'api_key', 'agnes-2.5-flash'),
+      } as HeaderTier);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        { ...discovered('agnes-2.5-flash', 'agnes', 'api_key'), outputModalities: ['text'] },
+      ]);
+
+      await expect(svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'image')).rejects.toThrow(
+        /none of its models generate image/,
+      );
+    });
+
+    it('always allows reverting to text', async () => {
+      repo.findOne.mockResolvedValue({
+        ...tierWithChain(),
+        output_modality: 'image',
+      } as HeaderTier);
+
+      const result = await svc.setOutputModality('agent-1', 'tenant-1', 'h1', 'text');
+
+      expect(result.output_modality).toBe('text');
+    });
+  });
+
+  describe('media tier model assignment', () => {
+    const imageTier = (overrides: Partial<HeaderTier> = {}) =>
+      ({
+        id: 'h1',
+        name: 'Images',
+        agent_id: 'agent-1',
+        output_modality: 'image',
+        override_route: null,
+        fallback_routes: null,
+        ...overrides,
+      }) as HeaderTier;
+
+    it('rejects a text model on an image tier', async () => {
+      repo.findOne.mockResolvedValue(imageTier());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        { ...discovered('agnes-2.5-flash', 'agnes', 'api_key'), outputModalities: ['text'] },
+      ]);
+
+      await expect(
+        svc.setOverride('agent-1', 'tenant-1', 'h1', 'agnes-2.5-flash', 'agnes', 'api_key'),
+      ).rejects.toThrow(/does not generate image/);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('accepts an image model on an image tier', async () => {
+      repo.findOne.mockResolvedValue(imageTier());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        {
+          ...discovered('agnes-image-2.5-flash', 'agnes', 'api_key'),
+          outputModalities: ['image'],
+        },
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'agnes-image-2.5-flash',
+        'agnes',
+        'api_key',
+      );
+
+      expect(result.override_route?.model).toBe('agnes-image-2.5-flash');
+    });
+
+    it('leaves text tiers unconstrained', async () => {
+      repo.findOne.mockResolvedValue(imageTier({ output_modality: 'text' }));
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        {
+          ...discovered('agnes-image-2.5-flash', 'agnes', 'api_key'),
+          outputModalities: ['image'],
+        },
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'agnes-image-2.5-flash',
+        'agnes',
+        'api_key',
+      );
+
+      expect(result.override_route?.model).toBe('agnes-image-2.5-flash');
+    });
+
+    it('rejects a text fallback on an image tier', async () => {
+      repo.findOne.mockResolvedValue(
+        imageTier({ override_route: route('agnes', 'api_key', 'agnes-image-2.5-flash') }),
+      );
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        {
+          ...discovered('agnes-image-2.5-flash', 'agnes', 'api_key'),
+          outputModalities: ['image'],
+        },
+        { ...discovered('agnes-2.5-flash', 'agnes', 'api_key'), outputModalities: ['text'] },
+      ]);
+
+      await expect(
+        svc.setFallbacks('agent-1', 'tenant-1', 'h1', ['agnes-2.5-flash']),
+      ).rejects.toThrow(/does not generate image/);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+
+    it('abstains when the catalog has no modality metadata for the model', async () => {
+      repo.findOne.mockResolvedValue(imageTier());
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('agnes-image-2.5-flash', 'agnes', 'api_key'),
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'agnes-image-2.5-flash',
+        'agnes',
+        'api_key',
+      );
+
+      expect(result.override_route?.model).toBe('agnes-image-2.5-flash');
     });
   });
 });

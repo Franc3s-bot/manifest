@@ -1,53 +1,19 @@
 import { inferProviderFromModel, type ModelRoute } from 'manifest-shared';
 import type { DiscoveredModel } from '../../model-discovery/model-fetcher';
 import { unambiguousRoute } from '../routing-core/route-helpers';
+import { openAiModelId } from '../routing-core/public-model-id';
 
-export const OPENAI_MODEL_ID_AUTO = 'auto';
-export const SUBSCRIPTION_MODEL_SUFFIX = '-subscription';
+export {
+  OPENAI_MODEL_ID_AUTO,
+  SUBSCRIPTION_MODEL_SUFFIX,
+  openAiModelId,
+  subscriptionOpenAiModelId,
+} from '../routing-core/public-model-id';
 
 export interface ExplicitModelRouteCandidate {
   provider: string;
   model: string;
   providerQualified: boolean;
-}
-
-/** Encode a provider-native model for Manifest's public subscription route. */
-export function subscriptionOpenAiModelId(provider: string, modelId: string): string {
-  const normalizedProvider = provider.toLowerCase();
-  if (modelId === OPENAI_MODEL_ID_AUTO || normalizedProvider.startsWith('custom:')) return modelId;
-
-  const prefix = `${normalizedProvider}/`;
-  const routeId = modelId.toLowerCase().startsWith(prefix)
-    ? modelId
-    : `${normalizedProvider}/${modelId}`;
-  return routeId.endsWith(SUBSCRIPTION_MODEL_SUFFIX)
-    ? routeId
-    : `${routeId}${SUBSCRIPTION_MODEL_SUFFIX}`;
-}
-
-/**
- * Public id of a custom provider model. With an alias the model publishes as
- * `<alias>/<model_name>`; without one it keeps the internal
- * `custom:<uuid>/<model_name>` key. The internal key always resolves (see
- * `routeForOpenAiModelId`), so client configs written before an alias was
- * set keep working.
- */
-function customOpenAiModelId(model: DiscoveredModel): string {
-  if (!model.providerAlias) return model.id;
-  const prefix = `${model.provider}/`;
-  const modelName = model.id.startsWith(prefix) ? model.id.slice(prefix.length) : model.id;
-  return `${model.providerAlias}/${modelName}`;
-}
-
-export function openAiModelId(model: DiscoveredModel): string {
-  const provider = model.provider.toLowerCase();
-  if (provider.startsWith('custom:')) return customOpenAiModelId(model);
-
-  const prefix = `${provider}/`;
-  const routeId = model.id.toLowerCase().startsWith(prefix) ? model.id : `${provider}/${model.id}`;
-  return model.authType === 'subscription'
-    ? subscriptionOpenAiModelId(provider, model.id)
-    : routeId;
 }
 
 /**
