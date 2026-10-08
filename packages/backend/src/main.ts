@@ -231,6 +231,12 @@ export async function bootstrap() {
   expressApp.use('/v1', createProxyBodyBudgetMiddleware());
   expressApp.use('/v1', express.json({ limit: PROXY_BODY_LIMIT }));
   expressApp.use('/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
+  // The classifier proxy carries the same kind of JSON state as a chat request
+  // (a context chunk plus typed questions), so it shares the proxy's larger
+  // parser rather than the small dashboard limit.
+  expressApp.use('/zen/v1', createProxyBodyBudgetMiddleware());
+  expressApp.use('/zen/v1', express.json({ limit: PROXY_BODY_LIMIT }));
+  expressApp.use('/zen/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
   // The Playground run endpoint carries inline image attachments / reference
   // images as data URIs, so it gets its own larger parser. express.json skips
   // a body that is already parsed, so the global parser below is a no-op here.

@@ -11,7 +11,7 @@ const DISCOVERY_FEATURES = ['stream', 'tools'] as const;
 
 type DiscoveryFeature = (typeof DISCOVERY_FEATURES)[number];
 /** Every feature the projection can publish, including derived ones. */
-type FeatureCapability = DiscoveryFeature | 'reasoning' | 'router';
+type FeatureCapability = DiscoveryFeature | 'reasoning' | 'router' | 'classifier';
 
 function isDiscoveryFeature(capability: ModelCapability): capability is DiscoveryFeature {
   return (DISCOVERY_FEATURES as readonly string[]).includes(capability);
@@ -40,8 +40,9 @@ export interface OpenAiModelCapabilities {
   /**
    * Endpoint-level features. `stream` / `tools` are discovery facts; `reasoning`
    * is emitted only when the model is positively known to reason (never as a
-   * `false`), and `router` marks a synthetic Manifest route rather than a
-   * concrete provider model.
+   * `false`), `router` marks a synthetic Manifest route rather than a
+   * concrete provider model, and `classifier` marks a System One classifier
+   * served by `supported_endpoints` rather than `/v1/chat/completions`.
    */
   features?: readonly FeatureCapability[];
   /**

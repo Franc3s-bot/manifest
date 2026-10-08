@@ -77,6 +77,11 @@ import {
 } from './openai-model-list';
 import { mediaCostProjection } from '../media/media-pricing';
 import { buildSyntheticTierProfile } from './synthetic-model-profile';
+import {
+  CLASSIFIER_MODELS,
+  CLASSIFIER_PROVIDER,
+  SYSTEMONE_PATH,
+} from '../systemone/systemone.constants';
 import { PlanService } from '../../billing/plan.service';
 import { StreamFailure } from './stream-writer';
 import { AgentRecordingConfigService } from '../../common/services/agent-recording-config.service';
@@ -156,11 +161,13 @@ export class ProxyController {
     @Query('cost') cost?: string,
     @Query('route_metadata') routeMetadata?: string,
     @Query('output') output?: string,
+    @Query('classifiers') classifiers?: string,
   ): Promise<OpenAiModelList> {
     const data = await this.listModelEntries(req.ingestionContext, {
       includeCapabilities: capabilities === 'true',
       includeCost: cost === 'true',
       includeRouteMetadata: routeMetadata === 'true',
+      includeClassifiers: classifiers === 'true',
       filter: parseOutputFilter(output),
     });
     return { object: 'list', data };
@@ -179,12 +186,14 @@ export class ProxyController {
     @Query('capabilities') capabilities?: string,
     @Query('cost') cost?: string,
     @Query('route_metadata') routeMetadata?: string,
+    @Query('classifiers') classifiers?: string,
   ): Promise<OpenAiModelObject> {
     const id = Array.isArray(splat) ? splat.join('/') : (splat ?? '');
     const data = await this.listModelEntries(req.ingestionContext, {
       includeCapabilities: capabilities === 'true',
       includeCost: cost === 'true',
       includeRouteMetadata: routeMetadata === 'true',
+      includeClassifiers: classifiers === 'true',
     });
     const entry = data.find((model) => model.id === id);
     if (!entry) {
@@ -204,10 +213,13 @@ export class ProxyController {
       includeCapabilities: boolean;
       includeCost: boolean;
       includeRouteMetadata: boolean;
+      /** Opt-in: classifier models are not part of the chat catalog. */
+      includeClassifiers?: boolean;
       filter?: 'text' | 'image' | 'video';
     },
   ): Promise<OpenAiModelObject[]> {
-    const { includeCapabilities, includeCost, includeRouteMetadata, filter } = options;
+    const { includeCapabilities, includeCost, includeRouteMetadata, includeClassifiers, filter } =
+      options;
     // Resolving capability metadata is the expensive part of this endpoint, so
     // the default payload (no flags) must not pay for it. The output filter
     // needs the facts even when the caller did not ask to see them.
@@ -299,6 +311,36 @@ export class ProxyController {
         const tierCapabilities = syntheticTierCapabilities(buildSyntheticTierProfile(tier, models));
         if (includeCapabilities) entry.capabilities = tierCapabilities;
         if (filter && !servesOutput(tierCapabilities, filter)) continue;
+        data.push(entry);
+      }
+    }
+
+    // Classifier models. These are not chat models and are not produced by
+    // model discovery, so they stay out of the default catalog and are only
+    // published when the caller opts in with `?classifiers=true`. They appear
+    // only when the agent can reach OpenCode Zen, because that is the
+    // credential the System One route reuses. `supported_endpoints` is what
+    // tells a client to send them to the classifier route, not chat.
+    if (includeClassifiers && models.some((model) => model.provider === CLASSIFIER_PROVIDER)) {
+      for (const classifier of CLASSIFIER_MODELS) {
+        if (seen.has(classifier.publicId)) continue;
+        seen.add(classifier.publicId);
+        const entry: OpenAiModelObject = {
+          id: classifier.publicId,
+          object: 'model',
+          created: MODEL_CREATED_UNKNOWN,
+          owned_by: CLASSIFIER_PROVIDER,
+        };
+        const classifierCapabilities: OpenAiModelCapabilities = {
+          input_modalities: ['text'],
+          output_modalities: ['text'],
+          features: ['classifier'],
+          supported_endpoints: [SYSTEMONE_PATH],
+          context_window: classifier.contextWindow,
+        };
+        if (includeCapabilities) entry.capabilities = classifierCapabilities;
+        if (includeCost) entry.cost = { input: classifier.inputPricePerMillion, output: 0 };
+        if (filter && !servesOutput(classifierCapabilities, filter)) continue;
         data.push(entry);
       }
     }
